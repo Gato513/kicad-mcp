@@ -48,9 +48,7 @@ def test_filter_by_min_severity_drops_lower() -> None:
 
 @pytest.mark.integration
 @pytest.mark.parametrize("fixture", ["001_basico", "002_medio"])
-async def test_run_erc_matches_erc_expected(
-    monkeypatch: pytest.MonkeyPatch, fixture: str
-) -> None:
+async def test_run_erc_matches_erc_expected(monkeypatch: pytest.MonkeyPatch, fixture: str) -> None:
     project = FIXTURES / fixture
     gt = json.loads((project / "ground_truth.json").read_text())
     expected = gt["erc_expected"]

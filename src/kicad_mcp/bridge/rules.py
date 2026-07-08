@@ -156,8 +156,7 @@ def run_erc(sch_path: Path) -> RulesReport:
             raise KicadMcpError(
                 code=ErrorCode.KICAD_CLI_FAILED,
                 message="kicad-cli devolvió error al correr ERC.",
-                hint=(completed.stderr or "").strip()[:200]
-                or f"returncode={completed.returncode}",
+                hint=(completed.stderr or "").strip()[:200] or f"returncode={completed.returncode}",
             )
         payload = json.loads(tmp_path.read_text(encoding="utf-8"))
     finally:
@@ -188,8 +187,7 @@ def run_drc(pcb_path: Path) -> RulesReport:
             raise KicadMcpError(
                 code=ErrorCode.KICAD_CLI_FAILED,
                 message="kicad-cli devolvió error al correr DRC.",
-                hint=(completed.stderr or "").strip()[:200]
-                or f"returncode={completed.returncode}",
+                hint=(completed.stderr or "").strip()[:200] or f"returncode={completed.returncode}",
             )
         payload = json.loads(tmp_path.read_text(encoding="utf-8"))
     finally:
@@ -200,9 +198,7 @@ def run_drc(pcb_path: Path) -> RulesReport:
 def filter_by_min_severity(report: RulesReport, min_severity: str) -> RulesReport:
     """Filtra las violaciones cuya severidad sea ≥ ``min_severity``."""
     threshold = _SEVERITY_ORDER.get(min_severity, 0)
-    kept = tuple(
-        v for v in report.violations if _SEVERITY_ORDER.get(v.severity, 0) >= threshold
-    )
+    kept = tuple(v for v in report.violations if _SEVERITY_ORDER.get(v.severity, 0) >= threshold)
     counts = {s: 0 for s in report.counts}
     for v in kept:
         counts[v.severity] = counts.get(v.severity, 0) + 1

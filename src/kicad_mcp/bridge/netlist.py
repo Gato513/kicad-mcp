@@ -97,9 +97,7 @@ def _parse_netlist_xml(xml_path: Path) -> Netlist:
         lib_lib = libsrc.attrib.get("lib", "") if libsrc is not None else ""
         lib_part = libsrc.attrib.get("part", "") if libsrc is not None else ""
         lib = f"{lib_lib}:{lib_part}" if lib_lib or lib_part else ""
-        pin_ids = tuple(
-            pin.attrib.get("num", "") for pin in comp.findall("./units/unit/pins/pin")
-        )
+        pin_ids = tuple(pin.attrib.get("num", "") for pin in comp.findall("./units/unit/pins/pin"))
         components.append(NetlistComponent(ref=ref, value=value, lib=lib, pin_ids=pin_ids))
 
     nets: dict[str, tuple[tuple[str, str], ...]] = {}
@@ -107,8 +105,7 @@ def _parse_netlist_xml(xml_path: Path) -> Netlist:
     for net in root.findall("./nets/net"):
         name = net.attrib.get("name", "")
         members = tuple(
-            (node.attrib.get("ref", ""), node.attrib.get("pin", ""))
-            for node in net.findall("node")
+            (node.attrib.get("ref", ""), node.attrib.get("pin", "")) for node in net.findall("node")
         )
         if name.startswith(_UNCONNECTED_PREFIX):
             unconnected.extend(members)

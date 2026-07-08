@@ -109,7 +109,5 @@ def build_state(schematic: Path, *, snap: int) -> NormalizedState:
             connections.get(c.ref, {}),
             unconnected_by_ref.get(c.ref, set()),
         )
-        components.append(
-            Component(ref=c.ref, value=c.value, lib=c.lib, x=p.x, y=p.y, pins=pins)
-        )
+        components.append(Component(ref=c.ref, value=c.value, lib=c.lib, x=p.x, y=p.y, pins=pins))
     return NormalizedState(kind="sch", snap=snap, components=tuple(components))

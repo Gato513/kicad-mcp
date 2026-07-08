@@ -1,0 +1,87 @@
+{
+  "kind": "sch",
+  "snap": 7,
+  "components": [
+    {
+      "ref": "U1",
+      "value": "STM32F103C8Tx",
+      "lib": "MCU_ST_STM32F1:STM32F103C8Tx",
+      "x": 100.0,
+      "y": 50.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "VBAT",
+          "net": "3V3"
+        },
+        {
+          "p": "8",
+          "name": "GND",
+          "net": "GND"
+        },
+        {
+          "p": "10",
+          "name": "PA0",
+          "net": "SDA"
+        }
+      ]
+    },
+    {
+      "ref": "C1",
+      "value": "100nF",
+      "lib": "Device:C",
+      "x": 105.0,
+      "y": 80.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C2",
+      "value": "100nF",
+      "lib": "Device:C",
+      "x": 105.0,
+      "y": 65.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R1",
+      "value": "10k",
+      "lib": "Device:R",
+      "x": 120.0,
+      "y": 80.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "SDA"
+        }
+      ]
+    }
+  ]
+}

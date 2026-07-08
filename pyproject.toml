@@ -1,0 +1,50 @@
+[project]
+name = "kicad-mcp"
+version = "0.1.0"
+description = "Servidor MCP para operar KiCad con agentes LLM: lectura TOON, tools atómicas, delta + área local"
+requires-python = ">=3.11"
+dependencies = [
+    # Runtime pre-aprobado (frontera F5: añadir dependencias requiere aprobación humana)
+    "mcp[cli]>=1.10,<2.0",
+    "pydantic>=2.7,<3.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[project.scripts]
+kicad-mcp = "kicad_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kicad_mcp"]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not integration' -q"
+markers = [
+    "unit: lógica pura, sin I/O",
+    "golden: comparación byte a byte contra tests/golden/",
+    "integration: requiere kicad-cli o KiCad corriendo (excluida por defecto)",
+]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+files = ["src"]

@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv sync)",
+      "Bash(uv run pytest:*)",
+      "Bash(uv run ruff:*)",
+      "Bash(uv run mypy:*)",
+      "Bash(uv run kicad-mcp:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Read(./**)",
+      "Edit(./src/**)",
+      "Edit(./tests/**)",
+      "Edit(./docs/adr/**)",
+      "Edit(./README.md)"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(rm -rf:*)",
+      "Bash(pip install:*)",
+      "Bash(uv add:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Edit(./docs/specs/**)",
+      "Edit(./tests/golden/**)",
+      "Edit(./CLAUDE.md)",
+      "Edit(./.claude/**)",
+      "Edit(./pyproject.toml)"
+    ]
+  }
+}

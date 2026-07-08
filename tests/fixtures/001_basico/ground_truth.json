@@ -1,0 +1,73 @@
+{
+  "components": {
+    "U1": {
+      "value": "MCU-8P",
+      "lib": "FIXLIB:MCU8",
+      "x": 127.0,
+      "y": 63.5
+    },
+    "R1": {
+      "value": "10k",
+      "lib": "FIXLIB:R2",
+      "x": 152.4,
+      "y": 50.8
+    },
+    "R2": {
+      "value": "10k",
+      "lib": "FIXLIB:R2",
+      "x": 162.56,
+      "y": 50.8
+    },
+    "C1": {
+      "value": "100nF",
+      "lib": "FIXLIB:C2",
+      "x": 101.6,
+      "y": 63.5
+    },
+    "J1": {
+      "value": "I2C-HDR",
+      "lib": "FIXLIB:CONN4",
+      "x": 190.5,
+      "y": 63.5
+    }
+  },
+  "nets": {
+    "3V3": [
+      "C1.1",
+      "J1.1",
+      "R1.1",
+      "R2.1",
+      "U1.1"
+    ],
+    "GND": [
+      "C1.2",
+      "J1.2",
+      "U1.2"
+    ],
+    "GND2X": [
+      "U1.7",
+      "U1.8"
+    ],
+    "LED_A": [
+      "U1.6"
+    ],
+    "SCL": [
+      "J1.4",
+      "R2.2",
+      "U1.4"
+    ],
+    "SDA": [
+      "J1.3",
+      "R1.2",
+      "U1.3"
+    ]
+  },
+  "unconnected_pins": [
+    "U1.5"
+  ],
+  "counts": {
+    "components": 5,
+    "nets": 6,
+    "unconnected": 1
+  }
+}

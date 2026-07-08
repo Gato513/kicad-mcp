@@ -1,0 +1,9 @@
+DTOON|v1|snap:8|base:7|area:r40@U1
+[+] C3  100nF  x105.0 y50.0  1>3V3 2>GND
+[~N] 3V3: C1.1 C2.1 C3.1 R1.1 U1.1
+[~N] GND: C1.2 C2.2 C3.2 U1.8
+[AREA]
+C1 ok
+C2 ok
+R1 ok
+U1 ok

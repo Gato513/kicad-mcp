@@ -1,0 +1,269 @@
+{
+  "kind": "sch",
+  "snap": 4,
+  "components": [
+    {
+      "ref": "U1",
+      "value": "STM32F103C8Tx",
+      "lib": "MCU_ST_STM32F1:STM32F103C8Tx",
+      "x": 100.0,
+      "y": 50.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "VBAT",
+          "net": "3V3"
+        },
+        {
+          "p": "8",
+          "name": "GND",
+          "net": "GND"
+        },
+        {
+          "p": "23",
+          "name": "GND",
+          "net": "GND"
+        },
+        {
+          "p": "35",
+          "name": "GND",
+          "net": "GND"
+        },
+        {
+          "p": "47",
+          "name": "GND",
+          "net": "GND"
+        },
+        {
+          "p": "10",
+          "name": "PA0",
+          "net": "SDA"
+        },
+        {
+          "p": "11",
+          "name": "PA1",
+          "net": "SCL"
+        }
+      ]
+    },
+    {
+      "ref": "C1",
+      "value": "100nF",
+      "lib": "Device:C",
+      "x": 110.0,
+      "y": 80.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C2",
+      "value": "100nF",
+      "lib": "Device:C",
+      "x": 115.0,
+      "y": 80.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C3",
+      "value": "100nF",
+      "lib": "Device:C",
+      "x": 120.0,
+      "y": 80.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C4",
+      "value": "100nF",
+      "lib": "Device:C",
+      "x": 125.0,
+      "y": 80.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C5",
+      "value": "100nF",
+      "lib": "Device:C",
+      "x": 130.0,
+      "y": 80.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C6",
+      "value": "100nF",
+      "lib": "Device:C",
+      "x": 135.0,
+      "y": 80.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C7",
+      "value": "100nF",
+      "lib": "Device:C",
+      "x": 140.0,
+      "y": 80.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C8",
+      "value": "100nF",
+      "lib": "Device:C",
+      "x": 145.0,
+      "y": 80.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R1",
+      "value": "10k",
+      "lib": "Device:R",
+      "x": 150.0,
+      "y": 60.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "SDA"
+        }
+      ]
+    },
+    {
+      "ref": "R2",
+      "value": "10k",
+      "lib": "Device:R",
+      "x": 150.0,
+      "y": 70.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "SCL"
+        }
+      ]
+    },
+    {
+      "ref": "J1",
+      "value": "Conn_01x04",
+      "lib": "Connector:Conn_01x04",
+      "x": 170.0,
+      "y": 65.0,
+      "pins": [
+        {
+          "p": "1",
+          "name": "~",
+          "net": "3V3"
+        },
+        {
+          "p": "2",
+          "name": "~",
+          "net": "GND"
+        },
+        {
+          "p": "3",
+          "name": "~",
+          "net": "SDA"
+        },
+        {
+          "p": "4",
+          "name": "~",
+          "net": "SCL"
+        }
+      ]
+    }
+  ]
+}

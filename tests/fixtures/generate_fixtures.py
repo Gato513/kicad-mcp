@@ -68,14 +68,25 @@ def conn4() -> SymDef:
 
 
 def mcu8() -> SymDef:
-    left = [(str(i + 1), f"P{i}", "bidirectional", -10.16, 3.81 - i * 2.54, 0) for i in range(4)]
-    right = [(str(i + 5), f"P{i + 4}", "bidirectional", 10.16, -3.81 + i * 2.54, 180) for i in range(4)]
+    left = [
+        (str(i + 1), f"P{i}", "bidirectional", -10.16, 3.81 - i * 2.54, 0) for i in range(4)
+    ]
+    right = [
+        (str(i + 5), f"P{i + 4}", "bidirectional", 10.16, -3.81 + i * 2.54, 180)
+        for i in range(4)
+    ]
     return SymDef("MCU8", "U", left + right, (-7.62, 6.35, 7.62, -6.35))
 
 
 def mcu48() -> SymDef:
-    left = [(str(i + 1), f"PA{i}", "bidirectional", -15.24, 29.21 - i * 2.54, 0) for i in range(24)]
-    right = [(str(i + 25), f"PB{i}", "bidirectional", 15.24, -29.21 + i * 2.54, 180) for i in range(24)]
+    left = [
+        (str(i + 1), f"PA{i}", "bidirectional", -15.24, 29.21 - i * 2.54, 0)
+        for i in range(24)
+    ]
+    right = [
+        (str(i + 25), f"PB{i}", "bidirectional", 15.24, -29.21 + i * 2.54, 180)
+        for i in range(24)
+    ]
     return SymDef("MCU48", "U", left + right, (-12.7, 31.75, 12.7, -31.75))
 
 
@@ -94,10 +105,18 @@ def emit_lib_symbol(s: SymDef) -> str:
             f'        (number "{num}" (effects (font (size 1.27 1.27)))))'
         )
     x1, y1, x2, y2 = s.body
+    ref_line = (
+        f'      (property "Reference" "{s.ref_prefix}" (at 0 {f2s(y1 + 2.54)} 0) '
+        f'(effects (font (size 1.27 1.27))))\n'
+    )
+    val_line = (
+        f'      (property "Value" "{s.name}" (at 0 {f2s(y2 - 2.54)} 0) '
+        f'(effects (font (size 1.27 1.27))))\n'
+    )
     return (
         f'    (symbol "FIXLIB:{s.name}" (pin_names (offset 0.254)) (in_bom yes) (on_board yes)\n'
-        f'      (property "Reference" "{s.ref_prefix}" (at 0 {f2s(y1 + 2.54)} 0) (effects (font (size 1.27 1.27))))\n'
-        f'      (property "Value" "{s.name}" (at 0 {f2s(y2 - 2.54)} 0) (effects (font (size 1.27 1.27))))\n'
+        f'{ref_line}'
+        f'{val_line}'
         f'      (property "Footprint" "" (at 0 0 0) (effects (font (size 1.27 1.27)) hide))\n'
         f'      (property "Datasheet" "" (at 0 0 0) (effects (font (size 1.27 1.27)) hide))\n'
         f'      (symbol "{s.name}_0_1"\n'
@@ -222,10 +241,12 @@ def build_002() -> Fixture:
     f = Fixture("002_medio", "fixture002")
     mcu_nets = {}
     # 24 pines izquierdos del MCU48: alimentación + señales
-    mcu_nets["p1"] = "3V3"; mcu_nets["p2"] = "GND"
+    mcu_nets["p1"] = "3V3"
+    mcu_nets["p2"] = "GND"
     for i in range(3, 13):
         mcu_nets[f"p{i}"] = f"IO{i - 2}"
-    mcu_nets["p13"] = "SDA"; mcu_nets["p14"] = "SCL"
+    mcu_nets["p13"] = "SDA"
+    mcu_nets["p14"] = "SCL"
     for i in range(15, 25):
         mcu_nets[f"p{i}"] = "GND"          # muchos GND → colapso
     # 24 derechos: LEDs y sin conectar plantados

@@ -60,6 +60,45 @@ def _resolve_root_schematic() -> Path:
     )
 
 
+def _resolve_root_pcb() -> Path:
+    """Resuelve el .kicad_pcb raíz del proyecto activo (paralelo a _resolve_root_schematic).
+
+    Sesión 04 T5: fixture 005_pcb_limpio es pcb-only (sin .kicad_sch). El
+    export_manufacturing no necesita esquemático, así que ancla en el pcb
+    directamente. Otras tools siguen requiriendo sch.
+    """
+    raw = os.environ.get("KICAD_MCP_PROJECT")
+    if not raw:
+        raise KicadMcpError(
+            code=ErrorCode.PROJECT_NOT_FOUND,
+            message="No hay proyecto activo.",
+            hint="Exporta KICAD_MCP_PROJECT con la ruta del proyecto.",
+        )
+    root = Path(raw).expanduser()
+    if not root.is_dir():
+        raise KicadMcpError(
+            code=ErrorCode.PROJECT_NOT_FOUND,
+            message="KICAD_MCP_PROJECT no apunta a un directorio.",
+            hint=f"Ruta: {root.name}",
+        )
+    pro_files = list(root.glob("*.kicad_pro"))
+    if pro_files:
+        candidate = pro_files[0].with_suffix(".kicad_pcb")
+        if candidate.is_file():
+            return candidate.resolve()
+    pcb_files = list(root.glob("*.kicad_pcb"))
+    if len(pcb_files) == 1:
+        return pcb_files[0].resolve()
+    raise KicadMcpError(
+        code=ErrorCode.PROJECT_NOT_FOUND,
+        message=(
+            "No se pudo determinar el .kicad_pcb raíz "
+            f"({len(pcb_files)} candidatos en el proyecto)."
+        ),
+        hint="Renombrar el PCB para que coincida con el .kicad_pro.",
+    )
+
+
 def register(mcp: FastMCP) -> None:
     """Registra las tools de la categoría ``world``."""
 

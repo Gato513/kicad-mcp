@@ -208,6 +208,72 @@ async def test_export_manufacturing_runs_when_drc_clean(
 
 
 @pytest.mark.integration
+async def test_export_manufacturing_happy_path_against_clean_fixture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Fixture 005_pcb_limpio: DRC limpio ⇒ gerbers + drill se generan.
+
+    Cubre el happy-path que la sesión 03 dejó como pendiente por falta de
+    un PCB limpio en la suite. Verifica ``count > 0``, extensiones válidas
+    y que la carpeta ``fab/`` se creó dentro del proyecto copiado.
+    """
+    src = FIXTURES / "005_pcb_limpio"
+    if not (src / "clean_board.kicad_pcb").is_file():
+        pytest.skip("fixture 005_pcb_limpio no disponible")
+    project = mirror_fixture(src, tmp_path / "005-happy")
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+
+    mcp = create_server()
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("export_manufacturing", {})
+    payload = _parse(result)
+    assert not result.isError, payload
+    assert payload["output_dir"] == "fab"
+    assert payload["count"] > 0, "el happy-path debe generar al menos un archivo"
+    files: list[str] = payload["files"]
+    # Al menos un gerber y un drill deben aparecer.
+    gerbers = [f for f in files if f.endswith((".gbr", ".gbrjob"))]
+    drills = [f for f in files if f.endswith((".drl", ".txt"))]
+    assert gerbers, f"ningún gerber generado; files={files}"
+    assert drills, f"ningún drill generado; files={files}"
+    assert (project / "fab").is_dir()
+
+
+@pytest.mark.integration
+async def test_export_manufacturing_blocks_with_strict_kicad_pro(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """004_real + ``tests/data/strict_severities.kicad_pro`` ⇒ G3 bloquea.
+
+    Documenta como test ejecutable el hallazgo de la sesión 03: el
+    ``.kicad_pro`` original de 004 baja el umbral de ``copper_edge_clearance``
+    a 0.01 mm y las 27 violaciones desaparecen. Con un ``.kicad_pro``
+    minimal que restaura el umbral a 0.5 mm y mantiene severidad ``error``,
+    las 27 violaciones vuelven y el gate bloquea.
+    """
+    src = FIXTURES / "004_real"
+    if not (src / "video.kicad_pcb").is_file():
+        pytest.skip("fixture 004_real no disponible")
+    project = tmp_path / "004-strict"
+    project.mkdir()
+    for name in ("video.kicad_sch", "video.kicad_pcb"):
+        (project / name).write_bytes((src / name).read_bytes())
+    strict_pro = Path(__file__).parent / "data" / "strict_severities.kicad_pro"
+    assert strict_pro.is_file(), "strict_severities.kicad_pro debe existir"
+    (project / "video.kicad_pro").write_bytes(strict_pro.read_bytes())
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+
+    mcp = create_server()
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("export_manufacturing", {})
+    assert result.isError, "gate debe bloquear con strict severities"
+    text = _error_text(result)
+    assert "EXPORT_BLOCKED_BY_DRC" in text
+    assert "copper_edge_clearance" in text  # el rule name aparece en el hint
+    assert not (project / "fab").is_dir()
+
+
+@pytest.mark.integration
 async def test_export_manufacturing_blocks_on_real_dirty_pcb(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -18,7 +18,7 @@ from ..errors import ErrorCode, KicadMcpError
 from ..gates.g3 import check_drc_clean
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
 from ..paths import canonicalize_within_project_root
-from ..tools.world import _resolve_root_schematic
+from ..tools.world import _resolve_root_pcb, _resolve_root_schematic
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -28,9 +28,16 @@ _RENDER_KINDS: Final = frozenset({"sch_pdf", "pcb_png", "pcb_pdf"})
 
 
 def _project_root() -> Path:
-    """Raíz del proyecto activo (para canonicalización de rutas de salida)."""
-    sch = _resolve_root_schematic()
-    return sch.parent
+    """Raíz del proyecto activo (para canonicalización de rutas de salida).
+
+    Prefiere el ``.kicad_sch`` (las tools de export basadas en esquemático
+    lo requieren); ante un proyecto pcb-only (p. ej. fixture 005) cae al
+    ``.kicad_pcb``.
+    """
+    try:
+        return _resolve_root_schematic().parent
+    except KicadMcpError:
+        return _resolve_root_pcb().parent
 
 
 def _run_cli(args: list[str], *, action: str) -> None:
@@ -192,14 +199,9 @@ def register(mcp: FastMCP) -> None:
     )
     def export_manufacturing(output_dir: str | None = None) -> dict[str, Any]:
         with tool_call_timer() as timer:
-            sch = _resolve_root_schematic()
-            pcb = sch.with_suffix(".kicad_pcb")
-            if not pcb.is_file():
-                raise KicadMcpError(
-                    code=ErrorCode.PROJECT_NOT_FOUND,
-                    message="No se encontró el .kicad_pcb del proyecto activo.",
-                    hint=f"Se buscaba {pcb.name} junto al esquemático.",
-                )
+            # Anchor: pcb directamente. No requiere .kicad_sch (fixture
+            # 005 es pcb-only y export de fab no consume el esquemático).
+            pcb = _resolve_root_pcb()
             check_drc_clean(pcb)  # Gate G3: EXPORT_BLOCKED_BY_DRC si sucio.
             fab_dir = _resolve_output(output_dir, "fab")
             fab_dir.mkdir(parents=True, exist_ok=True)

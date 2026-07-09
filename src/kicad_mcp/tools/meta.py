@@ -77,10 +77,15 @@ def _ipc_payload(bridge: IpcBridge) -> dict[str, Any]:
         return payload
 
 
-def register(mcp: FastMCP) -> None:
-    """Registra las tools ``meta`` en la instancia FastMCP."""
+def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
+    """Registra las tools ``meta`` en la instancia FastMCP.
 
-    ipc_bridge = IpcBridge()
+    ``ipc_bridge`` es inyectado desde ``register_all`` como singleton por
+    proceso (sesión 04). Si es ``None`` — camino defensivo para llamadas
+    directas — se instancia local; los tests pasan un fake.
+    """
+
+    bridge = ipc_bridge or IpcBridge()
 
     @mcp.tool(
         name="health",
@@ -93,7 +98,7 @@ def register(mcp: FastMCP) -> None:
             payload: dict[str, Any] = {
                 "server": {"status": "ok", "version": __version__},
                 "kicad_cli": _cli_payload(cli_status),
-                "kicad_ipc": _ipc_payload(ipc_bridge),
+                "kicad_ipc": _ipc_payload(bridge),
                 "project": _project_payload(project_root),
             }
         log_tool_call(

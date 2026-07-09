@@ -179,6 +179,69 @@ def test_factory_error_maps_to_kicad_not_running() -> None:
     assert excinfo.value.code is ErrorCode.KICAD_NOT_RUNNING
 
 
+# --- register_all singleton (sesión 04) ---------------------------------------
+
+
+@pytest.mark.unit
+def test_register_all_shares_injected_bridge_between_meta_and_pcb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Con ``ipc_bridge=`` inyectado, ``register_all`` NO crea bridges nuevos.
+
+    Prueba directa del contrato del singleton: una sola conexión al socket
+    por proceso servidor.
+    """
+    from mcp.server.fastmcp import FastMCP
+
+    from kicad_mcp.tools import register_all
+
+    instantiations: list[IpcBridge] = []
+    real_init = IpcBridge.__init__
+
+    def counting_init(self: IpcBridge, **kwargs: Any) -> None:
+        instantiations.append(self)
+        real_init(self, **kwargs)
+
+    monkeypatch.setattr(IpcBridge, "__init__", counting_init)
+
+    shared = IpcBridge(client_factory=_factory(_FakeClient()))
+    assert len(instantiations) == 1, "nuestra propia instanciación"
+
+    mcp = FastMCP(name="test-singleton", instructions="test")
+    register_all(mcp, ipc_bridge=shared)
+
+    # Ninguna instanciación nueva: register_all reutiliza la inyectada.
+    assert len(instantiations) == 1
+
+
+@pytest.mark.unit
+def test_register_all_creates_single_bridge_when_none_injected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sin inyección, ``register_all`` instancia UN solo ``IpcBridge`` (no dos).
+
+    Contra-prueba del contrato del singleton: en runtime tampoco hay dos
+    clientes.
+    """
+    from mcp.server.fastmcp import FastMCP
+
+    from kicad_mcp.tools import register_all
+
+    instantiations: list[IpcBridge] = []
+    real_init = IpcBridge.__init__
+
+    def counting_init(self: IpcBridge, **kwargs: Any) -> None:
+        instantiations.append(self)
+        real_init(self, **kwargs)
+
+    monkeypatch.setattr(IpcBridge, "__init__", counting_init)
+
+    mcp = FastMCP(name="test-no-inject", instructions="test")
+    register_all(mcp)
+
+    assert len(instantiations) == 1, "register_all debe crear exactamente un IpcBridge"
+
+
 # --- integration_gui (requiere KiCad abierto) ---------------------------------
 
 

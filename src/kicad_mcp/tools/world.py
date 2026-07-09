@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ..bridge.state_builder import build_state_cached
 from ..errors import ErrorCode, KicadMcpError
@@ -70,7 +70,10 @@ def register(mcp: FastMCP) -> None:
         max_tokens: int = 800,
         focus_ref: str | None = None,
         radius_mm: float | None = None,
-    ) -> dict[str, Any]:
+    ) -> str:
+        # Devuelve el string TOON puro (sin envelope JSON). La cabecera
+        # ya lleva ``snap`` y ``kind`` — reintroducir un wrapper añadía
+        # ~30 % de tokens sin dato nuevo (medido en sesión 02).
         snap_id = 1  # MVP sin Snapshot Store: siempre 1. v0.3 usará el store.
         with tool_call_timer() as timer:
             schematic = _resolve_root_schematic()
@@ -81,11 +84,6 @@ def register(mcp: FastMCP) -> None:
                 focus_ref=focus_ref,
                 radius_mm=radius_mm,
             )
-        payload: dict[str, Any] = {
-            "snap": snap_id,
-            "kind": state.kind,
-            "toon": toon,
-        }
         log_tool_call(
             tool_name="get_world_context",
             latency_ms=timer["latency_ms"],
@@ -96,6 +94,7 @@ def register(mcp: FastMCP) -> None:
                 "radius_mm": radius_mm,
                 "max_tokens": max_tokens,
                 "cache_hit": cache_hit,
+                "kind": state.kind,
             },
         )
-        return payload
+        return toon

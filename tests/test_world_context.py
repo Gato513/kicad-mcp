@@ -2,13 +2,14 @@
 
 - ``unit``: llama la tool con un state builder mockeado (estado fake).
 - ``integration``: ejerce el pipeline completo contra las fixtures 001/003.
+
+Contrato: la tool devuelve el string TOON puro (sin envelope JSON). La
+cabecera lleva ``snap`` y ``kind`` (sesión 03).
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
@@ -21,12 +22,12 @@ from tests.conftest import mirror_fixture
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def _parse(result: CallToolResult) -> dict[str, Any]:
+def _toon(result: CallToolResult) -> str:
     assert result.isError is False, f"error: {result}"
     assert len(result.content) == 1
     block = result.content[0]
     assert isinstance(block, TextContent)
-    return json.loads(block.text)
+    return block.text
 
 
 def _fake_state() -> NormalizedState:
@@ -68,10 +69,8 @@ async def test_world_context_with_fake_state(monkeypatch: pytest.MonkeyPatch) ->
     mcp = create_server()
     async with create_connected_server_and_client_session(mcp._mcp_server) as client:
         result = await client.call_tool("get_world_context", {"max_tokens": 800})
-    payload = _parse(result)
-    assert payload["kind"] == "sch"
-    assert payload["snap"] == 1
-    toon = payload["toon"]
+    toon = _toon(result)
+    # La cabecera lleva kind (SCH) y snap; no hace falta envelope JSON.
     assert toon.startswith("SCH|v1|2c|2n|snap:1\n")
     assert "U1  STM32" in toon
     assert "GND: C1.2 U1.2" in toon
@@ -87,8 +86,7 @@ async def test_world_context_full_against_fixture_001(
     mcp = create_server()
     async with create_connected_server_and_client_session(mcp._mcp_server) as client:
         result = await client.call_tool("get_world_context", {"max_tokens": 800})
-    payload = _parse(result)
-    toon = payload["toon"]
+    toon = _toon(result)
 
     lines = toon.splitlines()
     assert lines[0] == "SCH|v1|5c|6n|snap:1"
@@ -115,8 +113,7 @@ async def test_world_context_with_focus_hides_far_components(
             "get_world_context",
             {"max_tokens": 500, "focus_ref": "J1", "radius_mm": 15.0},
         )
-    payload = _parse(result)
-    toon = payload["toon"]
+    toon = _toon(result)
     assert "[FUERA_DE_AREA]" in toon, "el bloque de resumen debería aparecer con focus+radius"
     # Debe declarar degradación en la línea final.
     assert "[DEGRADADO]" in toon

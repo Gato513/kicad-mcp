@@ -57,7 +57,10 @@ def _fake_state() -> NormalizedState:
 @pytest.mark.unit
 async def test_world_context_with_fake_state(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _fake_state()
-    monkeypatch.setattr("kicad_mcp.tools.world.build_state", lambda *_, **__: fake)
+    monkeypatch.setattr(
+        "kicad_mcp.tools.world.build_state_cached",
+        lambda *_, **__: (fake, False),
+    )
     monkeypatch.setattr(
         "kicad_mcp.tools.world._resolve_root_schematic", lambda: Path("/tmp/fake.kicad_sch")
     )

@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..bridge.state_builder import build_state
+from ..bridge.state_builder import build_state_cached
 from ..errors import ErrorCode, KicadMcpError
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
 from ..toon.encoder import encode
@@ -74,7 +74,7 @@ def register(mcp: FastMCP) -> None:
         snap_id = 1  # MVP sin Snapshot Store: siempre 1. v0.3 usará el store.
         with tool_call_timer() as timer:
             schematic = _resolve_root_schematic()
-            state = build_state(schematic, snap=snap_id)
+            state, cache_hit = build_state_cached(schematic, snap=snap_id)
             toon = encode(
                 state,
                 max_tokens=max_tokens,
@@ -95,6 +95,7 @@ def register(mcp: FastMCP) -> None:
                 "focus_ref": focus_ref,
                 "radius_mm": radius_mm,
                 "max_tokens": max_tokens,
+                "cache_hit": cache_hit,
             },
         )
         return payload

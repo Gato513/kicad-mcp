@@ -6,6 +6,12 @@ Fuentes:
 
 Una ref presente en una fuente y ausente en la otra ⇒ estado inconsistente,
 error tipado (jamás adivinar). Ver `restricciones-kicad.md`.
+
+Cachea el ``NormalizedState`` por ``(ruta_canonica, mtime_ns)`` del
+``.kicad_sch``. El invalidator del Snapshot Store (arquitectura §4.4)
+usará este mismo criterio; aquí es su semilla. Cambiar el ``snap`` no
+invalida: el estado cacheado se copia con el nuevo ``snap`` sin
+reconstruir.
 """
 
 from __future__ import annotations
@@ -16,6 +22,8 @@ from ..errors import ErrorCode, KicadMcpError
 from ..toon.schema import Component, NormalizedState, Pin
 from .netlist import Netlist, load_netlist
 from .sch_positions import Placement, parse_root_positions
+
+_CACHE: dict[tuple[str, int], NormalizedState] = {}
 
 
 def _index_placements(placements: tuple[Placement, ...]) -> dict[str, Placement]:
@@ -71,11 +79,49 @@ def _unconnected_per_ref(netlist: Netlist) -> dict[str, set[str]]:
 def build_state(schematic: Path, *, snap: int) -> NormalizedState:
     """Construye ``NormalizedState`` desde el esquemático dado.
 
+    Wrapper de ``build_state_cached`` que descarta el flag ``cache_hit``.
+    """
+    state, _ = build_state_cached(schematic, snap=snap)
+    return state
+
+
+def build_state_cached(schematic: Path, *, snap: int) -> tuple[NormalizedState, bool]:
+    """Como ``build_state`` pero además reporta si vino de cache.
+
     Precondiciones: ``schematic`` es una ruta absoluta canonicalizada por el
     llamador. Lanza:
     - ``UNSUPPORTED_HIERARCHY`` si el ``.kicad_sch`` es multi-hoja.
     - ``KICAD_CLI_FAILED`` si kicad-cli falla o hay estado inconsistente.
+
+    El cache está indexado por ``(str(schematic.resolve()), mtime_ns)``: si
+    el ``.kicad_sch`` cambió su mtime desde la última llamada, se
+    reconstruye. Los ``snap`` distintos no invalidan; se reusan copiando
+    el estado con el nuevo ``snap``.
     """
+    resolved = schematic.resolve()
+    try:
+        mtime_ns = resolved.stat().st_mtime_ns
+    except FileNotFoundError:
+        # Sin mtime no hay cache; que el pipeline levante el error tipado
+        # que corresponda río abajo. No decidimos aquí sobre errores.
+        return _rebuild(schematic, snap=snap), False
+    key = (str(resolved), mtime_ns)
+    cached = _CACHE.get(key)
+    if cached is not None:
+        if cached.snap == snap:
+            return cached, True
+        return cached.model_copy(update={"snap": snap}), True
+    state = _rebuild(schematic, snap=snap)
+    _CACHE[key] = state
+    return state, False
+
+
+def clear_cache() -> None:
+    """Vacía el cache. Útil en tests que necesitan aislar mtime hits."""
+    _CACHE.clear()
+
+
+def _rebuild(schematic: Path, *, snap: int) -> NormalizedState:
     # Chequear jerarquía ANTES de invocar kicad-cli: falla rápido en proyectos
     # multi-hoja sin gastar el subprocess (que sí procesa jerarquía).
     placements = parse_root_positions(schematic)

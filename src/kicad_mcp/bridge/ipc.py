@@ -376,6 +376,31 @@ class IpcBridge:
                     Mm(max(ys) + margin),
                 )
 
+    def get_footprint_position(self, board: BoardHandle, ref: str) -> tuple[Mm, Mm]:
+        """Posición ``(x_mm, y_mm)`` del footprint ``ref`` según el board vivo.
+
+        Interno del bridge (sesión 04 T6): lo consume el test integration_gui
+        para verificar que ``move_footprint`` persistió las coordenadas.
+        No se expone como tool MCP; el catálogo permanece igual.
+
+        Levanta ``COMPONENT_NOT_FOUND`` si el ref no está.
+        """
+        with self._lock:
+            self._detect_restart()
+            with self._supervise("get_footprint_position"):
+                for fp in board.raw.get_footprints():
+                    if str(fp.reference_field.text.value) == ref:
+                        pos = fp.position
+                        return (
+                            nm_to_mm(Nm(int(pos.x))),
+                            nm_to_mm(Nm(int(pos.y))),
+                        )
+                raise KicadMcpError(
+                    code=ErrorCode.COMPONENT_NOT_FOUND,
+                    message=f"Footprint {ref} no está en el board.",
+                    hint="Verificá que el ref exista y que el board correcto esté abierto.",
+                )
+
     # -- mutaciones -----------------------------------------------------------
 
     def move_footprint(self, board: BoardHandle, ref: str, x_mm: Mm, y_mm: Mm) -> None:

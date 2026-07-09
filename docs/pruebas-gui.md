@@ -59,6 +59,49 @@ Skip **no** es fallo: es la vía de que CI y `pytest -m integration`
 - `tests/test_ipc.py::test_ipc_reports_real_kicad_version` (Tarea 5):
   conecta al socket real, pide `get_version()` y valida
   `major ≥ 9`. Es el test-humo mínimo del bridge.
+- `tests/test_ipc.py::test_move_footprint_round_trip_against_open_board`
+  (sesión 04 T6): E2E de mutaciones. Ver §E2E mutaciones abajo.
+
+## §E2E mutaciones (`test_move_footprint_round_trip_against_open_board`)
+
+Verifica que `move_footprint` persiste vía IPC y que
+`get_footprint_position` re-lee el cambio con tolerancia de redondeo.
+No requiere que el humano ejecute mutaciones a mano; sólo abrir el
+proyecto y pasarle el `ref` conocido al test.
+
+Pasos:
+
+1. Copiá 004_real a tmp e iniciá git:
+   ```bash
+   cp -r tests/fixtures/004_real /tmp/mut-round-trip
+   git -C /tmp/mut-round-trip init && git -C /tmp/mut-round-trip add -A \
+     && git -C /tmp/mut-round-trip commit -m "baseline"
+   ```
+2. Abrí `/tmp/mut-round-trip/video.kicad_pro` en KiCad y **abrí también
+   el .kicad_pcb** (el board debe estar en foco para que `get_board()`
+   devuelva algo).
+3. Elegí un `ref` conocido del board — por ejemplo `U1` para 004_real
+   (`kicad-cli pcb export drl --list-refs …` o simplemente mirando el
+   esquemático). Anotalo.
+4. En terminal:
+   ```bash
+   export KICAD_MCP_GUI_TEST=1
+   export KICAD_MCP_GUI_REF=U1                              # ejemplo
+   export KICAD_MCP_PROJECT=/tmp/mut-round-trip
+   export KICAD_API_SOCKET="ipc:///tmp/kicad/api.sock"
+   uv run pytest -m integration_gui -k round_trip -v
+   ```
+5. El test:
+   - Lee la posición inicial de `KICAD_MCP_GUI_REF` vía IPC.
+   - Desplaza 0.127 mm (grilla de 50 mil) en x e y.
+   - Llama `move_footprint`.
+   - Re-lee y verifica igualdad con ±1 nm (redondeo banker's).
+6. Al terminar: cerrar KiCad y borrar `/tmp/mut-round-trip`.
+
+**Skip esperados:**
+- Sin `KICAD_MCP_GUI_TEST=1` → skip claro.
+- Sin `KICAD_MCP_GUI_REF` → skip con ejemplo del env var.
+- KiCad abierto pero sin board en foco → skip con "No hay board abierto".
 
 ## Protocolo de mutaciones (`move_footprint`, `add_track`)
 

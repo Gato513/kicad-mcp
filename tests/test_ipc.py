@@ -126,6 +126,47 @@ def test_get_open_board_wraps_raw_board_in_handle() -> None:
     assert handle.raw is sentinel
 
 
+# --- get_footprint_position (sesión 04 T6) -----------------------------------
+
+
+class _FakeFootprint:
+    def __init__(self, ref: str, x_nm: int, y_nm: int) -> None:
+        self.reference_field = type("_F", (), {"text": type("_T", (), {"value": ref})()})()
+        self.position = type("_P", (), {"x": x_nm, "y": y_nm})()
+
+
+class _FakeBoard:
+    def __init__(self, footprints: list[_FakeFootprint]) -> None:
+        self._fps = footprints
+
+    def get_footprints(self) -> list[_FakeFootprint]:
+        return list(self._fps)
+
+
+@pytest.mark.unit
+def test_get_footprint_position_returns_mm_from_nm() -> None:
+    """Lee la posición en nm del footprint y la convierte a mm en la frontera."""
+    fp = _FakeFootprint("U3", x_nm=102_500_000, y_nm=44_000_000)  # 102.5 mm, 44.0 mm
+    board = BoardHandle(_raw=_FakeBoard([fp]))
+    bridge = IpcBridge(client_factory=_factory(_FakeClient(board=board.raw)))
+
+    x, y = bridge.get_footprint_position(board, "U3")
+
+    assert x == Mm(102.5)
+    assert y == Mm(44.0)
+
+
+@pytest.mark.unit
+def test_get_footprint_position_raises_component_not_found() -> None:
+    """Ref inexistente en el board vivo ⇒ ``COMPONENT_NOT_FOUND``."""
+    board = BoardHandle(_raw=_FakeBoard([_FakeFootprint("U1", 0, 0)]))
+    bridge = IpcBridge(client_factory=_factory(_FakeClient(board=board.raw)))
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_footprint_position(board, "U99")
+    assert excinfo.value.code is ErrorCode.COMPONENT_NOT_FOUND
+
+
 # --- restart detection --------------------------------------------------------
 
 
@@ -475,3 +516,48 @@ def test_ipc_reports_real_kicad_version() -> None:
 
     assert version.major >= 9, f"KiCad {version.full} < 9.0 (mínimo ADR-0002)"
     assert version.full  # cualquier string no vacío
+
+
+@pytest.mark.integration_gui
+def test_move_footprint_round_trip_against_open_board() -> None:
+    """E2E de mutaciones: ``move_footprint`` persiste; ``get_footprint_position`` lee.
+
+    Precondiciones (paso a paso en ``docs/pruebas-gui.md`` §E2E mutaciones):
+    1. Copia ``tests/fixtures/004_real`` a una carpeta temporal fuera del repo.
+    2. Abrir el ``.kicad_pcb`` copiado en KiCad (10.0.4 esperado).
+    3. Habilitar el API server (Preferences → Plugins).
+    4. Exportar ``KICAD_MCP_GUI_TEST=1`` y ``KICAD_MCP_GUI_REF=<ref>``
+       (p. ej. ``KICAD_MCP_GUI_REF=U1``).
+    5. Correr ``uv run pytest -m integration_gui -k round_trip``.
+
+    El test:
+    - Lee la posición inicial del footprint ``ref`` vía IPC.
+    - Calcula un ``target`` desplazado 0.127 mm (grilla de 50 mil) del original.
+    - Llama a ``move_footprint`` y re-lee la posición.
+    - Verifica igualdad con tolerancia de redondeo banker's (±1 nm).
+
+    NO se ejecuta en CI ni en pytest -m unit/integration: es del humano.
+    """
+    if os.environ.get("KICAD_MCP_GUI_TEST") != "1":
+        pytest.skip("KICAD_MCP_GUI_TEST != 1; ver docs/pruebas-gui.md")
+    ref = os.environ.get("KICAD_MCP_GUI_REF")
+    if not ref:
+        pytest.skip("KICAD_MCP_GUI_REF no definida; ejemplo: KICAD_MCP_GUI_REF=U1")
+
+    bridge = IpcBridge()
+    board = bridge.get_open_board()
+    if board is None:
+        pytest.skip("No hay board abierto en KiCad")
+
+    x0, y0 = bridge.get_footprint_position(board, ref)
+    # Desplazamiento en la grilla de 50 mil (0.127 mm) — el ADR de fixtures
+    # dice que el grid del sch es 1.27 mm; PCB tiene grillas finas.
+    target_x = Mm(round(float(x0) + 0.127, 4))
+    target_y = Mm(round(float(y0) + 0.127, 4))
+
+    bridge.move_footprint(board, ref, target_x, target_y)
+    x1, y1 = bridge.get_footprint_position(board, ref)
+
+    # Tolerancia de ±1 nm (redondeo banker's, banker_rounding_on_half_micron).
+    assert abs(float(x1) - float(target_x)) < 1e-6, f"x: {x1} != {target_x}"
+    assert abs(float(y1) - float(target_y)) < 1e-6, f"y: {y1} != {target_y}"

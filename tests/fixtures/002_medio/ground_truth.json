@@ -361,5 +361,9 @@
     "components": 30,
     "nets": 30,
     "unconnected": 2
+  },
+  "erc_expected": {
+    "error": 2,
+    "warning": 32
   }
 }

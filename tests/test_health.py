@@ -29,6 +29,14 @@ def _parse_health(result: CallToolResult) -> dict[str, Any]:
     return json.loads(block.text)
 
 
+def _stub_ipc_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Neutraliza el probe IPC en tests que no lo ejercen (evita el timeout real de 2 s)."""
+    monkeypatch.setattr(
+        "kicad_mcp.tools.meta._ipc_payload",
+        lambda _bridge: {"status": "ok", "version": "test-stub"},
+    )
+
+
 @pytest.mark.unit
 async def test_health_reports_ok_when_kicad_cli_available(
     monkeypatch: pytest.MonkeyPatch,
@@ -37,6 +45,7 @@ async def test_health_reports_ok_when_kicad_cli_available(
         available=True, version="10.0.4", raw_output="kicad-cli v10.0.4", error=None
     )
     monkeypatch.setattr("kicad_mcp.tools.meta.probe_version", lambda **_: fake)
+    _stub_ipc_ok(monkeypatch)
     monkeypatch.delenv("KICAD_MCP_PROJECT", raising=False)
 
     mcp = create_server()
@@ -48,9 +57,41 @@ async def test_health_reports_ok_when_kicad_cli_available(
     payload = _parse_health(result)
     assert payload["server"]["status"] == "ok"
     assert payload["kicad_cli"] == {"status": "ok", "version": "10.0.4"}
-    assert payload["kicad_ipc"]["status"] == "not_checked"
+    assert payload["kicad_ipc"] == {"status": "ok", "version": "test-stub"}
     assert payload["project"]["status"] == "not_configured"
     assert payload["project"]["code"] == "PROJECT_NOT_FOUND"
+
+
+@pytest.mark.unit
+async def test_health_reports_kicad_ipc_missing_when_socket_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """IPC no disponible ⇒ ``status=missing`` con ``KICAD_NOT_RUNNING``.
+
+    No usa el bridge real (esperaría 2 s por el timeout). Inyecta un
+    payload directamente para probar el contrato.
+    """
+    fake = KicadCliStatus(available=True, version="10.0.4", raw_output="", error=None)
+    monkeypatch.setattr("kicad_mcp.tools.meta.probe_version", lambda **_: fake)
+    monkeypatch.setattr(
+        "kicad_mcp.tools.meta._ipc_payload",
+        lambda _bridge: {
+            "status": "missing",
+            "code": "KICAD_NOT_RUNNING",
+            "message": "No se pudo conectar al socket IPC de KiCad.",
+            "hint": "Abrí KiCad y habilitá el API server en Preferences → Plugins.",
+        },
+    )
+    monkeypatch.delenv("KICAD_MCP_PROJECT", raising=False)
+
+    mcp = create_server()
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("health", {})
+
+    payload = _parse_health(result)
+    assert payload["kicad_ipc"]["status"] == "missing"
+    assert payload["kicad_ipc"]["code"] == "KICAD_NOT_RUNNING"
+    assert "API server" in payload["kicad_ipc"]["hint"]
 
 
 @pytest.mark.unit
@@ -61,6 +102,7 @@ async def test_health_reports_missing_when_kicad_cli_absent(
         available=False, version=None, raw_output=None, error="kicad-cli no está en PATH"
     )
     monkeypatch.setattr("kicad_mcp.tools.meta.probe_version", lambda **_: fake)
+    _stub_ipc_ok(monkeypatch)
     monkeypatch.delenv("KICAD_MCP_PROJECT", raising=False)
 
     mcp = create_server()
@@ -81,6 +123,7 @@ async def test_health_reports_project_when_env_var_points_to_dir(
     project_dir.mkdir()
     fake = KicadCliStatus(available=True, version="10.0.4", raw_output="", error=None)
     monkeypatch.setattr("kicad_mcp.tools.meta.probe_version", lambda **_: fake)
+    _stub_ipc_ok(monkeypatch)
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project_dir))
 
     mcp = create_server()
@@ -95,6 +138,7 @@ async def test_health_reports_project_when_env_var_points_to_dir(
 async def test_health_against_real_kicad_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ejerce el binario real de kicad-cli. Requiere KiCad ≥ 9.0 en PATH (ADR-0002)."""
     monkeypatch.delenv("KICAD_MCP_PROJECT", raising=False)
+    _stub_ipc_ok(monkeypatch)  # el IPC no está en Fase 0 (WARN); se cubre en integration_gui
 
     mcp = create_server()
     async with create_connected_server_and_client_session(mcp._mcp_server) as client:

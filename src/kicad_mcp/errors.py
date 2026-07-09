@@ -46,7 +46,10 @@ class KicadMcpError(Exception):
         self.code = code
         self.message = message
         self.hint = hint
-        super().__init__(f"[{code.value}] {message}")
+        # El texto propaga a través de FastMCP; incluir hint para que el
+        # agente reciba la parte accionable sin depender de contenido
+        # estructurado (que MVP no expone).
+        super().__init__(f"[{code.value}] {message} hint: {hint}")
 
     def to_dict(self) -> dict[str, Any]:
         return {"code": self.code.value, "message": self.message, "hint": self.hint}

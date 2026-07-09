@@ -15,6 +15,14 @@ if TYPE_CHECKING:
 
 def register_all(mcp: FastMCP) -> None:
     """Registra todas las tools del MVP en la instancia FastMCP."""
+    from .export import register as register_export
     from .meta import register as register_meta
+    from .pcb import register as register_pcb
+    from .validate import register as register_validate
+    from .world import register as register_world
 
     register_meta(mcp)
+    register_world(mcp)
+    register_validate(mcp)
+    register_export(mcp)
+    register_pcb(mcp)

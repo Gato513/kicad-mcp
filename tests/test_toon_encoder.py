@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from kicad_mcp.errors import ErrorCode, KicadMcpError
 from kicad_mcp.toon.encoder import encode, encode_delta, encode_state
 from kicad_mcp.toon.schema import Component, NormalizedState, Pin
 
@@ -38,7 +39,6 @@ def test_golden_001_minimo_byte_por_byte() -> None:
 
 
 @pytest.mark.golden
-@pytest.mark.xfail(reason="degradación por presupuesto: v0.3 (docs/specs/toon-v1.md §4)")
 def test_golden_002_degradacion_byte_por_byte() -> None:
     state = _load_state(GOLDEN_DIR / "002_degradacion" / "input.json")
     params = json.loads((GOLDEN_DIR / "002_degradacion" / "params.json").read_text())
@@ -92,6 +92,16 @@ def _fixture_ground_truth_to_state(gt: dict[str, Any]) -> NormalizedState:
         for ref, data in gt["components"].items()
     )
     return NormalizedState(kind="sch", snap=1, components=components)
+
+
+@pytest.mark.unit
+def test_encoder_raises_context_budget_impossible_when_no_level_fits() -> None:
+    """Un estado modesto con ``max_tokens`` absurdamente bajo debe fallar tipado."""
+    state = _load_state(GOLDEN_DIR / "002_degradacion" / "input.json")
+    with pytest.raises(KicadMcpError) as excinfo:
+        encode(state, max_tokens=1, focus_ref="U1", radius_mm=10.0)
+    assert excinfo.value.code is ErrorCode.CONTEXT_BUDGET_IMPOSSIBLE
+    assert "presupuesto mínimo" in excinfo.value.hint
 
 
 @pytest.mark.unit

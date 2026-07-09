@@ -46,7 +46,15 @@ items: [{ref?|net?|pos?}]}` — posiciones en **mm**.
 | `export_manufacturing` | Gerbers + drill a directorio del proyecto. Gate G3 | `output_dir?=fab/` | none | `EXPORT_BLOCKED_BY_DRC`, `KICAD_CLI_FAILED`, `PATH_OUTSIDE_PROJECT` |
 | `export_bom` | BOM en CSV | `output_path?` | none | `KICAD_CLI_FAILED`, `PATH_OUTSIDE_PROJECT` |
 | `export_netlist` | Netlist del esquemático | `output_path?` | none | `KICAD_CLI_FAILED`, `PATH_OUTSIDE_PROJECT` |
-| `export_render` | PDF del esquemático o PNG del PCB | `kind: "sch_pdf"\|"pcb_png"`, `output_path?` | none | `KICAD_CLI_FAILED`, `INVALID_PARAMS`, `PATH_OUTSIDE_PROJECT` |
+| `export_render` | PDF del esquemático (sch_pdf) o del PCB (pcb_pdf) | `kind: "sch_pdf"\|"pcb_pdf"\|"pcb_png"`, `output_path?` | none | `KICAD_CLI_FAILED`, `INVALID_PARAMS`, `PATH_OUTSIDE_PROJECT`, `PROJECT_NOT_FOUND` |
+
+Notas de `export_render`:
+- `sch_pdf` → PDF del esquemático (una hoja por página).
+- `pcb_pdf` → PDF del PCB en modo single-page con capas por defecto
+  `F.Cu, B.Cu, F.SilkS, B.SilkS, Edge.Cuts`. Aceptado desde v0.1.
+- `pcb_png` → **reservado**: `kicad-cli 10` no expone `pcb export png`, por
+  lo que la tool devuelve `INVALID_PARAMS` con hint apuntando a `pcb_pdf`.
+  Se activará sin renombrar el kind cuando kicad-cli lo soporte.
 
 ## Nombres reservados (fases futuras — no implementar, no renombrar)
 

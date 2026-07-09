@@ -76,6 +76,19 @@ class BoardHandle:
         return self._raw
 
 
+@dataclass(frozen=True)
+class BBoxMm:
+    """Bounding box del board en milímetros."""
+
+    min_x: Mm
+    min_y: Mm
+    max_x: Mm
+    max_y: Mm
+
+    def contains(self, x: Mm, y: Mm) -> bool:
+        return self.min_x <= x <= self.max_x and self.min_y <= y <= self.max_y
+
+
 # --- Protocolo del cliente (para inyección en tests) --------------------------
 
 
@@ -122,8 +135,7 @@ def _default_client_factory(
             code=ErrorCode.KICAD_NOT_RUNNING,
             message="No se pudo conectar al socket IPC de KiCad.",
             hint=(
-                "Abrí KiCad y habilitá el API server en "
-                "Preferences → Plugins → Enable API server."
+                "Abrí KiCad y habilitá el API server en Preferences → Plugins → Enable API server."
             ),
         ) from exc
 
@@ -171,9 +183,7 @@ class IpcBridge:
     def _ensure_client(self) -> KiCadClientLike:
         if self._client is None:
             token = self._current_env_token()
-            self._client = self._client_factory(
-                self._socket_path, self._timeout_ms, token
-            )
+            self._client = self._client_factory(self._socket_path, self._timeout_ms, token)
             self._instance_token = token
         return self._client
 
@@ -239,3 +249,124 @@ class IpcBridge:
                     hint=message or "sin detalle disponible",
                 ) from exc
             return BoardHandle(_raw=raw) if raw is not None else None
+
+    # -- consultas del board (para validación previa a mutaciones) ------------
+
+    def list_footprint_refs(self, board: BoardHandle) -> list[str]:
+        """Refs (``U1``, ``R42``…) de todos los footprints del board."""
+        with self._lock:
+            self._detect_restart()
+            return [str(fp.reference_field.text.value) for fp in board.raw.get_footprints()]
+
+    def list_net_names(self, board: BoardHandle) -> list[str]:
+        """Nombres de los nets del board."""
+        with self._lock:
+            self._detect_restart()
+            return [str(n.name) for n in board.raw.get_nets()]
+
+    def board_bbox_mm(self, board: BoardHandle) -> BBoxMm:
+        """Bounding box del board en milímetros.
+
+        Preferencia: usar la superficie declarada del board (Edge.Cuts).
+        Fallback: unión de bounding boxes de todos los footprints. En el
+        MVP nos apoyamos en un bbox amplio: el objetivo del check es
+        rechazar coordenadas absurdas, no ser pixel-perfect.
+        """
+        with self._lock:
+            self._detect_restart()
+            items = list(board.raw.get_footprints())
+            if not items:
+                # Board vacío: no hay bbox útil; devolvemos un rango grande
+                # que no rechaza nada razonable (1e6 mm es el borde
+                # razonable de KiCad).
+                return BBoxMm(Mm(-1e6), Mm(-1e6), Mm(1e6), Mm(1e6))
+            xs: list[float] = []
+            ys: list[float] = []
+            for fp in items:
+                pos = fp.position
+                xs.append(nm_to_mm(Nm(int(pos.x))))
+                ys.append(nm_to_mm(Nm(int(pos.y))))
+            # Margen de 100 mm alrededor del enjambre de footprints.
+            margin = 100.0
+            return BBoxMm(
+                Mm(min(xs) - margin),
+                Mm(min(ys) - margin),
+                Mm(max(xs) + margin),
+                Mm(max(ys) + margin),
+            )
+
+    # -- mutaciones -----------------------------------------------------------
+
+    def move_footprint(self, board: BoardHandle, ref: str, x_mm: Mm, y_mm: Mm) -> None:
+        """Mueve el footprint ``ref`` a ``(x_mm, y_mm)`` y persiste el commit.
+
+        Precondición: el llamador ya validó existencia de ``ref`` y que
+        las coordenadas están dentro del bounding box. La validación se
+        hace afuera para poder emitir errores tipados con hints ricos.
+        """
+        with self._lock:
+            self._detect_restart()
+            raw_board = board.raw
+            for fp in raw_board.get_footprints():
+                if str(fp.reference_field.text.value) == ref:
+                    fp.position.x = int(mm_to_nm(x_mm))
+                    fp.position.y = int(mm_to_nm(y_mm))
+                    raw_board.update_items(fp)
+                    return
+            # Consistencia: si no lo encontramos, es un bug del llamador.
+            raise KicadMcpError(
+                code=ErrorCode.COMPONENT_NOT_FOUND,
+                message=f"Footprint {ref} no está en el board (post-validación).",
+                hint="Snapshot del board cambió entre la validación y la mutación.",
+            )
+
+    def add_track(
+        self,
+        board: BoardHandle,
+        net: str,
+        start_mm: tuple[Mm, Mm],
+        end_mm: tuple[Mm, Mm],
+        width_mm: Mm,
+        layer: str,
+    ) -> None:
+        """Agrega un track lineal entre ``start`` y ``end`` en ``layer``.
+
+        Precondición: net y layer válidos, coordenadas dentro del bbox.
+        Segmentos múltiples (points_mm en la spec) se representan como
+        múltiples add_track por la simplicidad del MVP.
+        """
+        # Import perezoso de tipos de kipy: mantiene el bridge testable
+        # con fakes sin pagar el costo cuando kipy no se usa.
+        from kipy.board_types import Track
+        from kipy.geometry import Vector2
+        from kipy.proto.board.board_types_pb2 import BoardLayer
+
+        with self._lock:
+            self._detect_restart()
+            raw_board = board.raw
+            net_obj = next(
+                (n for n in raw_board.get_nets() if str(n.name) == net),
+                None,
+            )
+            if net_obj is None:
+                raise KicadMcpError(
+                    code=ErrorCode.NET_NOT_FOUND,
+                    message=f"Net {net} no está en el board (post-validación).",
+                    hint="Snapshot del board cambió entre la validación y la mutación.",
+                )
+            # Layer string ("F.Cu", "B.Cu", "F.SilkS") → enum BoardLayer (BL_F_Cu,…).
+            try:
+                layer_value = BoardLayer.Value(f"BL_{layer.replace('.', '_')}")
+            except ValueError as exc:
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message=f"Layer {layer!r} no reconocido por KiCad.",
+                    hint="Valores esperados: F.Cu, B.Cu, F.SilkS, B.SilkS, Edge.Cuts, …",
+                ) from exc
+            track = Track()
+            track.start = Vector2.from_xy(int(mm_to_nm(start_mm[0])), int(mm_to_nm(start_mm[1])))
+            track.end = Vector2.from_xy(int(mm_to_nm(end_mm[0])), int(mm_to_nm(end_mm[1])))
+            track.width = int(mm_to_nm(width_mm))
+            track.layer = layer_value
+            track.net = net_obj
+            raw_board.create_items(track)

@@ -56,10 +56,24 @@ Notas de `export_render`:
   lo que la tool devuelve `INVALID_PARAMS` con hint apuntando a `pcb_pdf`.
   Se activará sin renombrar el kind cuando kicad-cli lo soporte.
 
+## Categoría `pcb` (v0.2 — primeras mutaciones, sesión 03)
+
+Detrás del Gate G1 (backup + git checkpoint una vez por sesión) y con
+audit line JSONL por cada mutación aceptada o rechazada.
+
+| Tool | Descripción | Parámetros | Refresh | Errores posibles |
+|---|---|---|---|---|
+| `move_footprint` | Mueve un footprint del PCB a (x_mm, y_mm) | `ref`, `x_mm`, `y_mm` | confirm | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED`, `PROJECT_NOT_FOUND` |
+| `add_track` | Track lineal entre dos puntos, en un net y layer | `net`, `start_x_mm`, `start_y_mm`, `end_x_mm`, `end_y_mm`, `width_mm?=0.25`, `layer?="F.Cu"` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED`, `PROJECT_NOT_FOUND` |
+
+Respuestas de éxito son confirmaciones cortas (~30 tokens, ADR-0004),
+p. ej. `OK move_footprint R5 -> (102.5, 44.0) [snap:1]`.
+
 ## Nombres reservados (fases futuras — no implementar, no renombrar)
 
 v0.2: `add_symbol`, `set_value`, `connect_pins`, `place_footprint`,
-`move_footprint`, `add_track`, `add_via`, `add_zone`, `reload_in_gui`.
+`add_via`, `add_zone`, `reload_in_gui` (los ya implementados
+—`move_footprint`, `add_track`— se mueven a la sección `pcb`).
 v0.3: `get_context_delta`, `get_session_summary`, `checkpoint`.
 v0.4: `suggest_positions`, `route_with_freerouting`.
 

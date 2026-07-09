@@ -164,9 +164,7 @@ def test_absent_kicad_token_is_not_treated_as_restart(
 
 @pytest.mark.unit
 def test_factory_error_maps_to_kicad_not_running() -> None:
-    def failing_factory(
-        socket_path: str | None, timeout_ms: int, kicad_token: str | None
-    ) -> Any:
+    def failing_factory(socket_path: str | None, timeout_ms: int, kicad_token: str | None) -> Any:
         raise KicadMcpError(
             code=ErrorCode.KICAD_NOT_RUNNING,
             message="Fake down",

@@ -60,15 +60,44 @@ Skip **no** es fallo: es la vía de que CI y `pytest -m integration`
   conecta al socket real, pide `get_version()` y valida
   `major ≥ 9`. Es el test-humo mínimo del bridge.
 
-## Próximas cargas (sesión 03 en adelante)
+## Protocolo de mutaciones (`move_footprint`, `add_track`)
 
-Se agregarán en Tarea 6:
+Estas tools están detrás del Gate G1: la PRIMERA mutación de la
+sesión copia `.kicad_sch` y `.kicad_pcb` a
+`<proyecto>/.kicad-mcp/backups/<ts>/` y hace un `git commit` si el
+proyecto es un repo. Ejecutar el protocolo de mutaciones en una copia
+tmp del fixture (nunca sobre el fixture original) y validar releyendo
+por IPC.
 
-- Un `integration_gui` que ejecuta `move_footprint` sobre un board
-  copiado a tmp y relee la posición vía IPC para verificarla.
-- Un `integration_gui` que ejecuta `add_track` entre dos pines de un
-  net conocido y valida que el track aparezca en el board.
+Pasos manuales:
 
-Ambos requieren el board de prueba **cargado en la sesión de KiCad**
-antes de correr los tests. Sin eso, `get_board()` devuelve `None` y los
-tests se saltan.
+1. Copiá el proyecto a tmp e iniciá un repo local para probar el
+   checkpoint git de G1:
+   ```bash
+   cp -r tests/fixtures/004_real /tmp/mut-test
+   git -C /tmp/mut-test init && git -C /tmp/mut-test add -A \
+     && git -C /tmp/mut-test commit -m "baseline"
+   ```
+2. Abrí `/tmp/mut-test/video.kicad_pro` en KiCad y también su
+   `.kicad_pcb`.
+3. En terminal (con KiCad abierto):
+   ```bash
+   export KICAD_MCP_GUI_TEST=1
+   export KICAD_MCP_PROJECT=/tmp/mut-test
+   export KICAD_API_SOCKET="ipc:///tmp/kicad/api.sock"
+   ```
+4. Ejecutá el ping mínimo (Tarea 5): `uv run pytest -m integration_gui`.
+5. Para las mutaciones (sesión siguiente), correr manualmente contra
+   el servidor por MCP Inspector o llamando la tool desde un script.
+   El test automatizado de mutación con relectura queda propuesto
+   para v0.3 (requiere Snapshot Store para verificar).
+
+Después de las mutaciones deberías ver:
+
+- `/tmp/mut-test/.kicad-mcp/backups/<timestamp>/*.kicad_pcb` y `.kicad_sch`.
+- `/tmp/mut-test/.kicad-mcp/audit.jsonl` con una línea JSON por
+  cada mutación (aceptada o rechazada).
+- Un commit git en `HEAD` con mensaje `checkpoint: pre-mutación
+  kicad-mcp`.
+
+Al terminar: cerrar KiCad y borrar `/tmp/mut-test` — es reproducible.

@@ -1,8 +1,8 @@
 """Tools de la categoría ``export``.
 
-Ver `docs/specs/tool-catalog.md §export`. MVP: ``export_bom``,
-``export_netlist``, ``export_render``. ``export_manufacturing`` requiere el
-gate G3 (DRC limpio) y llega con v0.2.
+Ver `docs/specs/tool-catalog.md §export`. Sesión 03: ``export_bom``,
+``export_netlist``, ``export_render``, ``export_manufacturing`` (nueva,
+detrás del gate G3 — DRC clean).
 
 Toda ruta de salida pasa por ``canonicalize_within_project_root`` (regla #4).
 """
@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 from ..errors import ErrorCode, KicadMcpError
+from ..gates.g3 import check_drc_clean
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
 from ..paths import canonicalize_within_project_root
 from ..tools.world import _resolve_root_schematic
@@ -182,5 +183,40 @@ def register(mcp: FastMCP) -> None:
             latency_ms=timer["latency_ms"],
             tokens_est=estimate_tokens(json.dumps(payload, ensure_ascii=False)),
             extra={"kind": kind},
+        )
+        return payload
+
+    @mcp.tool(
+        name="export_manufacturing",
+        description="Gerbers + drill (Gate G3: bloquea si DRC tiene errores)",
+    )
+    def export_manufacturing(output_dir: str | None = None) -> dict[str, Any]:
+        with tool_call_timer() as timer:
+            sch = _resolve_root_schematic()
+            pcb = sch.with_suffix(".kicad_pcb")
+            if not pcb.is_file():
+                raise KicadMcpError(
+                    code=ErrorCode.PROJECT_NOT_FOUND,
+                    message="No se encontró el .kicad_pcb del proyecto activo.",
+                    hint=f"Se buscaba {pcb.name} junto al esquemático.",
+                )
+            check_drc_clean(pcb)  # Gate G3: EXPORT_BLOCKED_BY_DRC si sucio.
+            fab_dir = _resolve_output(output_dir, "fab")
+            fab_dir.mkdir(parents=True, exist_ok=True)
+            _run_cli(
+                ["kicad-cli", "pcb", "export", "gerbers", "-o", str(fab_dir), str(pcb)],
+                action="gerbers",
+            )
+            _run_cli(
+                ["kicad-cli", "pcb", "export", "drill", "-o", str(fab_dir), str(pcb)],
+                action="drill",
+            )
+            files = sorted(p.name for p in fab_dir.iterdir() if p.is_file())
+            payload = {"output_dir": fab_dir.name, "files": files, "count": len(files)}
+        log_tool_call(
+            tool_name="export_manufacturing",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(json.dumps(payload, ensure_ascii=False)),
+            extra={"files_count": len(files)},
         )
         return payload

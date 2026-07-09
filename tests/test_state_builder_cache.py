@@ -57,9 +57,7 @@ def clear_state_cache() -> Any:
 
 
 @pytest.mark.unit
-def test_second_call_same_mtime_hits_cache(
-    monkeypatch: pytest.MonkeyPatch, sch_file: Path
-) -> None:
+def test_second_call_same_mtime_hits_cache(monkeypatch: pytest.MonkeyPatch, sch_file: Path) -> None:
     counter = _RebuildCounter()
     monkeypatch.setattr(state_builder, "load_netlist", counter.netlist)
     monkeypatch.setattr(state_builder, "parse_root_positions", counter.positions)
@@ -74,9 +72,7 @@ def test_second_call_same_mtime_hits_cache(
 
 
 @pytest.mark.unit
-def test_mtime_change_invalidates_cache(
-    monkeypatch: pytest.MonkeyPatch, sch_file: Path
-) -> None:
+def test_mtime_change_invalidates_cache(monkeypatch: pytest.MonkeyPatch, sch_file: Path) -> None:
     counter = _RebuildCounter()
     monkeypatch.setattr(state_builder, "load_netlist", counter.netlist)
     monkeypatch.setattr(state_builder, "parse_root_positions", counter.positions)
@@ -93,9 +89,7 @@ def test_mtime_change_invalidates_cache(
 
 
 @pytest.mark.unit
-def test_snap_change_reuses_cache(
-    monkeypatch: pytest.MonkeyPatch, sch_file: Path
-) -> None:
+def test_snap_change_reuses_cache(monkeypatch: pytest.MonkeyPatch, sch_file: Path) -> None:
     counter = _RebuildCounter()
     monkeypatch.setattr(state_builder, "load_netlist", counter.netlist)
     monkeypatch.setattr(state_builder, "parse_root_positions", counter.positions)

@@ -43,15 +43,49 @@ items: [{ref?|net?|pos?}]}` — posiciones en **mm**.
 
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
-| `export_manufacturing` | Gerbers + drill a directorio del proyecto. Gate G3 | `output_dir?=fab/` | none | `EXPORT_BLOCKED_BY_DRC`, `KICAD_CLI_FAILED`, `PATH_OUTSIDE_PROJECT` |
+| `export_manufacturing` | Gerbers + drill a directorio del proyecto. Gate G3 | `output_dir?=fab/` | none | `EXPORT_BLOCKED_BY_DRC`, `KICAD_CLI_FAILED`, `PATH_OUTSIDE_PROJECT`, `PROJECT_NOT_FOUND` |
 | `export_bom` | BOM en CSV | `output_path?` | none | `KICAD_CLI_FAILED`, `PATH_OUTSIDE_PROJECT` |
 | `export_netlist` | Netlist del esquemático | `output_path?` | none | `KICAD_CLI_FAILED`, `PATH_OUTSIDE_PROJECT` |
-| `export_render` | PDF del esquemático o PNG del PCB | `kind: "sch_pdf"\|"pcb_png"`, `output_path?` | none | `KICAD_CLI_FAILED`, `INVALID_PARAMS`, `PATH_OUTSIDE_PROJECT` |
+| `export_render` | PDF del esquemático (sch_pdf) o del PCB (pcb_pdf) | `kind: "sch_pdf"\|"pcb_pdf"\|"pcb_png"`, `output_path?` | none | `KICAD_CLI_FAILED`, `INVALID_PARAMS`, `PATH_OUTSIDE_PROJECT`, `PROJECT_NOT_FOUND` |
+
+Notas de `export_render`:
+- `sch_pdf` → PDF del esquemático (una hoja por página).
+- `pcb_pdf` → PDF del PCB en modo single-page con capas por defecto
+  `F.Cu, B.Cu, F.SilkS, B.SilkS, Edge.Cuts`. Aceptado desde v0.1.
+- `pcb_png` → **reservado**: `kicad-cli 10` no expone `pcb export png`, por
+  lo que la tool devuelve `INVALID_PARAMS` con hint apuntando a `pcb_pdf`.
+  Se activará sin renombrar el kind cuando kicad-cli lo soporte.
+
+## Categoría `pcb` (v0.2 — primeras mutaciones, sesión 03)
+
+Detrás del Gate G1 (backup + git checkpoint una vez por sesión) y con
+audit line JSONL por cada mutación aceptada o rechazada.
+
+| Tool | Descripción | Parámetros | Refresh | Errores posibles |
+|---|---|---|---|---|
+| `move_footprint` | Mueve un footprint del PCB a (x_mm, y_mm) | `ref`, `x_mm`, `y_mm`, `base_snap?` | confirm | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
+| `add_track` | Track lineal entre dos puntos, en un net y layer | `net`, `start_x_mm`, `start_y_mm`, `end_x_mm`, `end_y_mm`, `width_mm?=0.25`, `layer?="F.Cu"`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
+
+Respuestas de éxito son confirmaciones cortas (≤ 50 tokens, ADR-0004),
+p. ej. `OK move_footprint R5 -> (102.5, 44.0) [snap:12]`.
+
+Parámetro común `base_snap` (sesión 04 T4, aditivo):
+- Ausente → la mutación procede sin verificación de coherencia con el
+  estado que vio el agente (comportamiento pre-v0.3).
+- Presente y no está en el Snapshot Store → `SNAPSHOT_STALE`; el hint
+  instruye pedir `get_world_context` de nuevo (retención = 10 snapshots
+  por proceso servidor).
+- Presente pero el `mtime` de algún archivo del proyecto difiere del
+  registrado en ese snapshot → `EXTERNAL_EDIT_DETECTED`; el usuario
+  editó fuera del agente y hay que re-sync antes de mutar.
+- Presente y todo coincide → la mutación procede; `snap_id` del confirm
+  ecoa `base_snap`.
 
 ## Nombres reservados (fases futuras — no implementar, no renombrar)
 
 v0.2: `add_symbol`, `set_value`, `connect_pins`, `place_footprint`,
-`move_footprint`, `add_track`, `add_via`, `add_zone`, `reload_in_gui`.
+`add_via`, `add_zone`, `reload_in_gui` (los ya implementados
+—`move_footprint`, `add_track`— se mueven a la sección `pcb`).
 v0.3: `get_context_delta`, `get_session_summary`, `checkpoint`.
 v0.4: `suggest_positions`, `route_with_freerouting`.
 

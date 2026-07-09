@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<export version="E">
+  <design>
+    <source>minimal.kicad_sch</source>
+    <date>2026-07-08T00:00:00</date>
+    <tool>Eeschema 10.0.4</tool>
+  </design>
+  <components>
+    <comp ref="R1">
+      <value>10k</value>
+      <libsource lib="Device" part="R" description=""/>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C1">
+      <value>100nF</value>
+      <libsource lib="Device" part="C" description=""/>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="U1">
+      <value>OpAmp</value>
+      <libsource lib="Amplifier_Operational" part="LM358" description=""/>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+            <pin num="3"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+  </components>
+  <libparts>
+    <libpart lib="Device" part="R">
+      <pins>
+        <pin num="1" name="" type="passive"/>
+        <pin num="2" name="" type="passive"/>
+      </pins>
+    </libpart>
+  </libparts>
+  <nets>
+    <net code="1" name="VCC" class="Default">
+      <node ref="R1" pin="1" pintype="passive"/>
+      <node ref="U1" pin="1" pintype="input"/>
+    </net>
+    <net code="2" name="SIG" class="Default">
+      <node ref="R1" pin="2" pintype="passive"/>
+      <node ref="C1" pin="1" pintype="passive"/>
+    </net>
+    <net code="3" name="GND" class="Default">
+      <node ref="C1" pin="2" pintype="passive"/>
+      <node ref="U1" pin="2" pintype="power_in"/>
+    </net>
+    <net code="4" name="unconnected-(U1-P3)" class="Default">
+      <node ref="U1" pin="3" pintype="input"/>
+    </net>
+  </nets>
+</export>

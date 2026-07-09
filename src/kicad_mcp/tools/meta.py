@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .. import __version__
+from ..bridge.ipc import IpcBridge
 from ..bridge.kicad_cli import KicadCliStatus, probe_version
+from ..errors import ErrorCode, KicadMcpError
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
 
 if TYPE_CHECKING:
@@ -54,8 +56,36 @@ def _project_payload(root: Path | None) -> dict[str, Any]:
     return {"status": "ok", "name": root.name}
 
 
-def register(mcp: FastMCP) -> None:
-    """Registra las tools ``meta`` en la instancia FastMCP."""
+def _ipc_payload(bridge: IpcBridge) -> dict[str, Any]:
+    """Snapshot del IPC para ``health``.
+
+    Deliberadamente breve: solo estado y versión. Un fallo del bridge
+    (KICAD_NOT_RUNNING, timeout) se reporta como subsistema sin
+    interrumpir el resto del ``health`` — igual criterio que
+    ``kicad-cli``.
+    """
+    try:
+        v = bridge.get_version()
+        return {"status": "ok", "version": v.full}
+    except KicadMcpError as exc:
+        payload: dict[str, Any] = {
+            "status": "missing" if exc.code is ErrorCode.KICAD_NOT_RUNNING else "error",
+            "code": exc.code.value,
+            "message": exc.message,
+            "hint": exc.hint,
+        }
+        return payload
+
+
+def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
+    """Registra las tools ``meta`` en la instancia FastMCP.
+
+    ``ipc_bridge`` es inyectado desde ``register_all`` como singleton por
+    proceso (sesión 04). Si es ``None`` — camino defensivo para llamadas
+    directas — se instancia local; los tests pasan un fake.
+    """
+
+    bridge = ipc_bridge or IpcBridge()
 
     @mcp.tool(
         name="health",
@@ -68,10 +98,7 @@ def register(mcp: FastMCP) -> None:
             payload: dict[str, Any] = {
                 "server": {"status": "ok", "version": __version__},
                 "kicad_cli": _cli_payload(cli_status),
-                "kicad_ipc": {
-                    "status": "not_checked",
-                    "note": "Bridge IPC llega en v0.2 (arquitectura §10)",
-                },
+                "kicad_ipc": _ipc_payload(bridge),
                 "project": _project_payload(project_root),
             }
         log_tool_call(

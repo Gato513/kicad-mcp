@@ -58,8 +58,13 @@ def check_git() -> None:
     if code == 0 and out == "true":
         add("OK", "Repositorio git", "inicializado")
     else:
-        add("FAIL", "Repositorio git", "no inicializado",
-            "El agente puede resolverlo: git init && git add -A && git commit -m 'chore: estado inicial'")
+        add(
+            "FAIL",
+            "Repositorio git",
+            "no inicializado",
+            "El agente puede resolverlo: "
+            "git init && git add -A && git commit -m 'chore: estado inicial'",
+        )
 
 
 def check_uv() -> None:
@@ -73,7 +78,12 @@ def check_uv() -> None:
 
 def check_deps() -> None:
     if not (REPO / "pyproject.toml").exists():
-        add("FAIL", "pyproject.toml", "ausente", "No debería pasar: está versionado. Verificar clone.")
+        add(
+            "FAIL",
+            "pyproject.toml",
+            "ausente",
+            "No debería pasar: está versionado. Verificar clone.",
+        )
         return
     code, _, _ = run(["uv", "run", "python", "-c", "import mcp, pydantic"], timeout=120)
     if code == 0:
@@ -104,7 +114,7 @@ def check_kicad_cli() -> None:
 
 
 def check_erc() -> None:
-    code, out, err = run(["kicad-cli", "sch", "erc", "--help"])
+    code, _, _ = run(["kicad-cli", "sch", "erc", "--help"])
     if code == 0:
         add("OK", "ERC por CLI", "disponible (KiCad 8+)")
     else:

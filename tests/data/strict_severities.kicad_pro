@@ -1,0 +1,9 @@
+{
+  "meta": {"filename": "video.kicad_pro", "version": 3},
+  "board": {
+    "design_settings": {
+      "rules": {"min_copper_edge_clearance": 0.5},
+      "rule_severities": {"copper_edge_clearance": "error"}
+    }
+  }
+}

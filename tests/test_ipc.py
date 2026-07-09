@@ -12,6 +12,7 @@ Un test ``integration_gui`` mínimo comprueba conectividad real cuando
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -177,6 +178,75 @@ def test_factory_error_maps_to_kicad_not_running() -> None:
         bridge.get_version()
 
     assert excinfo.value.code is ErrorCode.KICAD_NOT_RUNNING
+
+
+# --- fast-fail cuando el socket no existe (sesión 04, T2) --------------------
+
+
+@pytest.mark.unit
+def test_default_factory_fast_fails_when_ipc_socket_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Socket ``ipc://<path>`` inexistente ⇒ ``KICAD_NOT_RUNNING`` en <100 ms.
+
+    Sin este fast-fail, ``kipy`` deja pasar la construcción y falla al
+    primer ``send()`` con costo de import + arranque (medido: ~370 ms en
+    la workstation de dev, se dispararía a 2 s ante timeouts reales).
+    """
+    nonexistent = tmp_path / "definitely-not-there.sock"
+    assert not nonexistent.exists()
+    monkeypatch.setenv("KICAD_API_SOCKET", f"ipc://{nonexistent}")
+
+    bridge = IpcBridge()  # usa el factory real; el fast-fail vive ahí
+
+    t0 = time.monotonic()
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_version()
+    elapsed_ms = (time.monotonic() - t0) * 1000
+
+    assert excinfo.value.code is ErrorCode.KICAD_NOT_RUNNING
+    assert elapsed_ms < 100.0, (
+        f"fast-fail tardó {elapsed_ms:.1f} ms; presupuesto 100 ms para socket ausente"
+    )
+
+
+@pytest.mark.unit
+def test_default_factory_resolves_socket_env_over_arg(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Orden env → arg → default preservado en el fast-fail.
+
+    Con ``KICAD_API_SOCKET`` inexistente y ``socket_path`` arg apuntando a
+    un socket que sí existe, el env debe ganar y fast-failear.
+    """
+    env_socket = tmp_path / "env-missing.sock"
+    arg_socket = tmp_path / "arg-exists.sock"
+    arg_socket.touch()
+    monkeypatch.setenv("KICAD_API_SOCKET", f"ipc://{env_socket}")
+
+    bridge = IpcBridge(socket_path=f"ipc://{arg_socket}")
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_version()
+    assert excinfo.value.code is ErrorCode.KICAD_NOT_RUNNING
+
+
+@pytest.mark.unit
+def test_default_factory_skips_fast_fail_for_non_ipc_scheme(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un esquema no filesystem (``tcp://``, etc.) NO dispara el fast-fail.
+
+    La existencia del socket solo es chequeable para ``ipc://``; los demás
+    esquemas los resuelve ``kipy`` (que a lo sumo tardará su timeout).
+    Aquí solo verificamos que el chequeo no rechaza incorrectamente antes
+    de llegar al factory.
+    """
+    from kicad_mcp.bridge.ipc import _socket_file_missing
+
+    assert _socket_file_missing("tcp://localhost:12345") is False
+    assert _socket_file_missing(None) is False
+    assert _socket_file_missing("ipc://") is False  # sin path → deja pasar
 
 
 # --- register_all singleton (sesión 04) ---------------------------------------

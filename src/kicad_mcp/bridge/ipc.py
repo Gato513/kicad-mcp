@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, NewType, Protocol
 
 from ..errors import ErrorCode, KicadMcpError
@@ -112,6 +113,21 @@ class _ClientFactory(Protocol):
     ) -> KiCadClientLike: ...
 
 
+def _socket_file_missing(socket_uri: str | None) -> bool:
+    """``True`` si ``socket_uri`` es un ``ipc://`` con path filesystem inexistente.
+
+    El check habilita el **fast-fail** (sesión 04): sin este, un ``KiCad(...)``
+    con KiCad cerrado espera 2 s de timeout en cada llamada. Para esquemas no
+    filesystem (``tcp://``, etc.) devuelve ``False`` — que resuelva el factory.
+    """
+    if not socket_uri or not socket_uri.startswith("ipc://"):
+        return False
+    fs_path = socket_uri[len("ipc://") :]
+    if not fs_path:
+        return False
+    return not Path(fs_path).exists()
+
+
 def _default_client_factory(
     socket_path: str | None, timeout_ms: int, kicad_token: str | None
 ) -> KiCadClientLike:
@@ -120,7 +136,21 @@ def _default_client_factory(
     Import perezoso: no se resuelve ``kipy`` hasta que un llamador lo
     necesita (mantiene el server arrancable si el paquete falla al
     importar por razones ambientales).
+
+    **Fast-fail (sesión 04)**: si el socket es un ``ipc://<path>`` y ese
+    ``<path>`` no existe, se levanta ``KICAD_NOT_RUNNING`` inmediatamente
+    en vez de esperar los 2 s del timeout IPC. Reduce la latencia de
+    ``health`` con KiCad cerrado de 2 s a milisegundos.
     """
+    if _socket_file_missing(socket_path):
+        raise KicadMcpError(
+            code=ErrorCode.KICAD_NOT_RUNNING,
+            message="No se pudo conectar al socket IPC de KiCad.",
+            hint=(
+                "Abrí KiCad y habilitá el API server en Preferences → Plugins → Enable API server."
+            ),
+        )
+
     from kipy import KiCad
     from kipy.errors import ConnectionError as _KConn
 

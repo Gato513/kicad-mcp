@@ -63,11 +63,23 @@ audit line JSONL por cada mutación aceptada o rechazada.
 
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
-| `move_footprint` | Mueve un footprint del PCB a (x_mm, y_mm) | `ref`, `x_mm`, `y_mm` | confirm | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED`, `PROJECT_NOT_FOUND` |
-| `add_track` | Track lineal entre dos puntos, en un net y layer | `net`, `start_x_mm`, `start_y_mm`, `end_x_mm`, `end_y_mm`, `width_mm?=0.25`, `layer?="F.Cu"` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED`, `PROJECT_NOT_FOUND` |
+| `move_footprint` | Mueve un footprint del PCB a (x_mm, y_mm) | `ref`, `x_mm`, `y_mm`, `base_snap?` | confirm | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
+| `add_track` | Track lineal entre dos puntos, en un net y layer | `net`, `start_x_mm`, `start_y_mm`, `end_x_mm`, `end_y_mm`, `width_mm?=0.25`, `layer?="F.Cu"`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
 
-Respuestas de éxito son confirmaciones cortas (~30 tokens, ADR-0004),
-p. ej. `OK move_footprint R5 -> (102.5, 44.0) [snap:1]`.
+Respuestas de éxito son confirmaciones cortas (≤ 50 tokens, ADR-0004),
+p. ej. `OK move_footprint R5 -> (102.5, 44.0) [snap:12]`.
+
+Parámetro común `base_snap` (sesión 04 T4, aditivo):
+- Ausente → la mutación procede sin verificación de coherencia con el
+  estado que vio el agente (comportamiento pre-v0.3).
+- Presente y no está en el Snapshot Store → `SNAPSHOT_STALE`; el hint
+  instruye pedir `get_world_context` de nuevo (retención = 10 snapshots
+  por proceso servidor).
+- Presente pero el `mtime` de algún archivo del proyecto difiere del
+  registrado en ese snapshot → `EXTERNAL_EDIT_DETECTED`; el usuario
+  editó fuera del agente y hay que re-sync antes de mutar.
+- Presente y todo coincide → la mutación procede; `snap_id` del confirm
+  ecoa `base_snap`.
 
 ## Nombres reservados (fases futuras — no implementar, no renombrar)
 

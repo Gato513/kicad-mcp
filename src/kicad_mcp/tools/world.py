@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from ..bridge.state_builder import build_state_cached
 from ..errors import ErrorCode, KicadMcpError
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
+from ..snapshots import collect_project_mtimes, get_default_store
 from ..toon.encoder import encode
 
 if TYPE_CHECKING:
@@ -74,10 +75,16 @@ def register(mcp: FastMCP) -> None:
         # Devuelve el string TOON puro (sin envelope JSON). La cabecera
         # ya lleva ``snap`` y ``kind`` — reintroducir un wrapper añadía
         # ~30 % de tokens sin dato nuevo (medido en sesión 02).
-        snap_id = 1  # MVP sin Snapshot Store: siempre 1. v0.3 usará el store.
+        # ``snap`` se obtiene del Snapshot Store (sesión 04 T4): monótono
+        # por proceso, con retención de 10.
         with tool_call_timer() as timer:
             schematic = _resolve_root_schematic()
-            state, cache_hit = build_state_cached(schematic, snap=snap_id)
+            # Registro en el store: reconstruimos con snap=0 (placeholder) y
+            # luego materializamos el snap real via model_copy.
+            state_raw, cache_hit = build_state_cached(schematic, snap=0)
+            mtimes = collect_project_mtimes(schematic)
+            snap_id = get_default_store().register(state_raw, mtimes)
+            state = state_raw.model_copy(update={"snap": snap_id})
             toon = encode(
                 state,
                 max_tokens=max_tokens,

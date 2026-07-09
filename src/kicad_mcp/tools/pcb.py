@@ -24,6 +24,7 @@ from ..bridge.ipc import BoardHandle, IpcBridge, Mm
 from ..errors import ErrorCode, KicadMcpError
 from ..gates.g1 import ensure_session_backup
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
+from ..snapshots import collect_project_mtimes, get_default_store
 from ..tools.world import _resolve_root_schematic
 
 if TYPE_CHECKING:
@@ -50,6 +51,43 @@ def _resolve_board(bridge: IpcBridge) -> BoardHandle:
     return board
 
 
+def _check_base_snap(base_snap: int) -> None:
+    """Valida ``base_snap`` contra el Snapshot Store (sesión 04 T4).
+
+    - Ausente del store → ``SNAPSHOT_STALE``: el agente pidió una mutación
+      contra un snapshot ya evictado (retención = 10) o inexistente.
+    - Presente pero algún archivo del proyecto cambió su mtime respecto
+      del snapshot → ``EXTERNAL_EDIT_DETECTED``: el usuario editó por
+      fuera del agente entre ``get_world_context`` y la mutación.
+
+    Ambos errores son NO-reintentables (mismo criterio del catálogo): el
+    hint instruye pedir contexto fresco antes de continuar.
+    """
+    store = get_default_store()
+    entry = store.get(base_snap)
+    if entry is None:
+        raise KicadMcpError(
+            code=ErrorCode.SNAPSHOT_STALE,
+            message=f"base_snap={base_snap} no está en el store (retención={store.retention}).",
+            hint="Pedí get_world_context de nuevo antes de reintentar la mutación.",
+        )
+    schematic = _resolve_root_schematic()
+    current_mtimes = collect_project_mtimes(schematic)
+    # Comparamos las rutas registradas: si alguna difiere → edición externa.
+    for path, mtime in entry.mtimes.items():
+        current = current_mtimes.get(path)
+        if current != mtime:
+            raise KicadMcpError(
+                code=ErrorCode.EXTERNAL_EDIT_DETECTED,
+                message=("Un archivo del proyecto fue editado fuera del agente."),
+                hint=(
+                    "El usuario modificó el proyecto en KiCad entre el "
+                    "get_world_context y esta mutación; pedí contexto de "
+                    "nuevo antes de continuar."
+                ),
+            )
+
+
 def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
     """Registra las tools de mutación en la instancia FastMCP."""
 
@@ -59,9 +97,13 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="move_footprint",
         description="Mueve un footprint del PCB a (x_mm, y_mm)",
     )
-    def move_footprint(ref: str, x_mm: float, y_mm: float) -> str:
+    def move_footprint(ref: str, x_mm: float, y_mm: float, base_snap: int | None = None) -> str:
         with tool_call_timer() as timer:
             root = _project_root()
+            # Validación de snap opcional (sesión 04 T4). Se hace ANTES de
+            # tocar IPC para que un stale/edición externa no dispare G1.
+            if base_snap is not None:
+                _check_base_snap(base_snap)
             board = _resolve_board(bridge)
 
             refs = bridge.list_footprint_refs(board)
@@ -98,11 +140,14 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
 
             backup_info = ensure_session_backup(root)  # Gate G1
             bridge.move_footprint(board, ref, Mm(x_mm), Mm(y_mm))
-            snap_id = 1  # MVP: Snapshot Store llega en v0.3
+            # snap_id en el confirm y el audit: si el agente pasó
+            # ``base_snap`` lo eco, si no, ``0`` señala "operación no
+            # vinculada a un snapshot" (sesión 04 T4).
+            snap_id = base_snap if base_snap is not None else 0
             audit_record(
                 root,
                 tool="move_footprint",
-                params={"ref": ref, "x_mm": x_mm, "y_mm": y_mm},
+                params={"ref": ref, "x_mm": x_mm, "y_mm": y_mm, "base_snap": base_snap},
                 result={"snap": snap_id, "backup": backup_info.get("backup")},
             )
             confirmation = f"OK move_footprint {ref} -> ({x_mm:.1f}, {y_mm:.1f}) [snap:{snap_id}]"
@@ -127,9 +172,12 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         end_y_mm: float,
         width_mm: float = 0.25,
         layer: str = "F.Cu",
+        base_snap: int | None = None,
     ) -> str:
         with tool_call_timer() as timer:
             root = _project_root()
+            if base_snap is not None:
+                _check_base_snap(base_snap)
             board = _resolve_board(bridge)
 
             nets = bridge.list_net_names(board)
@@ -179,13 +227,15 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 width_mm=Mm(width_mm),
                 layer=layer,
             )
-            snap_id = 1
+            snap_id = base_snap if base_snap is not None else 0
+            track_params = _track_params(
+                net, start_x_mm, start_y_mm, end_x_mm, end_y_mm, width_mm, layer
+            )
+            track_params["base_snap"] = base_snap
             audit_record(
                 root,
                 tool="add_track",
-                params=_track_params(
-                    net, start_x_mm, start_y_mm, end_x_mm, end_y_mm, width_mm, layer
-                ),
+                params=track_params,
                 result={"snap": snap_id, "backup": backup_info.get("backup")},
             )
             confirmation = (

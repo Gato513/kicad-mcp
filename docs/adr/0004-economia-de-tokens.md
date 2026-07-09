@@ -51,3 +51,19 @@ Defaults del MVP, configurables e instrumentados vía el logging de RNF2:
   (F1) confirma este comportamiento: con `max_tokens=220` y un estado que
   el estimador reporta como 202, la degradación se activa. El factor se
   recalibra en Eval A junto con la fórmula del estimador.
+- **Techo de confirmaciones (sesión 04)**: `≤ 50 tokens_est` por
+  confirmación de mutación. `move_footprint` cabe en 30; `add_track`
+  incorpora seis campos (net, start, end, width, layer, snap) y cabe en
+  45. El techo formaliza el "~30 tokens" original del ADR sin obligar a
+  desechar información útil para el agente que encadena varias
+  mutaciones (la palanca real sobre `≤ 400 tokens/operación` es la
+  degradación §4 del contexto, no la confirmación).
+- **Sobre "reducir tokens" del envelope TOON (hallazgo corregido de la
+  sesión 03)**: eliminar el envelope JSON de `get_world_context` NO
+  produjo la reducción esperada del contexto (652 → ~200-250 para la
+  fixture 002). La ganancia real fue del 4-12% según fixture: el
+  envelope agregaba solo ~30 chars fijos + escapes de `\n`. La palanca
+  real sobre el consumo del contexto es la **degradación §4** (colapso
+  de nets, resumen de componentes lejanos, omitir POS), no la forma del
+  envelope. La migración a TOON puro se mantiene por limpieza semántica
+  (TextContent nativo), no por costo de tokens.

@@ -8,7 +8,21 @@ escriban en la carpeta del proyecto debe operar sobre una copia en
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
+
+import pytest
+
+from kicad_mcp.snapshots import get_default_store
+
+
+@pytest.fixture(autouse=True)
+def _reset_snapshot_store() -> Iterator[Any]:
+    """Aísla los tests del ``snap_id`` monótono del store singleton (sesión 04 T4)."""
+    get_default_store().reset()
+    yield
+    get_default_store().reset()
 
 
 def mirror_fixture(src: Path, dst: Path) -> Path:

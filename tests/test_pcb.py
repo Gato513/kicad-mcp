@@ -277,8 +277,14 @@ async def test_move_footprint_success_writes_audit_and_short_confirm(
     entries = [json.loads(line) for line in audit_file.read_text().splitlines()]
     accepted = [e for e in entries if e["tool"] == "move_footprint" and "result" in e]
     assert len(accepted) == 1
-    assert accepted[0]["params"] == {"ref": "R5", "x_mm": 102.5, "y_mm": 44.0}
-    assert accepted[0]["result"]["snap"] == 1
+    assert accepted[0]["params"] == {
+        "ref": "R5",
+        "x_mm": 102.5,
+        "y_mm": 44.0,
+        "base_snap": None,
+    }
+    # Sin ``base_snap``, snap=0 señala "operación no vinculada" (sesión 04 T4).
+    assert accepted[0]["result"]["snap"] == 0
     assert accepted[0]["result"]["backup"].startswith(".kicad-mcp/backups/")
 
 

@@ -180,6 +180,144 @@ def test_factory_error_maps_to_kicad_not_running() -> None:
     assert excinfo.value.code is ErrorCode.KICAD_NOT_RUNNING
 
 
+# --- supervisión del bridge (sesión 04 T3) -----------------------------------
+
+
+class _CountingFactory:
+    """Factory que cuenta invocaciones y produce un cliente por llamada.
+
+    Permite verificar que ``self._client`` se invalidó tras un fallo IPC:
+    el próximo request pide un cliente nuevo (invocación #2 del factory).
+    """
+
+    def __init__(self, client_provider: Any) -> None:
+        self._make_client = client_provider
+        self.calls = 0
+
+    def __call__(
+        self, socket_path: str | None, timeout_ms: int, kicad_token: str | None
+    ) -> _FakeClient:
+        self.calls += 1
+        return self._make_client()
+
+
+class _RaisingClient:
+    """Cliente que levanta la excepción configurada al primer ``get_version``.
+
+    Simula un fallo mid-operación (post-``_ensure_client``): la conexión
+    quedó establecida pero la request explotó.
+    """
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+        self.calls: list[str] = []
+        self._version = _FakeVersion("10.0.4", 10, 0, 4)
+
+    def get_version(self) -> _FakeVersion:
+        self.calls.append("get_version")
+        raise self._exc
+
+    def get_board(self) -> Any:
+        self.calls.append("get_board")
+        raise self._exc
+
+
+@pytest.mark.unit
+def test_supervise_maps_connection_error_and_invalidates_client() -> None:
+    """``ConnectionError`` mid-op ⇒ ``KICAD_NOT_RUNNING`` + próximo request reconecta."""
+    ok_client = _FakeClient(_FakeVersion("10.0.4", 10, 0, 4))
+    raising = _RaisingClient(ConnectionError("Connection refused"))
+    # Primera llamada devuelve el raising client; segunda un cliente sano.
+    clients = iter([raising, ok_client])
+    factory = _CountingFactory(lambda: next(clients))
+    bridge = IpcBridge(client_factory=factory)
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_version()
+    assert excinfo.value.code is ErrorCode.KICAD_NOT_RUNNING
+    assert factory.calls == 1
+
+    # Próximo request: el cliente fue invalidado, el factory se llama de nuevo.
+    v = bridge.get_version()
+    assert v.major == 10
+    assert factory.calls == 2, "supervisión debe forzar reconexión al siguiente request"
+
+
+@pytest.mark.unit
+def test_supervise_maps_timeout_to_kicad_timeout() -> None:
+    """``TimeoutError`` mid-op ⇒ ``KICAD_TIMEOUT`` con hint accionable."""
+    raising = _RaisingClient(TimeoutError("request took too long"))
+    factory = _CountingFactory(lambda: raising)
+    bridge = IpcBridge(client_factory=factory)
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_version()
+    assert excinfo.value.code is ErrorCode.KICAD_TIMEOUT
+    assert "Reintentar" in excinfo.value.hint
+
+
+@pytest.mark.unit
+def test_supervise_maps_generic_api_error_to_cli_failed() -> None:
+    """Excepciones no clasificadas (p. ej. ``ApiError``) ⇒ ``KICAD_CLI_FAILED``."""
+
+    class _FakeApiError(Exception):
+        pass
+
+    raising = _RaisingClient(_FakeApiError("kicad backend rejected request"))
+    factory = _CountingFactory(lambda: raising)
+    bridge = IpcBridge(client_factory=factory)
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_version()
+    assert excinfo.value.code is ErrorCode.KICAD_CLI_FAILED
+    assert "kicad backend rejected" in excinfo.value.hint
+
+
+@pytest.mark.unit
+def test_supervise_does_not_retry_silently_within_same_request() -> None:
+    """La op fallida devuelve error tipado; NO se hace retry silencioso.
+
+    Contrato del prompt sesión 04 T3: la reconexión es responsabilidad del
+    request siguiente. Aquí verifico que ``get_version`` levanta y NO
+    invoca ``client.get_version`` una segunda vez dentro del mismo call.
+    """
+    raising = _RaisingClient(ConnectionError("boom"))
+    factory = _CountingFactory(lambda: raising)
+    bridge = IpcBridge(client_factory=factory)
+
+    with pytest.raises(KicadMcpError):
+        bridge.get_version()
+    assert raising.calls == ["get_version"]  # una sola llamada al cliente
+
+
+@pytest.mark.unit
+def test_supervise_preserves_typed_errors_unchanged() -> None:
+    """``KicadMcpError`` levantado dentro de un op fluye sin remap.
+
+    P. ej. ``move_footprint`` levanta ``COMPONENT_NOT_FOUND`` cuando la
+    ref no existe post-validación; ese error no debe convertirse a
+    KICAD_CLI_FAILED por la supervisión.
+    """
+
+    class _TypedRaisingClient:
+        def get_version(self) -> Any:
+            raise KicadMcpError(
+                code=ErrorCode.KICAD_RESTARTED,
+                message="fake restart",
+                hint="fake hint",
+            )
+
+        def get_board(self) -> Any:
+            return None
+
+    factory = _CountingFactory(lambda: _TypedRaisingClient())
+    bridge = IpcBridge(client_factory=factory)
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_version()
+    assert excinfo.value.code is ErrorCode.KICAD_RESTARTED, "no debe remapear a CLI_FAILED"
+
+
 # --- fast-fail cuando el socket no existe (sesión 04, T2) --------------------
 
 

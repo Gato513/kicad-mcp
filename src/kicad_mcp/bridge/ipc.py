@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NewType, Protocol
@@ -170,6 +172,42 @@ def _default_client_factory(
         ) from exc
 
 
+# --- Clasificación de fallos IPC (supervisión, sesión 04 T3) ------------------
+
+
+def _map_ipc_failure(op_name: str, exc: BaseException) -> KicadMcpError:
+    """Traduce excepciones que atraviesan una operación IPC a errores del catálogo.
+
+    Regla:
+    - ``TimeoutError`` (builtin, socket, kipy) → ``KICAD_TIMEOUT``.
+    - ``ConnectionError`` (builtin) o ``kipy.errors.ConnectionError`` →
+      ``KICAD_NOT_RUNNING``.
+    - Cualquier otro (p. ej. ``kipy.errors.ApiError``) → ``KICAD_CLI_FAILED``
+      con el detalle sanitizado en el hint.
+
+    Se identifica ``kipy.errors.ConnectionError`` por ``__qualname__`` para
+    no forzar el import de ``kipy`` en un ciclo perezoso.
+    """
+    if isinstance(exc, TimeoutError):
+        return KicadMcpError(
+            code=ErrorCode.KICAD_TIMEOUT,
+            message=f"IPC excedió el timeout durante {op_name}.",
+            hint="Reintentar o reducir el alcance de la operación.",
+        )
+    exc_qualname = type(exc).__qualname__
+    if isinstance(exc, ConnectionError) or exc_qualname == "ConnectionError":
+        return KicadMcpError(
+            code=ErrorCode.KICAD_NOT_RUNNING,
+            message="Conexión IPC con KiCad perdida durante la operación.",
+            hint="Abrí KiCad y habilitá el API server; el próximo request reconectará.",
+        )
+    return KicadMcpError(
+        code=ErrorCode.KICAD_CLI_FAILED,
+        message=f"Fallo IPC en {op_name}.",
+        hint=(str(exc)[:200] or "sin detalle disponible"),
+    )
+
+
 # --- Bridge -------------------------------------------------------------------
 
 
@@ -217,6 +255,27 @@ class IpcBridge:
             self._instance_token = token
         return self._client
 
+    @contextmanager
+    def _supervise(self, op_name: str) -> Iterator[None]:
+        """Supervisa un bloque de operación IPC (sesión 04 T3).
+
+        Si el bloque levanta una excepción no tipada (``ApiError``,
+        ``ConnectionError``, ``TimeoutError``, o cualquier otra fuera de
+        ``KicadMcpError``), invalida ``self._client`` para forzar reconexión
+        en el próximo request y mapea a error tipado del catálogo. **NO** se
+        hace retry silencioso: la operación fallida responde su error; la
+        reconexión es responsabilidad del request siguiente.
+        """
+        try:
+            yield
+        except KicadMcpError:
+            raise
+        except BaseException as exc:
+            # Cualquier fallo mid-op → cliente sospechoso. Descartar para
+            # que el próximo request reconstruya la conexión al socket.
+            self._client = None
+            raise _map_ipc_failure(op_name, exc) from exc
+
     def _detect_restart(self) -> None:
         """Compara el token actual con el guardado; lanza ``KICAD_RESTARTED`` si cambió.
 
@@ -247,13 +306,14 @@ class IpcBridge:
         with self._lock:
             self._detect_restart()
             client = self._ensure_client()
-            proto = client.get_version()
-            return IpcVersion(
-                full=str(getattr(proto, "full_version", "")) or "unknown",
-                major=int(getattr(proto, "major", 0)),
-                minor=int(getattr(proto, "minor", 0)),
-                patch=int(getattr(proto, "patch", 0)),
-            )
+            with self._supervise("get_version"):
+                proto = client.get_version()
+                return IpcVersion(
+                    full=str(getattr(proto, "full_version", "")) or "unknown",
+                    major=int(getattr(proto, "major", 0)),
+                    minor=int(getattr(proto, "minor", 0)),
+                    patch=int(getattr(proto, "patch", 0)),
+                )
 
     def get_open_board(self) -> BoardHandle | None:
         """Devuelve un handle al ``Board`` abierto, o ``None`` si no hay board.
@@ -264,21 +324,9 @@ class IpcBridge:
         with self._lock:
             self._detect_restart()
             client = self._ensure_client()
-            try:
+            with self._supervise("get_open_board"):
                 raw = client.get_board()
-            except KicadMcpError:
-                raise
-            except Exception as exc:
-                # Algunos códigos de ``kipy.ApiError`` (por ejemplo, no board
-                # abierto) llegan como ApiError. No mapeamos aquí — el
-                # llamador decide si "no hay board" es un error o un caso.
-                message = str(exc)[:200]
-                raise KicadMcpError(
-                    code=ErrorCode.KICAD_CLI_FAILED,
-                    message="Fallo IPC al recuperar el board abierto.",
-                    hint=message or "sin detalle disponible",
-                ) from exc
-            return BoardHandle(_raw=raw) if raw is not None else None
+                return BoardHandle(_raw=raw) if raw is not None else None
 
     # -- consultas del board (para validación previa a mutaciones) ------------
 
@@ -286,13 +334,15 @@ class IpcBridge:
         """Refs (``U1``, ``R42``…) de todos los footprints del board."""
         with self._lock:
             self._detect_restart()
-            return [str(fp.reference_field.text.value) for fp in board.raw.get_footprints()]
+            with self._supervise("list_footprint_refs"):
+                return [str(fp.reference_field.text.value) for fp in board.raw.get_footprints()]
 
     def list_net_names(self, board: BoardHandle) -> list[str]:
         """Nombres de los nets del board."""
         with self._lock:
             self._detect_restart()
-            return [str(n.name) for n in board.raw.get_nets()]
+            with self._supervise("list_net_names"):
+                return [str(n.name) for n in board.raw.get_nets()]
 
     def board_bbox_mm(self, board: BoardHandle) -> BBoxMm:
         """Bounding box del board en milímetros.
@@ -304,26 +354,27 @@ class IpcBridge:
         """
         with self._lock:
             self._detect_restart()
-            items = list(board.raw.get_footprints())
-            if not items:
-                # Board vacío: no hay bbox útil; devolvemos un rango grande
-                # que no rechaza nada razonable (1e6 mm es el borde
-                # razonable de KiCad).
-                return BBoxMm(Mm(-1e6), Mm(-1e6), Mm(1e6), Mm(1e6))
-            xs: list[float] = []
-            ys: list[float] = []
-            for fp in items:
-                pos = fp.position
-                xs.append(nm_to_mm(Nm(int(pos.x))))
-                ys.append(nm_to_mm(Nm(int(pos.y))))
-            # Margen de 100 mm alrededor del enjambre de footprints.
-            margin = 100.0
-            return BBoxMm(
-                Mm(min(xs) - margin),
-                Mm(min(ys) - margin),
-                Mm(max(xs) + margin),
-                Mm(max(ys) + margin),
-            )
+            with self._supervise("board_bbox_mm"):
+                items = list(board.raw.get_footprints())
+                if not items:
+                    # Board vacío: no hay bbox útil; devolvemos un rango grande
+                    # que no rechaza nada razonable (1e6 mm es el borde
+                    # razonable de KiCad).
+                    return BBoxMm(Mm(-1e6), Mm(-1e6), Mm(1e6), Mm(1e6))
+                xs: list[float] = []
+                ys: list[float] = []
+                for fp in items:
+                    pos = fp.position
+                    xs.append(nm_to_mm(Nm(int(pos.x))))
+                    ys.append(nm_to_mm(Nm(int(pos.y))))
+                # Margen de 100 mm alrededor del enjambre de footprints.
+                margin = 100.0
+                return BBoxMm(
+                    Mm(min(xs) - margin),
+                    Mm(min(ys) - margin),
+                    Mm(max(xs) + margin),
+                    Mm(max(ys) + margin),
+                )
 
     # -- mutaciones -----------------------------------------------------------
 
@@ -336,19 +387,20 @@ class IpcBridge:
         """
         with self._lock:
             self._detect_restart()
-            raw_board = board.raw
-            for fp in raw_board.get_footprints():
-                if str(fp.reference_field.text.value) == ref:
-                    fp.position.x = int(mm_to_nm(x_mm))
-                    fp.position.y = int(mm_to_nm(y_mm))
-                    raw_board.update_items(fp)
-                    return
-            # Consistencia: si no lo encontramos, es un bug del llamador.
-            raise KicadMcpError(
-                code=ErrorCode.COMPONENT_NOT_FOUND,
-                message=f"Footprint {ref} no está en el board (post-validación).",
-                hint="Snapshot del board cambió entre la validación y la mutación.",
-            )
+            with self._supervise("move_footprint"):
+                raw_board = board.raw
+                for fp in raw_board.get_footprints():
+                    if str(fp.reference_field.text.value) == ref:
+                        fp.position.x = int(mm_to_nm(x_mm))
+                        fp.position.y = int(mm_to_nm(y_mm))
+                        raw_board.update_items(fp)
+                        return
+                # Consistencia: si no lo encontramos, es un bug del llamador.
+                raise KicadMcpError(
+                    code=ErrorCode.COMPONENT_NOT_FOUND,
+                    message=f"Footprint {ref} no está en el board (post-validación).",
+                    hint="Snapshot del board cambió entre la validación y la mutación.",
+                )
 
     def add_track(
         self,
@@ -373,30 +425,33 @@ class IpcBridge:
 
         with self._lock:
             self._detect_restart()
-            raw_board = board.raw
-            net_obj = next(
-                (n for n in raw_board.get_nets() if str(n.name) == net),
-                None,
-            )
-            if net_obj is None:
-                raise KicadMcpError(
-                    code=ErrorCode.NET_NOT_FOUND,
-                    message=f"Net {net} no está en el board (post-validación).",
-                    hint="Snapshot del board cambió entre la validación y la mutación.",
+            with self._supervise("add_track"):
+                raw_board = board.raw
+                net_obj = next(
+                    (n for n in raw_board.get_nets() if str(n.name) == net),
+                    None,
                 )
-            # Layer string ("F.Cu", "B.Cu", "F.SilkS") → enum BoardLayer (BL_F_Cu,…).
-            try:
-                layer_value = BoardLayer.Value(f"BL_{layer.replace('.', '_')}")
-            except ValueError as exc:
-                raise KicadMcpError(
-                    code=ErrorCode.INVALID_PARAMS,
-                    message=f"Layer {layer!r} no reconocido por KiCad.",
-                    hint="Valores esperados: F.Cu, B.Cu, F.SilkS, B.SilkS, Edge.Cuts, …",
-                ) from exc
-            track = Track()
-            track.start = Vector2.from_xy(int(mm_to_nm(start_mm[0])), int(mm_to_nm(start_mm[1])))
-            track.end = Vector2.from_xy(int(mm_to_nm(end_mm[0])), int(mm_to_nm(end_mm[1])))
-            track.width = int(mm_to_nm(width_mm))
-            track.layer = layer_value
-            track.net = net_obj
-            raw_board.create_items(track)
+                if net_obj is None:
+                    raise KicadMcpError(
+                        code=ErrorCode.NET_NOT_FOUND,
+                        message=f"Net {net} no está en el board (post-validación).",
+                        hint="Snapshot del board cambió entre la validación y la mutación.",
+                    )
+                # Layer string ("F.Cu", "B.Cu", "F.SilkS") → enum BoardLayer (BL_F_Cu,…).
+                try:
+                    layer_value = BoardLayer.Value(f"BL_{layer.replace('.', '_')}")
+                except ValueError as exc:
+                    raise KicadMcpError(
+                        code=ErrorCode.INVALID_PARAMS,
+                        message=f"Layer {layer!r} no reconocido por KiCad.",
+                        hint="Valores esperados: F.Cu, B.Cu, F.SilkS, B.SilkS, Edge.Cuts, …",
+                    ) from exc
+                track = Track()
+                track.start = Vector2.from_xy(
+                    int(mm_to_nm(start_mm[0])), int(mm_to_nm(start_mm[1]))
+                )
+                track.end = Vector2.from_xy(int(mm_to_nm(end_mm[0])), int(mm_to_nm(end_mm[1])))
+                track.width = int(mm_to_nm(width_mm))
+                track.layer = layer_value
+                track.net = net_obj
+                raw_board.create_items(track)

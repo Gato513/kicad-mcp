@@ -64,6 +64,9 @@ Reglas de formato:
 - Alineación en columnas con dobles espacios; no se exige ancho fijo (la
   alineación perfecta cuesta tokens y no aporta comprensión medida).
 - Componentes ordenados por ref natural (`C1, C2, C10`, no `C1, C10, C2`);
+- Los pines de cada componente se emiten en el orden en que aparecen en el
+  estado normalizado de entrada; el constructor de estado debe producir un
+  orden determinista (orden del documento de la netlist). No se reordenan.
   nets ordenadas: nets de poder primero (ver §4), resto alfabético.
 - El campo `lib` de la entrada **no se emite** en la línea de componente
   (recuperable vía `get_component_detail`); el valor sí, siempre.

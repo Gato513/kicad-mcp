@@ -16,6 +16,7 @@ from mcp.types import CallToolResult, TextContent
 
 from kicad_mcp.server import create_server
 from kicad_mcp.toon.schema import Component, NormalizedState, Pin
+from tests.conftest import mirror_fixture
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -74,8 +75,10 @@ async def test_world_context_with_fake_state(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.integration
-async def test_world_context_full_against_fixture_001(monkeypatch: pytest.MonkeyPatch) -> None:
-    project = FIXTURES / "001_basico"
+async def test_world_context_full_against_fixture_001(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = mirror_fixture(FIXTURES / "001_basico", tmp_path / "001")
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
 
     mcp = create_server()
@@ -97,10 +100,10 @@ async def test_world_context_full_against_fixture_001(monkeypatch: pytest.Monkey
 
 @pytest.mark.integration
 async def test_world_context_with_focus_hides_far_components(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Con focus en J1 y radio pequeño en fixture 003, componentes lejanos van al summary."""
-    project = FIXTURES / "003_grande"
+    project = mirror_fixture(FIXTURES / "003_grande", tmp_path / "003")
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
 
     mcp = create_server()

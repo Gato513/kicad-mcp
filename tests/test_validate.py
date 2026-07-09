@@ -17,6 +17,7 @@ from mcp.types import CallToolResult, TextContent
 
 from kicad_mcp.bridge.rules import Item, RulesReport, Violation, filter_by_min_severity
 from kicad_mcp.server import create_server
+from tests.conftest import mirror_fixture
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -48,10 +49,12 @@ def test_filter_by_min_severity_drops_lower() -> None:
 
 @pytest.mark.integration
 @pytest.mark.parametrize("fixture", ["001_basico", "002_medio"])
-async def test_run_erc_matches_erc_expected(monkeypatch: pytest.MonkeyPatch, fixture: str) -> None:
-    project = FIXTURES / fixture
-    gt = json.loads((project / "ground_truth.json").read_text())
+async def test_run_erc_matches_erc_expected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fixture: str
+) -> None:
+    gt = json.loads((FIXTURES / fixture / "ground_truth.json").read_text())
     expected = gt["erc_expected"]
+    project = mirror_fixture(FIXTURES / fixture, tmp_path / fixture)
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
 
     mcp = create_server()
@@ -66,9 +69,9 @@ async def test_run_erc_matches_erc_expected(monkeypatch: pytest.MonkeyPatch, fix
 
 @pytest.mark.integration
 async def test_run_erc_min_severity_error_filters_warnings(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    project = FIXTURES / "001_basico"
+    project = mirror_fixture(FIXTURES / "001_basico", tmp_path / "001")
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
 
     mcp = create_server()
@@ -81,12 +84,12 @@ async def test_run_erc_min_severity_error_filters_warnings(
 
 @pytest.mark.integration
 async def test_run_drc_reports_violations_on_real_project(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """DRC contra el .kicad_pcb real (004_real): debe correr y devolver counts."""
-    project = FIXTURES / "004_real"
-    if not (project / "video.kicad_pcb").is_file():
+    if not (FIXTURES / "004_real" / "video.kicad_pcb").is_file():
         pytest.skip("fixture 004_real no disponible")
+    project = mirror_fixture(FIXTURES / "004_real", tmp_path / "004")
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
 
     mcp = create_server()

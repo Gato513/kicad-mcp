@@ -17,6 +17,7 @@ import pytest
 from kicad_mcp.bridge.state_builder import build_state
 from kicad_mcp.errors import ErrorCode, KicadMcpError
 from kicad_mcp.toon.schema import NormalizedState
+from tests.conftest import mirror_fixture
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -50,9 +51,10 @@ def _ground_truth_to_comparable(gt: dict[str, Any]) -> dict[str, Any]:
 
 @pytest.mark.integration
 @pytest.mark.parametrize("fixture", ["001_basico", "002_medio", "003_grande"])
-def test_state_builder_matches_ground_truth(fixture: str) -> None:
-    sch = FIXTURES / fixture / "fixture.kicad_sch"
+def test_state_builder_matches_ground_truth(fixture: str, tmp_path: Path) -> None:
     ground_truth = json.loads((FIXTURES / fixture / "ground_truth.json").read_text())
+    project = mirror_fixture(FIXTURES / fixture, tmp_path / fixture)
+    sch = project / "fixture.kicad_sch"
 
     state = build_state(sch.resolve(), snap=1)
     got = _state_to_comparable(state)
@@ -72,11 +74,11 @@ def test_state_builder_matches_ground_truth(fixture: str) -> None:
 
 
 @pytest.mark.integration
-def test_state_builder_refuses_hierarchical_project() -> None:
+def test_state_builder_refuses_hierarchical_project(tmp_path: Path) -> None:
     """El proyecto real (video / 004_real) es multi-hoja: debe fallar tipado."""
-    root_sch = FIXTURES / "004_real" / "video.kicad_sch"
-    if not root_sch.exists():
+    if not (FIXTURES / "004_real" / "video.kicad_sch").exists():
         pytest.skip("fixture 004_real no disponible")
+    project = mirror_fixture(FIXTURES / "004_real", tmp_path / "004")
     with pytest.raises(KicadMcpError) as excinfo:
-        build_state(root_sch.resolve(), snap=1)
+        build_state((project / "video.kicad_sch").resolve(), snap=1)
     assert excinfo.value.code is ErrorCode.UNSUPPORTED_HIERARCHY

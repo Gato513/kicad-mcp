@@ -17,6 +17,7 @@ from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult, TextContent
 
 from kicad_mcp.server import create_server
+from tests.conftest import mirror_fixture
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -69,9 +70,7 @@ async def test_export_bom_rejects_output_outside_project(
 
 @pytest.mark.integration
 async def test_export_bom_writes_csv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    src = FIXTURES / "001_basico"
-    project_copy = tmp_path / "001"
-    _mirror_dir(src, project_copy)
+    project_copy = mirror_fixture(FIXTURES / "001_basico", tmp_path / "001")
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project_copy))
 
     mcp = create_server()
@@ -87,9 +86,7 @@ async def test_export_bom_writes_csv(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 
 @pytest.mark.integration
 async def test_export_netlist_writes_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    src = FIXTURES / "001_basico"
-    project_copy = tmp_path / "001"
-    _mirror_dir(src, project_copy)
+    project_copy = mirror_fixture(FIXTURES / "001_basico", tmp_path / "001")
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project_copy))
 
     mcp = create_server()
@@ -103,9 +100,7 @@ async def test_export_netlist_writes_file(monkeypatch: pytest.MonkeyPatch, tmp_p
 
 @pytest.mark.integration
 async def test_export_render_sch_pdf(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    src = FIXTURES / "001_basico"
-    project_copy = tmp_path / "001"
-    _mirror_dir(src, project_copy)
+    project_copy = mirror_fixture(FIXTURES / "001_basico", tmp_path / "001")
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project_copy))
 
     mcp = create_server()
@@ -119,10 +114,3 @@ async def test_export_render_sch_pdf(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert pdf.is_file()
     with pdf.open("rb") as f:
         assert f.read(4) == b"%PDF"
-
-
-def _mirror_dir(src: Path, dst: Path) -> None:
-    dst.mkdir(parents=True, exist_ok=True)
-    for f in src.iterdir():
-        if f.is_file():
-            (dst / f.name).write_bytes(f.read_bytes())

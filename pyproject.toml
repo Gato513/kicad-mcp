@@ -8,6 +8,7 @@ dependencies = [
     "mcp[cli]>=1.10,<2.0",
     "pydantic>=2.7,<3.0",
     "kicad-python>=0.7,<0.8",
+    "kicad-skip>=0.1",
 ]
 
 [dependency-groups]

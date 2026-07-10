@@ -81,7 +81,13 @@ class _FakeBridge(IpcBridge):
         return self._bbox
 
     def move_footprint(  # type: ignore[override]
-        self, board: BoardHandle, ref: str, x_mm: Mm, y_mm: Mm
+        self,
+        board: BoardHandle,
+        ref: str,
+        x_mm: Mm,
+        y_mm: Mm,
+        *,
+        timings: dict[str, float] | None = None,
     ) -> None:
         self.moves.append((ref, float(x_mm), float(y_mm)))
         # D-06.3: la mutación debe reflejarse en ``snapshot_footprints``,
@@ -91,6 +97,10 @@ class _FakeBridge(IpcBridge):
         # NO tendría la mutación. Un fake fiel a la spec falla si un day-1
         # move_footprint no propaga.
         self._positions[ref] = (float(x_mm), float(y_mm))
+        # Sesión 07 T5: simulamos un lookup cero para exponer el canal
+        # de timing al tool sin ejecutar IPC real.
+        if timings is not None:
+            timings["lookup_ms"] = 0.0
 
     def add_track(  # type: ignore[override]
         self,
@@ -100,6 +110,8 @@ class _FakeBridge(IpcBridge):
         end_mm: tuple[Mm, Mm],
         width_mm: Mm,
         layer: str,
+        *,
+        timings: dict[str, float] | None = None,
     ) -> None:
         self.tracks.append(
             {
@@ -110,6 +122,8 @@ class _FakeBridge(IpcBridge):
                 "layer": layer,
             }
         )
+        if timings is not None:
+            timings["lookup_ms"] = 0.0
 
     def snapshot_footprints(  # type: ignore[override]
         self, board: BoardHandle

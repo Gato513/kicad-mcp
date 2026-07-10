@@ -83,9 +83,17 @@ class _FakeBridge(IpcBridge):
         return self._bbox
 
     def move_footprint(  # type: ignore[override]
-        self, board: BoardHandle, ref: str, x_mm: Mm, y_mm: Mm
+        self,
+        board: BoardHandle,
+        ref: str,
+        x_mm: Mm,
+        y_mm: Mm,
+        *,
+        timings: dict[str, float] | None = None,
     ) -> None:
         self.moves.append((ref, float(x_mm), float(y_mm)))
+        if timings is not None:
+            timings["lookup_ms"] = 0.0
 
     def snapshot_footprints(  # type: ignore[override]
         self, board: BoardHandle

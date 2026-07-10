@@ -114,7 +114,12 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 )
 
             backup_info = ensure_session_backup(root)  # Gate G1
-            bridge.move_footprint(board, ref, Mm(x_mm), Mm(y_mm))
+            # Sesión 07 T5 (D-07.5): la mutación rellena ``timings["lookup_ms"]``
+            # con la latencia de la búsqueda O(board) de la ref. Sirve para
+            # decidir en la 08 si vale la pena optimizar (cache ref→item,
+            # GetItems filtrado, etc.).
+            mutation_timings: dict[str, float] = {}
+            bridge.move_footprint(board, ref, Mm(x_mm), Mm(y_mm), timings=mutation_timings)
             # Snapshot vivo post-mutación (sesión 05 T5, ADR-0007): estado
             # reconstruido desde el board de kipy, ``mtimes=None`` para no
             # dispararse EXTERNAL_EDIT_DETECTED con el Save posterior del
@@ -128,16 +133,19 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 result={"snap": snap_id, "backup": backup_info.get("backup")},
             )
             confirmation = f"OK move_footprint {ref} -> ({x_mm:.1f}, {y_mm:.1f}) [snap:{snap_id}]"
+        extra: dict[str, Any] = {
+            "ref": ref,
+            "backup_already_done": backup_info.get("already_done"),
+            "base_snap": base_snap,
+        }
+        if "lookup_ms" in mutation_timings:
+            extra["lookup_ms"] = round(mutation_timings["lookup_ms"], 3)
         log_tool_call(
             tool_name="move_footprint",
             latency_ms=timer["latency_ms"],
             tokens_est=estimate_tokens(confirmation),
             snap_id=snap_id,
-            extra={
-                "ref": ref,
-                "backup_already_done": backup_info.get("already_done"),
-                "base_snap": base_snap,
-            },
+            extra=extra,
         )
         return confirmation
 
@@ -200,6 +208,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                     )
 
             backup_info = ensure_session_backup(root)  # Gate G1
+            add_track_timings: dict[str, float] = {}
             bridge.add_track(
                 board,
                 net=net,
@@ -207,6 +216,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 end_mm=(Mm(end_x_mm), Mm(end_y_mm)),
                 width_mm=Mm(width_mm),
                 layer=layer,
+                timings=add_track_timings,
             )
             # Snapshot vivo post-mutación (T5, ADR-0007). Aunque add_track no
             # altera la lista de componentes (las tracks no viven en
@@ -228,12 +238,19 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 f"OK add_track {net} ({start_x_mm:.1f},{start_y_mm:.1f})->"
                 f"({end_x_mm:.1f},{end_y_mm:.1f}) w={width_mm:.2f} @{layer} [snap:{snap_id}]"
             )
+        add_track_extra: dict[str, Any] = {
+            "net": net,
+            "layer": layer,
+            "base_snap": base_snap,
+        }
+        if "lookup_ms" in add_track_timings:
+            add_track_extra["lookup_ms"] = round(add_track_timings["lookup_ms"], 3)
         log_tool_call(
             tool_name="add_track",
             latency_ms=timer["latency_ms"],
             tokens_est=estimate_tokens(confirmation),
             snap_id=snap_id,
-            extra={"net": net, "layer": layer, "base_snap": base_snap},
+            extra=add_track_extra,
         )
         return confirmation
 

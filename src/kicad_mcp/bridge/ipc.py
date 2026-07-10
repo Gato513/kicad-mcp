@@ -664,12 +664,26 @@ class IpcBridge:
 
     # -- mutaciones -----------------------------------------------------------
 
-    def move_footprint(self, board: BoardHandle, ref: str, x_mm: Mm, y_mm: Mm) -> None:
+    def move_footprint(
+        self,
+        board: BoardHandle,
+        ref: str,
+        x_mm: Mm,
+        y_mm: Mm,
+        *,
+        timings: dict[str, float] | None = None,
+    ) -> None:
         """Mueve el footprint ``ref`` a ``(x_mm, y_mm)`` y persiste el commit.
 
         Precondición: el llamador ya validó existencia de ``ref`` y que
         las coordenadas están dentro del bounding box. La validación se
         hace afuera para poder emitir errores tipados con hints ricos.
+
+        Si ``timings`` es un dict, se rellena ``timings["lookup_ms"]`` con
+        la latencia de la búsqueda O(board) de la ref (sesión 07 T5,
+        D-07.5). Sirve como instrumento de medición para decidir si vale
+        la pena optimizar la búsqueda (cache ref→item, GetItems filtrado,
+        etc.). El logging es aditivo — F3 intacta.
         """
         # ``fp.position`` es un getter que devuelve ``Vector2(self._proto.position)``
         # (kipy geometry.py:38-42: Vector2 hace CopyFrom del proto). Escribir
@@ -684,11 +698,18 @@ class IpcBridge:
             self._detect_restart()
             with self._supervise("move_footprint"):
                 raw_board = board.raw
+                lookup_start = time.perf_counter()
+                target_fp = None
                 for fp in raw_board.get_footprints():
                     if str(fp.reference_field.text.value) == ref:
-                        fp.position = Vector2.from_xy(int(mm_to_nm(x_mm)), int(mm_to_nm(y_mm)))
-                        raw_board.update_items(fp)
-                        return
+                        target_fp = fp
+                        break
+                if timings is not None:
+                    timings["lookup_ms"] = (time.perf_counter() - lookup_start) * 1000
+                if target_fp is not None:
+                    target_fp.position = Vector2.from_xy(int(mm_to_nm(x_mm)), int(mm_to_nm(y_mm)))
+                    raw_board.update_items(target_fp)
+                    return
                 # Consistencia: si no lo encontramos, es un bug del llamador.
                 raise KicadMcpError(
                     code=ErrorCode.COMPONENT_NOT_FOUND,
@@ -704,12 +725,18 @@ class IpcBridge:
         end_mm: tuple[Mm, Mm],
         width_mm: Mm,
         layer: str,
+        *,
+        timings: dict[str, float] | None = None,
     ) -> None:
         """Agrega un track lineal entre ``start`` y ``end`` en ``layer``.
 
         Precondición: net y layer válidos, coordenadas dentro del bbox.
         Segmentos múltiples (points_mm en la spec) se representan como
         múltiples add_track por la simplicidad del MVP.
+
+        Si ``timings`` es un dict, se rellena ``timings["lookup_ms"]`` con
+        la latencia de la búsqueda O(nets) del net por nombre (sesión 07
+        T5, D-07.5).
         """
         # Import perezoso de tipos de kipy: mantiene el bridge testable
         # con fakes sin pagar el costo cuando kipy no se usa.
@@ -721,10 +748,13 @@ class IpcBridge:
             self._detect_restart()
             with self._supervise("add_track"):
                 raw_board = board.raw
+                lookup_start = time.perf_counter()
                 net_obj = next(
                     (n for n in raw_board.get_nets() if str(n.name) == net),
                     None,
                 )
+                if timings is not None:
+                    timings["lookup_ms"] = (time.perf_counter() - lookup_start) * 1000
                 if net_obj is None:
                     raise KicadMcpError(
                         code=ErrorCode.NET_NOT_FOUND,

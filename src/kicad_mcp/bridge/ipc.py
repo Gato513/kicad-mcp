@@ -23,13 +23,17 @@ from __future__ import annotations
 
 import os
 import threading
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NewType, Protocol
+from typing import Any, NewType, Protocol, TypeVar
 
 from ..errors import ErrorCode, KicadMcpError
+from ..logging_config import log_ipc_retry
+
+_T = TypeVar("_T")
 
 # --- Unidades del dominio -----------------------------------------------------
 
@@ -132,6 +136,8 @@ class KiCadClientLike(Protocol):
     def get_version(self) -> Any: ...
 
     def get_board(self) -> Any: ...
+
+    def get_open_documents(self, doc_type: Any) -> Any: ...
 
 
 class _ClientFactory(Protocol):
@@ -265,8 +271,7 @@ def _map_ipc_failure(op_name: str, exc: BaseException) -> KicadMcpError:
                     code=ErrorCode.KICAD_CLI_FAILED,
                     message=f"KiCad está ocupado durante {op_name}.",
                     hint=(
-                        "KiCad está ocupado con una operación en curso; "
-                        "reintentá en unos segundos."
+                        "KiCad está ocupado con una operación en curso; reintentá en unos segundos."
                     ),
                     data={"ipc_status": "busy"},
                 )
@@ -282,6 +287,43 @@ def _map_ipc_failure(op_name: str, exc: BaseException) -> KicadMcpError:
         message=f"Fallo IPC en {op_name}.",
         hint=(str(exc)[:200] or "sin detalle disponible"),
     )
+
+
+def _is_busy(exc: KicadMcpError) -> bool:
+    """``True`` si el envelope trae ``data.ipc_status == "busy"`` (D-07.2)."""
+    return (
+        exc.code is ErrorCode.KICAD_CLI_FAILED
+        and exc.data is not None
+        and exc.data.get("ipc_status") == "busy"
+    )
+
+
+# --- Retry acotado para lecturas idempotentes (D-07.1) ------------------------
+
+# Whitelist EXPLÍCITA de operaciones a las que se les puede aplicar retry ante
+# ``AS_BUSY``. Todas son solo-lectura y no tienen efectos colaterales en KiCad.
+# Añadir una entrada requiere leer D-07.1 y verificar que reintentar sea
+# semánticamente seguro (el request puede haber sido aceptado y la mutación
+# duplicaría). Las mutaciones NO viajan por este camino: usan ``_supervise``
+# directamente, así que este set NO es un flag encendible por accidente.
+_IDEMPOTENT_OPS: frozenset[str] = frozenset(
+    {
+        "get_version",
+        "get_open_board",
+        "get_open_documents_pcb",  # sesión 07 T3 — probe del health fino
+        "list_footprint_refs",
+        "list_net_names",
+        "board_bbox_mm",
+        "snapshot_footprints",
+        "get_footprint_position",
+    }
+)
+
+# Backoff exponencial acotado (< 1 s total adicional). D-07.1: máximo 2
+# reintentos, para no propagar en cascada un busy que persiste (KiCad
+# probablemente está genuinamente ocupado con router/DRC/refill y no
+# terminará en el próximo cuarto de segundo).
+_BUSY_RETRY_BACKOFFS_MS: tuple[int, ...] = (250, 500)
 
 
 # --- Bridge -------------------------------------------------------------------
@@ -337,20 +379,59 @@ class IpcBridge:
 
         Si el bloque levanta una excepción no tipada (``ApiError``,
         ``ConnectionError``, ``TimeoutError``, o cualquier otra fuera de
-        ``KicadMcpError``), invalida ``self._client`` para forzar reconexión
-        en el próximo request y mapea a error tipado del catálogo. **NO** se
-        hace retry silencioso: la operación fallida responde su error; la
-        reconexión es responsabilidad del request siguiente.
+        ``KicadMcpError``), mapea a error tipado del catálogo y —salvo por
+        ``AS_BUSY`` (D-07.1)— invalida ``self._client`` para forzar reconexión
+        en el próximo request. ``_supervise`` **no** hace retry: eso vive en
+        ``_run_supervised_read`` para lecturas idempotentes en whitelist. Las
+        mutaciones se supervisan directamente y jamás se reintentan.
+
+        AS_BUSY es un rechazo transitorio de KiCad (la UI está ocupada);
+        la conexión IPC sigue viva. Preservar el cliente evita que el
+        wrapper de retry pague una reconexión al socket a cambio de nada.
         """
         try:
             yield
         except KicadMcpError:
             raise
         except BaseException as exc:
-            # Cualquier fallo mid-op → cliente sospechoso. Descartar para
-            # que el próximo request reconstruya la conexión al socket.
-            self._client = None
-            raise _map_ipc_failure(op_name, exc) from exc
+            mapped = _map_ipc_failure(op_name, exc)
+            if not _is_busy(mapped):
+                # Cliente sospechoso → descartar para que el próximo request
+                # reconstruya la conexión. Busy no afecta la conexión.
+                self._client = None
+            raise mapped from exc
+
+    def _run_supervised_read(self, op_name: str, do: Callable[[], _T]) -> _T:
+        """Ejecuta ``do()`` dentro de ``_supervise(op_name)`` con retry acotado
+        para ``AS_BUSY`` (D-07.1).
+
+        ``op_name`` DEBE estar en ``_IDEMPOTENT_OPS`` — el ``assert`` es la
+        **frontera estructural** entre lecturas y mutaciones: no existe otra
+        vía para aplicar retry, así que ninguna mutación puede reintentarse
+        por accidente ni por un flag encendible. Añadir un op a la whitelist
+        exige leer D-07.1 y auditar el determinismo del request.
+
+        Retorna el resultado de ``do()`` a la primera respuesta OK. Backoff
+        exponencial 250 → 500 ms entre intentos (< 1 s total adicional). Si
+        el busy persiste, propaga el ``KICAD_CLI_FAILED`` (``data.ipc_status
+        = "busy"``) del último intento. Cualquier otro fallo del catálogo se
+        propaga sin retry en el primer intento.
+        """
+        if op_name not in _IDEMPOTENT_OPS:
+            raise AssertionError(f"{op_name!r} no está en la whitelist idempotente (D-07.1)")
+        attempt_i = 0
+        max_retries = len(_BUSY_RETRY_BACKOFFS_MS)
+        while True:
+            try:
+                with self._supervise(op_name):
+                    return do()
+            except KicadMcpError as exc:
+                if attempt_i >= max_retries or not _is_busy(exc):
+                    raise
+                backoff_ms = _BUSY_RETRY_BACKOFFS_MS[attempt_i]
+                attempt_i += 1
+                log_ipc_retry(op_name=op_name, attempt=attempt_i, backoff_ms=backoff_ms)
+                time.sleep(backoff_ms / 1000.0)
 
     def _detect_restart(self) -> None:
         """Compara el token actual con el guardado; lanza ``KICAD_RESTARTED`` si cambió.
@@ -382,7 +463,8 @@ class IpcBridge:
         with self._lock:
             self._detect_restart()
             client = self._ensure_client()
-            with self._supervise("get_version"):
+
+            def _do() -> IpcVersion:
                 proto = client.get_version()
                 return IpcVersion(
                     full=str(getattr(proto, "full_version", "")) or "unknown",
@@ -390,6 +472,8 @@ class IpcBridge:
                     minor=int(getattr(proto, "minor", 0)),
                     patch=int(getattr(proto, "patch", 0)),
                 )
+
+            return self._run_supervised_read("get_version", _do)
 
     def get_open_board(self) -> BoardHandle | None:
         """Devuelve un handle al ``Board`` abierto, o ``None`` si no hay board.
@@ -400,9 +484,49 @@ class IpcBridge:
         with self._lock:
             self._detect_restart()
             client = self._ensure_client()
-            with self._supervise("get_open_board"):
+
+            def _do() -> BoardHandle | None:
                 raw = client.get_board()
                 return BoardHandle(_raw=raw) if raw is not None else None
+
+            return self._run_supervised_read("get_open_board", _do)
+
+    def has_open_pcb(self) -> bool:
+        """``True`` si KiCad tiene un PCB Editor abierto (sesión 07 T3).
+
+        Consulta ``get_open_documents(DOCTYPE_PCB)`` en lugar de intentar
+        ``get_board()`` para no traer el proto del board completo. Distingue:
+
+        - Lista no-vacía → PCB Editor abierto (``True``).
+        - Excepción ``AS_UNHANDLED`` (mapeada por ``_map_ipc_failure`` a
+          ``KICAD_CLI_FAILED`` con ``data.ipc_status="unhandled"``) → sólo
+          project manager sin PCB Editor abierto (``False``).
+
+        Cualquier otro error IPC (busy tras retry, timeout, socket muerto)
+        se propaga: ``health`` decide qué reportar en cada nivel del
+        payload sin engañar al agente con un ``False`` que en realidad es
+        "no lo sé".
+        """
+        from kipy.proto.common.types import DocumentType
+
+        with self._lock:
+            self._detect_restart()
+            client = self._ensure_client()
+
+            def _do() -> bool:
+                docs = client.get_open_documents(DocumentType.DOCTYPE_PCB)
+                return len(docs) > 0
+
+            try:
+                return self._run_supervised_read("get_open_documents_pcb", _do)
+            except KicadMcpError as exc:
+                if (
+                    exc.code is ErrorCode.KICAD_CLI_FAILED
+                    and exc.data is not None
+                    and (exc.data.get("ipc_status") == "unhandled")
+                ):
+                    return False
+                raise
 
     # -- consultas del board (para validación previa a mutaciones) ------------
 
@@ -410,15 +534,21 @@ class IpcBridge:
         """Refs (``U1``, ``R42``…) de todos los footprints del board."""
         with self._lock:
             self._detect_restart()
-            with self._supervise("list_footprint_refs"):
+
+            def _do() -> list[str]:
                 return [str(fp.reference_field.text.value) for fp in board.raw.get_footprints()]
+
+            return self._run_supervised_read("list_footprint_refs", _do)
 
     def list_net_names(self, board: BoardHandle) -> list[str]:
         """Nombres de los nets del board."""
         with self._lock:
             self._detect_restart()
-            with self._supervise("list_net_names"):
+
+            def _do() -> list[str]:
                 return [str(n.name) for n in board.raw.get_nets()]
+
+            return self._run_supervised_read("list_net_names", _do)
 
     def board_bbox_mm(self, board: BoardHandle) -> BBoxMm:
         """Bounding box del board en milímetros.
@@ -430,7 +560,8 @@ class IpcBridge:
         """
         with self._lock:
             self._detect_restart()
-            with self._supervise("board_bbox_mm"):
+
+            def _do() -> BBoxMm:
                 items = list(board.raw.get_footprints())
                 if not items:
                     # Board vacío: no hay bbox útil; devolvemos un rango grande
@@ -452,6 +583,8 @@ class IpcBridge:
                     Mm(max(ys) + margin),
                 )
 
+            return self._run_supervised_read("board_bbox_mm", _do)
+
     def snapshot_footprints(self, board: BoardHandle) -> tuple[FootprintData, ...]:
         """Datos primitivos de todos los footprints — para el snapshot post-mutación.
 
@@ -461,7 +594,8 @@ class IpcBridge:
         """
         with self._lock:
             self._detect_restart()
-            with self._supervise("snapshot_footprints"):
+
+            def _do() -> tuple[FootprintData, ...]:
                 items: list[FootprintData] = []
                 for fp in board.raw.get_footprints():
                     ref = str(fp.reference_field.text.value)
@@ -487,6 +621,8 @@ class IpcBridge:
                     )
                 return tuple(items)
 
+            return self._run_supervised_read("snapshot_footprints", _do)
+
     def get_footprint_position(self, board: BoardHandle, ref: str) -> tuple[Mm, Mm]:
         """Posición ``(x_mm, y_mm)`` del footprint ``ref`` según el board vivo.
 
@@ -498,7 +634,8 @@ class IpcBridge:
         """
         with self._lock:
             self._detect_restart()
-            with self._supervise("get_footprint_position"):
+
+            def _do() -> tuple[Mm, Mm]:
                 for fp in board.raw.get_footprints():
                     if str(fp.reference_field.text.value) == ref:
                         pos = fp.position
@@ -511,6 +648,8 @@ class IpcBridge:
                     message=f"Footprint {ref} no está en el board.",
                     hint="Verificá que el ref exista y que el board correcto esté abierto.",
                 )
+
+            return self._run_supervised_read("get_footprint_position", _do)
 
     # -- mutaciones -----------------------------------------------------------
 

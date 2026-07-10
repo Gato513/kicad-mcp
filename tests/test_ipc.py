@@ -464,6 +464,179 @@ def test_supervise_kipy_api_error_without_known_code_falls_through() -> None:
     assert "some other kicad error" in excinfo.value.hint
 
 
+class _KipyApiErrorBase(Exception):
+    """Base para simular ``kipy.errors.ApiError`` sin depender del import real."""
+
+
+_KipyApiErrorBase.__qualname__ = "ApiError"
+_KipyApiErrorBase.__module__ = "kipy.errors"
+
+
+def _kipy_busy(msg: str = "KiCad is busy") -> Exception:
+    exc = _KipyApiErrorBase(msg)
+    exc.code = 7  # AS_BUSY
+    return exc
+
+
+class _BusyThenOkClient:
+    """Cliente fake que devuelve AS_BUSY las primeras ``busy_before_ok`` veces
+    y luego responde correctamente. Simula el patrón real de KiCad procesando
+    una operación background que termina tras un momento.
+    """
+
+    def __init__(self, busy_before_ok: int) -> None:
+        self.busy_before_ok = busy_before_ok
+        self.get_version_calls = 0
+        self._version = _FakeVersion("10.0.4", 10, 0, 4)
+
+    def get_version(self) -> _FakeVersion:
+        self.get_version_calls += 1
+        if self.get_version_calls <= self.busy_before_ok:
+            raise _kipy_busy()
+        return self._version
+
+    def get_board(self) -> Any:
+        return None
+
+    def get_open_documents(self, doc_type: Any) -> Any:
+        return []
+
+
+@pytest.mark.unit
+def test_retry_recovers_after_transient_busy(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AS_BUSY una vez → segundo intento OK, con 1 línea de retry registrada.
+
+    Sesión 07 T2 (D-07.1): el bridge reintenta lecturas idempotentes ante
+    AS_BUSY con backoff 250 → 500 ms. Aquí forzamos backoff cero para no
+    dilatar la suite.
+    """
+    from kicad_mcp.bridge import ipc as ipc_module
+
+    monkeypatch.setattr(ipc_module, "_BUSY_RETRY_BACKOFFS_MS", (0, 0))
+
+    client = _BusyThenOkClient(busy_before_ok=1)
+    bridge = IpcBridge(client_factory=_factory(client))
+
+    with caplog.at_level("INFO", logger="kicad_mcp"):
+        v = bridge.get_version()
+
+    assert v.major == 10
+    assert client.get_version_calls == 2, (
+        f"esperaba 1 busy + 1 retry OK; hubo {client.get_version_calls} llamadas"
+    )
+    retry_lines = [r for r in caplog.records if '"ipc_retry"' in r.message]
+    assert len(retry_lines) == 1
+    assert '"op_name":"get_version"' in retry_lines[0].message
+    assert '"attempt":1' in retry_lines[0].message
+
+
+@pytest.mark.unit
+def test_retry_persistent_busy_after_max_retries_returns_typed_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AS_BUSY persistente → error tipado tras 2 reintentos con ``data.ipc_status='busy'``.
+
+    Prueba de "mutation testing" del retry: forzamos el fake a nunca ceder
+    (busy_before_ok muy alto) y verificamos que:
+    - El bridge propaga ``KICAD_CLI_FAILED`` con ``data.ipc_status='busy'``.
+    - El fake fue invocado exactamente 3 veces (1 intento inicial + 2 retries).
+    - Se emiten exactamente 2 líneas de retry (attempts 1 y 2).
+    """
+    from kicad_mcp.bridge import ipc as ipc_module
+
+    monkeypatch.setattr(ipc_module, "_BUSY_RETRY_BACKOFFS_MS", (0, 0))
+
+    client = _BusyThenOkClient(busy_before_ok=99)
+    bridge = IpcBridge(client_factory=_factory(client))
+
+    with caplog.at_level("INFO", logger="kicad_mcp"), pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_version()
+
+    assert excinfo.value.code is ErrorCode.KICAD_CLI_FAILED
+    assert excinfo.value.data == {"ipc_status": "busy"}
+    assert client.get_version_calls == 3, "1 inicial + 2 retries = 3 invocaciones al cliente"
+    retry_lines = [r for r in caplog.records if '"ipc_retry"' in r.message]
+    assert len(retry_lines) == 2, f"esperaba 2 retries logueados; hubo {len(retry_lines)}"
+    assert '"attempt":1' in retry_lines[0].message
+    assert '"attempt":2' in retry_lines[1].message
+
+
+@pytest.mark.unit
+def test_mutation_move_footprint_does_not_retry_on_busy() -> None:
+    """AS_BUSY en una mutación ⇒ error INMEDIATO, exactamente 1 llamada IPC.
+
+    D-07.1 no reintenta mutaciones bajo NINGUNA circunstancia (KiCad podría
+    haber aceptado la primera y el retry duplicaría). Este test verifica la
+    frontera estructural: ``move_footprint`` NO viaja por
+    ``_run_supervised_read``, así que aunque el rechazo sea busy, no hay
+    retry.
+    """
+
+    class _BusyBoard:
+        def __init__(self) -> None:
+            self.get_footprints_calls = 0
+
+        def get_footprints(self) -> Any:
+            self.get_footprints_calls += 1
+            raise _kipy_busy()
+
+    busy_board = _BusyBoard()
+    board = BoardHandle(_raw=busy_board)
+    bridge = IpcBridge(client_factory=_factory(_FakeClient(board=busy_board)))
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.move_footprint(board, "U1", Mm(10.0), Mm(20.0))
+
+    assert excinfo.value.code is ErrorCode.KICAD_CLI_FAILED
+    assert excinfo.value.data == {"ipc_status": "busy"}
+    assert busy_board.get_footprints_calls == 1, (
+        "una mutación NO se reintenta ante AS_BUSY (D-07.1); "
+        f"hubo {busy_board.get_footprints_calls} invocaciones"
+    )
+
+
+@pytest.mark.unit
+def test_run_supervised_read_rejects_non_idempotent_op_name() -> None:
+    """``_run_supervised_read`` con un op fuera de la whitelist ⇒ AssertionError.
+
+    La whitelist ``_IDEMPOTENT_OPS`` es la frontera estructural entre
+    lecturas y mutaciones (D-07.1). No es un flag encendible: pasar un
+    nombre no listado es un bug del código que llama, y explota loudly.
+    """
+    bridge = IpcBridge(client_factory=_factory(_FakeClient()))
+    with pytest.raises(AssertionError, match="whitelist idempotente"):
+        bridge._run_supervised_read("move_footprint", lambda: None)
+
+
+@pytest.mark.unit
+def test_supervise_preserves_client_on_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un AS_BUSY NO invalida ``self._client`` (D-07.1).
+
+    Complemento de la sesión 04 T3: un fallo genérico invalida el cliente
+    para forzar reconexión, pero AS_BUSY es transitorio y la conexión IPC
+    sigue viva. Preservar el cliente evita reconexiones innecesarias
+    cuando el wrapper de retry reintenta.
+    """
+    from kicad_mcp.bridge import ipc as ipc_module
+
+    monkeypatch.setattr(ipc_module, "_BUSY_RETRY_BACKOFFS_MS", (0, 0))
+
+    client = _BusyThenOkClient(busy_before_ok=99)
+    factory = _CountingFactory(lambda: client)
+    bridge = IpcBridge(client_factory=factory)
+
+    with pytest.raises(KicadMcpError):
+        bridge.get_version()
+
+    # El factory fue invocado UNA sola vez: el bridge preservó el cliente
+    # a través de los 3 intentos porque cada fallo era busy.
+    assert factory.calls == 1, f"esperaba 1 conexión (busy preserva); hubo {factory.calls}"
+
+
 @pytest.mark.unit
 def test_supervise_kipy_connection_error_still_wins_over_api_error_path() -> None:
     """Regresión sesión 06 T1: kipy ``ConnectionError`` sigue mapeado a ``KICAD_NOT_RUNNING``.

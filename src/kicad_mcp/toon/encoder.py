@@ -342,6 +342,85 @@ def encode(
     )
 
 
+def _encode_delta_impl(
+    state: NormalizedState,
+    *,
+    base: NormalizedState,
+    focus_ref: str,
+    radius_mm: float,
+    base_snap: int,
+    opts: _Options,
+) -> str:
+    """Serialización TOON del delta (spec §3) con opciones de degradación.
+
+    ``opts`` transporta las mismas banderas que el encoder de estado completo
+    para que ``get_context_delta`` (sesión 05 T4) reutilice el mecanismo §4.
+    Los cambios (added/removed/updated) siempre se emiten sin degradación:
+    son el corazón del mensaje. Lo que sí se puede degradar es la sección
+    ``[N]`` (colapso de nets de poder) y las posiciones dentro de líneas
+    ``[+]`` / ``[~C]``.
+    """
+    from ..snapshots.delta import compute_delta
+
+    delta = compute_delta(base, state)
+
+    warnings: list[str] = []
+    header = (
+        f"DTOON|v1|snap:{state.snap}|base:{base_snap}|"
+        f"area:r{int(radius_mm)}@{focus_ref}"
+    )
+    lines: list[str] = [header]
+
+    curr_by_ref = {c.ref: c for c in state.components}
+    curr_nets = _collect_nets(state.components)
+
+    for comp in delta.added:
+        lines.append(f"[+] {_encode_component_line(comp, warnings, opts.omit_pos)}")
+    for ref in delta.removed:
+        ref_clean, _flag = _sanitize(ref)
+        lines.append(f"[-] {ref_clean}")
+    for comp in delta.updated:
+        lines.append(f"[~C] {_encode_component_line(comp, warnings, opts.omit_pos)}")
+    for net in delta.nets_changed:
+        members = curr_nets.get(net, [])
+        if not members:
+            # Net eliminada por completo — no la emitimos (no la modela el
+            # grammar del §3; los componentes involucrados ya aparecen en
+            # [-] / [~C]). Se ejercita en tests unit.
+            continue
+        lines.append(f"[~N] {_encode_net_line(net, members, collapse_power=opts.collapse_power)}")
+
+    # Sección [AREA] (spec §3): refs dentro del radio SIN cambios estructurales.
+    # Se computa contra el estado actual (curr) porque describe la vista que
+    # el agente tiene DESPUÉS de aplicar el delta.
+    changed_refs = (
+        {c.ref for c in delta.added}
+        | set(delta.removed)
+        | {c.ref for c in delta.updated}
+    )
+    if focus_ref in curr_by_ref:
+        area_refs = _in_area_refs(state.components, focus_ref, radius_mm)
+        stable_refs = sorted(area_refs - changed_refs, key=_natural_key)
+        if stable_refs:
+            if len(stable_refs) > _AREA_OK_THRESHOLD:
+                lines.append(f"[AREA] {len(stable_refs)} refs sin cambios")
+            else:
+                lines.append("[AREA]")
+                for ref in stable_refs:
+                    ref_clean, _flag = _sanitize(ref)
+                    lines.append(f"{ref_clean} ok")
+
+    if warnings:
+        seen: dict[str, None] = {}
+        for w in warnings:
+            seen.setdefault(w, None)
+        lines.append(f"[AVISO] campos con texto sospechoso: {', '.join(seen)}")
+    if opts.degrade_labels:
+        lines.append(f"[DEGRADADO] {' '.join(opts.degrade_labels)}")
+
+    return "\n".join(lines) + "\n"
+
+
 def encode_delta(
     state: NormalizedState,
     *,
@@ -350,6 +429,77 @@ def encode_delta(
     radius_mm: float,
     base_snap: int,
 ) -> str:
-    """Placeholder del delta (§3). Se implementa en v0.3."""
-    _ = (state, base, focus_ref, radius_mm, base_snap)
-    raise NotImplementedError("ΔTOON no implementado (docs/specs/toon-v1.md §3, v0.3).")
+    """Serializa el delta ``base → state`` a TOON (spec §3), sin degradación.
+
+    Contrato del golden 003: coincidencia byte-a-byte. Frontera F1.
+    Para aplicar presupuesto y degradación, ver ``encode_delta_with_budget``.
+    """
+    return _encode_delta_impl(
+        state,
+        base=base,
+        focus_ref=focus_ref,
+        radius_mm=radius_mm,
+        base_snap=base_snap,
+        opts=_Options(),
+    )
+
+
+def encode_delta_with_budget(
+    state: NormalizedState,
+    *,
+    base: NormalizedState,
+    focus_ref: str,
+    radius_mm: float,
+    base_snap: int,
+    max_tokens: int,
+) -> str:
+    """Encoder del delta con presupuesto (sesión 05 T4, D-05.5).
+
+    Reusa la secuencia de degradación §4 del estado completo (colapso de
+    poder → omisión de posiciones). No se agrupa ``fuera_de_area`` porque
+    el delta ya está semánticamente localizado (el foco lo define el
+    llamador). Si ni el nivel máximo cabe: ``CONTEXT_BUDGET_IMPOSSIBLE``,
+    igual que ``encode`` (D-05.5).
+    """
+    sequence: list[_Options] = [
+        _Options(),
+        _Options(collapse_power=True, degrade_labels=("poder_colapsado",)),
+        _Options(
+            collapse_power=True,
+            omit_pos=True,
+            degrade_labels=("poder_colapsado", "posiciones_omitidas"),
+        ),
+    ]
+    threshold = math.floor(max_tokens * _BUDGET_SAFETY_FACTOR)
+    for opts in sequence:
+        encoded = _encode_delta_impl(
+            state,
+            base=base,
+            focus_ref=focus_ref,
+            radius_mm=radius_mm,
+            base_snap=base_snap,
+            opts=opts,
+        )
+        if estimate_tokens(encoded) <= threshold:
+            return encoded
+
+    min_encoding = _encode_delta_impl(
+        state,
+        base=base,
+        focus_ref=focus_ref,
+        radius_mm=radius_mm,
+        base_snap=base_snap,
+        opts=sequence[-1],
+    )
+    min_budget = estimate_tokens(min_encoding)
+    raise KicadMcpError(
+        code=ErrorCode.CONTEXT_BUDGET_IMPOSSIBLE,
+        message=(
+            f"El delta no cabe en {max_tokens} tokens ni aplicando todos los "
+            "niveles de degradación (spec §4)."
+        ),
+        hint=(
+            f"presupuesto mínimo estimado ≈ {min_budget} tokens; "
+            "subir max_tokens o reducir el radio"
+        ),
+    )

@@ -48,7 +48,6 @@ def test_golden_002_degradacion_byte_por_byte() -> None:
 
 
 @pytest.mark.golden
-@pytest.mark.xfail(reason="ΔTOON: v0.3 (docs/specs/toon-v1.md §3)")
 def test_golden_003_delta_byte_por_byte() -> None:
     state = _load_state(GOLDEN_DIR / "003_delta" / "input.json")
     base = _load_state(GOLDEN_DIR / "003_delta" / "base.json")
@@ -62,6 +61,26 @@ def test_golden_003_delta_byte_por_byte() -> None:
         base_snap=params["base_snap"],
     ).encode("utf-8")
     assert got == expected
+
+
+@pytest.mark.golden
+def test_golden_003_delta_is_deterministic_across_two_runs() -> None:
+    """Sesión 05 T3: dos corridas seguidas del mismo golden ⇒ bytes idénticos.
+
+    Verifica determinismo (sin dependencia de orden de inserción ni hash seed).
+    """
+    state = _load_state(GOLDEN_DIR / "003_delta" / "input.json")
+    base = _load_state(GOLDEN_DIR / "003_delta" / "base.json")
+    params = json.loads((GOLDEN_DIR / "003_delta" / "params.json").read_text())
+    kwargs = {
+        "base": base,
+        "focus_ref": params["focus_ref"],
+        "radius_mm": params["radius_mm"],
+        "base_snap": params["base_snap"],
+    }
+    first = encode_delta(state, **kwargs)
+    second = encode_delta(state, **kwargs)
+    assert first == second
 
 
 def _fixture_ground_truth_to_state(gt: dict[str, Any]) -> NormalizedState:

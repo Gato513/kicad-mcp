@@ -478,14 +478,22 @@ class IpcBridge:
         las coordenadas están dentro del bounding box. La validación se
         hace afuera para poder emitir errores tipados con hints ricos.
         """
+        # ``fp.position`` es un getter que devuelve ``Vector2(self._proto.position)``
+        # (kipy geometry.py:38-42: Vector2 hace CopyFrom del proto). Escribir
+        # ``fp.position.x = …`` muta una copia local y update_items envía el
+        # proto original sin cambios → mutación silenciosamente perdida
+        # (sesión 06 T1). El setter ``fp.position = Vector2(...)`` sí escribe
+        # sobre el proto interno del FootprintInstance y además arrastra
+        # fields/pads por delta (board_types.py:1939-1964).
+        from kipy.geometry import Vector2
+
         with self._lock:
             self._detect_restart()
             with self._supervise("move_footprint"):
                 raw_board = board.raw
                 for fp in raw_board.get_footprints():
                     if str(fp.reference_field.text.value) == ref:
-                        fp.position.x = int(mm_to_nm(x_mm))
-                        fp.position.y = int(mm_to_nm(y_mm))
+                        fp.position = Vector2.from_xy(int(mm_to_nm(x_mm)), int(mm_to_nm(y_mm)))
                         raw_board.update_items(fp)
                         return
                 # Consistencia: si no lo encontramos, es un bug del llamador.

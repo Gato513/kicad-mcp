@@ -669,3 +669,17 @@ async def test_move_footprint_tool_returns_confirm_with_positive_snap_id() -> No
     match = re.search(r"\[snap:(\d+)\]", confirm)
     assert match is not None, f"confirm no incluye [snap:N]: {confirm!r}"
     assert int(match.group(1)) > 0, "snap_id post-mutación debe ser monótono ≥ 1"
+
+    # D-06.3 (sesión 06): verificar el EFECTO. Un confirm con snap_id > 0
+    # solo prueba que el store registró algo; la mutación real vive en el
+    # board de kipy. Re-leemos via bridge — mismo camino que el round-trip
+    # de bajo nivel pero encadenado a la tool MCP. Antes del fix T1 este
+    # assert habría fallado con x1 == x0 (la mutación no se persistía a
+    # través del proto interno de FootprintInstance).
+    x_after, y_after = bridge.get_footprint_position(board, ref)
+    assert abs(float(x_after) - float(target_x)) < 1e-6, (
+        f"tool call OK pero la posición no se propagó: x={x_after}, target={target_x}"
+    )
+    assert abs(float(y_after) - float(target_y)) < 1e-6, (
+        f"tool call OK pero la posición no se propagó: y={y_after}, target={target_y}"
+    )

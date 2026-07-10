@@ -184,6 +184,119 @@ async def test_context_delta_pcb_live_uses_board_not_disk(
 
 
 @pytest.mark.unit
+async def test_context_delta_pcb_live_wins_over_divergent_disk_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Sesión 07 T4.1 (D-07.4): centinela dura de la invariante "disco jamás
+    para bases vivas pcb/pcb", asertada por CONTENIDO del delta.
+
+    Este test **ata la invariante** ``el path de disco jamás debe usarse
+    para bases vivas``. Si alguien en el futuro accidentalmente elimina la
+    rama viva de ``_build_current_for``, el pipeline caería a
+    ``build_state_cached`` y (con este mock) devolvería U1@0,0 — la
+    "mutación invertida" del bug: el board vivo dice U1@50,60 (la mutación
+    real) pero el delta reportaría U1@0,0 (contenido semánticamente basura).
+    Este test lo atrapa asertando la POSICIÓN dentro del ``[~C] U1``, no
+    solo la ausencia de crash o kind cruzado.
+
+    Complementa ``test_context_delta_pcb_live_uses_board_not_disk``, que
+    protege sólo contra "cayó a disco" (build_state_cached lanza
+    AssertionError). Aquí el disco devuelve un estado PLAUSIBLE de kind
+    ``pcb`` (imposible con el ``_rebuild`` actual, que sólo emite ``sch``,
+    pero simulamos un futuro cambio que rompiera invariantes).
+    """
+    project = tmp_path / "proj"
+    project.mkdir()
+    sch = project / "proj.kicad_sch"
+    sch.write_text("(kicad_sch)")
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+
+    # Base: kind=pcb, mtimes=None (vivo), U1 en (100, 50).
+    base = NormalizedState(
+        kind="pcb",
+        snap=0,
+        components=(
+            Component(
+                ref="U1",
+                value="STM32",
+                lib=None,
+                x=100.0,
+                y=50.0,
+                pins=(Pin(p="1", net="3V3"), Pin(p="2", net="GND")),
+            ),
+        ),
+    )
+    snap_id = get_default_store().register(base, mtimes=None)
+
+    # Mock rama viva: U1 movido a (50, 60) — la mutación REAL que hizo el
+    # agente antes de pedir el delta.
+    live_state = NormalizedState(
+        kind="pcb",
+        snap=0,
+        components=(
+            Component(
+                ref="U1",
+                value="STM32",
+                lib=None,
+                x=50.0,
+                y=60.0,
+                pins=(Pin(p="1", net="3V3"), Pin(p="2", net="GND")),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "kicad_mcp.tools.world.build_state_from_board",
+        lambda *_, **__: live_state,
+    )
+    monkeypatch.setattr(
+        "kicad_mcp.bridge.ipc.IpcBridge.get_open_board",
+        lambda self: object(),
+    )
+
+    # Mock rama disco: U1 en (0, 0), kind=pcb (imposible hoy, simula
+    # ruptura de invariante futura). Si el pipeline cae aquí por error,
+    # el delta va a mostrar (0, 0) — la "mutación invertida".
+    divergent_disk_state = NormalizedState(
+        kind="pcb",
+        snap=0,
+        components=(
+            Component(
+                ref="U1",
+                value="STM32",
+                lib=None,
+                x=0.0,
+                y=0.0,
+                pins=(Pin(p="1", net="3V3"), Pin(p="2", net="GND")),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "kicad_mcp.tools.world.build_state_cached",
+        lambda *_, **__: (divergent_disk_state, False),
+    )
+
+    mcp = create_server()
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "get_context_delta",
+            {"base_snap": snap_id, "focus_ref": "U1", "radius_mm": 40.0},
+        )
+    assert not result.isError, _text(result)
+    toon = _text(result)
+    # El delta debe contener la mutación REAL (del board vivo), NO la del
+    # mock de disco. Si esta assert falla con x0.0/y0.0, es porque el
+    # pipeline cayó a la rama de disco — la invariante D-06.1v2 se rompió.
+    changed_lines = [line for line in toon.splitlines() if line.startswith("[~C] U1")]
+    assert len(changed_lines) == 1, f"esperaba 1 línea [~C] U1; TOON:\n{toon}"
+    assert "x50.0 y60.0" in changed_lines[0], (
+        f"delta muestra posición inesperada; probablemente cayó a disco.\nlínea: {changed_lines[0]}"
+    )
+    assert "x0.0 y0.0" not in changed_lines[0], (
+        "delta contiene la posición divergente del mock de disco — invariante rota"
+    )
+
+
+@pytest.mark.unit
 async def test_context_delta_pcb_live_no_board_returns_snapshot_stale(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -437,6 +550,81 @@ async def test_context_delta_log_emits_snap_ids(
     extra = delta_calls[0]["extra"]
     assert isinstance(extra, dict)
     assert extra["base_snap"] == base_snap
+
+
+@pytest.mark.integration_gui
+async def test_context_delta_pcb_pcb_pipeline_after_move_footprint() -> None:
+    """Sesión 07 T4.2 (D-07.4): pipeline delta pcb/pcb realista contra KiCad.
+
+    Registra un snapshot vivo pre-mutación desde el board de kipy, muta ``ref``
+    vía la tool ``move_footprint``, pide ``get_context_delta`` con el snap
+    inicial como base y verifica que el TOON contiene ``[~C] <ref>`` con la
+    NUEVA posición (la mutación se refleja correctamente). Cierra el hueco
+    identificado en la auditoría pre-07 (P1): ningún integration cubría el
+    round-trip completo delta pcb/pcb hasta ahora.
+
+    Teardown en ``finally``: restaura la posición inicial vía bridge para
+    dejar el entorno estable entre corridas (regla 7 no aplica al board de
+    /tmp, es copia descartable, pero el teardown evita drift acumulado).
+    """
+    if os.environ.get("KICAD_MCP_GUI_TEST") != "1":
+        pytest.skip("KICAD_MCP_GUI_TEST != 1; ver docs/pruebas-gui.md")
+    ref = os.environ.get("KICAD_MCP_GUI_REF")
+    if not ref:
+        pytest.skip("KICAD_MCP_GUI_REF no definida; ejemplo: KICAD_MCP_GUI_REF=U19")
+    if not os.environ.get("KICAD_MCP_PROJECT"):
+        pytest.skip("KICAD_MCP_PROJECT no definida; apuntar al proyecto abierto")
+
+    from kicad_mcp.bridge.ipc import IpcBridge, Mm
+    from kicad_mcp.bridge.state_builder import build_state_from_board
+
+    bridge = IpcBridge()
+    board = bridge.get_open_board()
+    if board is None:
+        pytest.skip("no hay board abierto en KiCad")
+
+    x0, y0 = bridge.get_footprint_position(board, ref)
+    try:
+        # Snapshot vivo del board pre-mutación → base_snap del delta.
+        state_pre = build_state_from_board(bridge, board)
+        base_snap = get_default_store().register(state_pre, mtimes=None)
+
+        # Target: desplazamiento 0.254 mm (grid 100 mil clásico de PCB).
+        target_x = Mm(round(float(x0) + 0.254, 4))
+        target_y = Mm(round(float(y0) + 0.254, 4))
+
+        mcp = create_server()
+        async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+            mut = await client.call_tool(
+                "move_footprint",
+                {"ref": ref, "x_mm": float(target_x), "y_mm": float(target_y)},
+            )
+            assert not mut.isError, _text(mut)
+
+            delta = await client.call_tool(
+                "get_context_delta",
+                {"base_snap": base_snap, "focus_ref": ref, "radius_mm": 20.0},
+            )
+        assert not delta.isError, _text(delta)
+        toon = _text(delta)
+
+        # El delta debe reportar [~C] <ref> con la NUEVA posición.
+        changed_lines = [line for line in toon.splitlines() if line.startswith(f"[~C] {ref}")]
+        assert len(changed_lines) == 1, f"esperaba 1 [~C] {ref}; TOON:\n{toon}"
+        expected_pos = f"x{float(target_x):.1f} y{float(target_y):.1f}"
+        assert expected_pos in changed_lines[0], (
+            f"delta muestra posición inesperada.\n"
+            f"esperaba: {expected_pos}\nrecibí: {changed_lines[0]}"
+        )
+        # Reporta el TOON completo para el reporte final de sesión.
+        print(f"\n=== T4.2 TOON delta pcb/pcb ===\n{toon}\n=== fin TOON ===")
+    finally:
+        # Teardown: restauro U19 aunque falle el assert (try/finally).
+        # ``suppress`` no enmascara el error original y evita el noqa.
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            bridge.move_footprint(board, ref, x0, y0)
 
 
 @pytest.mark.unit

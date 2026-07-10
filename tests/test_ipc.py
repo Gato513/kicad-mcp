@@ -612,3 +612,60 @@ def test_move_footprint_round_trip_against_open_board() -> None:
     # Tolerancia de ±1 nm (redondeo banker's, banker_rounding_on_half_micron).
     assert abs(float(x1) - float(target_x)) < 1e-6, f"x: {x1} != {target_x}"
     assert abs(float(y1) - float(target_y)) < 1e-6, f"y: {y1} != {target_y}"
+
+
+@pytest.mark.integration_gui
+async def test_move_footprint_tool_returns_confirm_with_positive_snap_id() -> None:
+    """E2E de la tool ``move_footprint`` contra KiCad: el confirm ecoa un snap > 0.
+
+    Sesión 05 T5: tras la mutación exitosa, la tool registra un snapshot
+    vivo (mtimes=None) y devuelve su ``snap_id`` monótono. La cadena de
+    mutaciones del agente puede así usar el nuevo snap como base_snap del
+    siguiente request.
+
+    Precondiciones:
+    - ``KICAD_MCP_GUI_TEST=1`` (skip si no).
+    - ``KICAD_MCP_GUI_REF=<ref>`` (skip si no).
+    - ``KICAD_MCP_PROJECT`` apuntando al proyecto abierto en KiCad (skip si no).
+    """
+    from mcp.shared.memory import create_connected_server_and_client_session
+    from mcp.types import TextContent
+
+    from kicad_mcp.server import create_server
+
+    if os.environ.get("KICAD_MCP_GUI_TEST") != "1":
+        pytest.skip("KICAD_MCP_GUI_TEST != 1; ver docs/pruebas-gui.md")
+    ref = os.environ.get("KICAD_MCP_GUI_REF")
+    if not ref:
+        pytest.skip("KICAD_MCP_GUI_REF no definida; ejemplo: KICAD_MCP_GUI_REF=U1")
+    if not os.environ.get("KICAD_MCP_PROJECT"):
+        pytest.skip("KICAD_MCP_PROJECT no definida; apuntar a la carpeta del proyecto abierto")
+
+    # Necesitamos una posición inicial válida sobre el board para no
+    # depender del bounding box exacto: leemos y desplazamos 0.127 mm.
+    bridge = IpcBridge()
+    board = bridge.get_open_board()
+    if board is None:
+        pytest.skip("no hay board abierto en KiCad")
+    x0, y0 = bridge.get_footprint_position(board, ref)
+    target_x = Mm(round(float(x0) + 0.127, 4))
+    target_y = Mm(round(float(y0) + 0.127, 4))
+
+    mcp = create_server()
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "move_footprint",
+            {"ref": ref, "x_mm": float(target_x), "y_mm": float(target_y)},
+        )
+    assert not result.isError, result
+    block = result.content[0]
+    assert isinstance(block, TextContent)
+    confirm = block.text
+    assert f"OK move_footprint {ref}" in confirm
+
+    # Regla de sesión 05 T5: el snap_id ecoado > 0 (viene del store post-mutación).
+    import re
+
+    match = re.search(r"\[snap:(\d+)\]", confirm)
+    assert match is not None, f"confirm no incluye [snap:N]: {confirm!r}"
+    assert int(match.group(1)) > 0, "snap_id post-mutación debe ser monótono ≥ 1"

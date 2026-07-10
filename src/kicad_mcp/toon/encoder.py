@@ -365,10 +365,7 @@ def _encode_delta_impl(
     delta = compute_delta(base, state)
 
     warnings: list[str] = []
-    header = (
-        f"DTOON|v1|snap:{state.snap}|base:{base_snap}|"
-        f"area:r{int(radius_mm)}@{focus_ref}"
-    )
+    header = f"DTOON|v1|snap:{state.snap}|base:{base_snap}|area:r{int(radius_mm)}@{focus_ref}"
     lines: list[str] = [header]
 
     curr_by_ref = {c.ref: c for c in state.components}
@@ -394,9 +391,7 @@ def _encode_delta_impl(
     # Se computa contra el estado actual (curr) porque describe la vista que
     # el agente tiene DESPUÉS de aplicar el delta.
     changed_refs = (
-        {c.ref for c in delta.added}
-        | set(delta.removed)
-        | {c.ref for c in delta.updated}
+        {c.ref for c in delta.added} | set(delta.removed) | {c.ref for c in delta.updated}
     )
     if focus_ref in curr_by_ref:
         area_refs = _in_area_refs(state.components, focus_ref, radius_mm)

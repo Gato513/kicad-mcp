@@ -99,6 +99,11 @@ audit line JSONL por cada mutación aceptada o rechazada.
 Respuestas de éxito son confirmaciones cortas (≤ 50 tokens, ADR-0004),
 p. ej. `OK move_footprint R5 -> (102.5, 44.0) [snap:12]`.
 
+Sesión 05 T5: el `snap` del confirm es el **snapshot post-mutación** que
+registra la tool (vivo, ADR-0007). El agente lo usa como `base_snap` de la
+próxima mutación encadenada; el `base_snap` pasado como parámetro se
+preserva en `.kicad-mcp/audit.jsonl` para trazabilidad.
+
 Parámetro común `base_snap` (sesión 04 T4, aditivo):
 - Ausente → la mutación procede sin verificación de coherencia con el
   estado que vio el agente (comportamiento pre-v0.3).

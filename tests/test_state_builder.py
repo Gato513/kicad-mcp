@@ -14,7 +14,14 @@ from typing import Any
 
 import pytest
 
-from kicad_mcp.bridge.state_builder import build_state
+from kicad_mcp.bridge.ipc import (
+    BoardHandle,
+    FootprintData,
+    FootprintPadData,
+    IpcBridge,
+    Mm,
+)
+from kicad_mcp.bridge.state_builder import build_state, build_state_from_board
 from kicad_mcp.errors import ErrorCode, KicadMcpError
 from kicad_mcp.toon.schema import NormalizedState
 from tests.conftest import mirror_fixture
@@ -71,6 +78,82 @@ def test_state_builder_matches_ground_truth(fixture: str, tmp_path: Path) -> Non
         assert got_comp["y"] == pytest.approx(data["y"]), ref
     assert got["nets"] == expected["nets"]
     assert got["unconnected_pins"] == expected["unconnected_pins"]
+
+
+# --- build_state_from_board (sesión 05 T5) ------------------------------------
+
+
+class _RecordingBridge(IpcBridge):
+    """Bridge que devuelve datos preconfigurados en ``snapshot_footprints``.
+
+    No abre socket ni instancia kipy: reproduce el mínimo estado y
+    reemplaza el método consumido por ``build_state_from_board``.
+    """
+
+    def __init__(self, snapshot: tuple[FootprintData, ...]) -> None:
+        import threading
+
+        self._client = None  # type: ignore[assignment]
+        self._instance_token = None
+        self._lock = threading.Lock()
+        self._snapshot = snapshot
+        self.calls = 0
+
+    def snapshot_footprints(  # type: ignore[override]
+        self, board: BoardHandle
+    ) -> tuple[FootprintData, ...]:
+        self.calls += 1
+        return self._snapshot
+
+
+@pytest.mark.unit
+def test_build_state_from_board_produces_pcb_state_with_pins() -> None:
+    """El nuevo path in-memory materializa un ``NormalizedState`` kind=pcb."""
+    snapshot = (
+        FootprintData(
+            ref="U1",
+            value="STM32",
+            x_mm=Mm(100.0),
+            y_mm=Mm(50.0),
+            pads=(
+                FootprintPadData(number="1", net_name="3V3"),
+                FootprintPadData(number="8", net_name="GND"),
+            ),
+        ),
+        FootprintData(
+            ref="C1",
+            value="100nF",
+            x_mm=Mm(105.0),
+            y_mm=Mm(80.0),
+            pads=(
+                FootprintPadData(number="1", net_name="3V3"),
+                FootprintPadData(number="2", net_name=None),  # flotante
+            ),
+        ),
+    )
+    bridge = _RecordingBridge(snapshot)
+    state = build_state_from_board(bridge, BoardHandle(_raw=object()))
+
+    assert state.kind == "pcb"
+    assert state.snap == 0  # el llamador (store.register) lo sobreescribe
+    refs = {c.ref for c in state.components}
+    assert refs == {"U1", "C1"}
+    u1 = next(c for c in state.components if c.ref == "U1")
+    assert u1.value == "STM32"
+    assert u1.x == 100.0 and u1.y == 50.0
+    assert [(pin.p, pin.net) for pin in u1.pins] == [("1", "3V3"), ("8", "GND")]
+    c1 = next(c for c in state.components if c.ref == "C1")
+    assert c1.pins[1].net is None, "pad sin net_name ⇒ Pin.net = None"
+    assert bridge.calls == 1
+
+
+@pytest.mark.unit
+def test_build_state_from_board_handles_empty_board() -> None:
+    """Board vacío ⇒ estado sin componentes (no falla)."""
+    bridge = _RecordingBridge(snapshot=())
+    state = build_state_from_board(bridge, BoardHandle(_raw=object()))
+    assert state.kind == "pcb"
+    assert state.components == ()
 
 
 @pytest.mark.integration

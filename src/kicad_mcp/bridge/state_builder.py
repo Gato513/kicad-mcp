@@ -20,6 +20,7 @@ from pathlib import Path
 
 from ..errors import ErrorCode, KicadMcpError
 from ..toon.schema import Component, NormalizedState, Pin
+from .ipc import BoardHandle, IpcBridge
 from .netlist import Netlist, load_netlist
 from .sch_positions import Placement, parse_root_positions
 
@@ -119,6 +120,37 @@ def build_state_cached(schematic: Path, *, snap: int) -> tuple[NormalizedState, 
 def clear_cache() -> None:
     """Vacía el cache. Útil en tests que necesitan aislar mtime hits."""
     _CACHE.clear()
+
+
+def build_state_from_board(bridge: IpcBridge, board: BoardHandle) -> NormalizedState:
+    """Reconstruye ``NormalizedState`` (kind="pcb") desde el board vivo de kipy.
+
+    Sesión 05 T5. Camino paralelo a ``build_state_cached`` — este NO lee de
+    disco: consulta el board via ``bridge.snapshot_footprints`` (lock-safe)
+    y materializa el estado tal como kipy lo tiene tras la mutación. El
+    ``.kicad_pcb`` de disco todavía no lo refleja (KiCad sólo guarda con
+    ``Save``), por eso el llamador registra este snapshot con ``mtimes=None``
+    (snapshot vivo, ADR-0007).
+
+    El ``snap`` se emite como 0; el llamador lo sobreescribe con el ``snap_id``
+    que devuelve el ``SnapshotStore.register`` (mismo patrón que
+    ``get_world_context``).
+    """
+    footprints = bridge.snapshot_footprints(board)
+    components: list[Component] = []
+    for fp in footprints:
+        pins = tuple(Pin(p=pad.number, net=pad.net_name) for pad in fp.pads)
+        components.append(
+            Component(
+                ref=fp.ref,
+                value=fp.value,
+                lib=None,  # kipy no expone lib acá; recuperable por get_component_detail.
+                x=float(fp.x_mm),
+                y=float(fp.y_mm),
+                pins=pins,
+            )
+        )
+    return NormalizedState(kind="pcb", snap=0, components=tuple(components))
 
 
 def _rebuild(schematic: Path, *, snap: int) -> NormalizedState:

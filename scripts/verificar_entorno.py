@@ -15,6 +15,7 @@ Semántica de estados:
 Exit code: 0 = listo para MVP (FAILs = 0); 1 = bloqueado.
 Solo stdlib. No requiere que el propio proyecto esté instalado.
 """
+
 from __future__ import annotations
 
 import json
@@ -44,13 +45,18 @@ def run(cmd: list[str], timeout: int = 30) -> tuple[int, str, str]:
 
 # ------------------------------------------------------------------ checks
 
+
 def check_python() -> None:
     v = sys.version_info
     if (v.major, v.minor) >= (3, 11):
         add("OK", "Python", f"{v.major}.{v.minor}.{v.micro}")
     else:
-        add("FAIL", "Python", f"{v.major}.{v.minor} < 3.11",
-            "Instalar Python 3.11+ (el humano; en Ubuntu: apt install python3.11)")
+        add(
+            "FAIL",
+            "Python",
+            f"{v.major}.{v.minor} < 3.11",
+            "Instalar Python 3.11+ (el humano; en Ubuntu: apt install python3.11)",
+        )
 
 
 def check_git() -> None:
@@ -72,8 +78,12 @@ def check_uv() -> None:
     if code == 0:
         add("OK", "uv", out)
     else:
-        add("FAIL", "uv", "no está en PATH",
-            "El humano: instalar uv → https://docs.astral.sh/uv/getting-started/installation/")
+        add(
+            "FAIL",
+            "uv",
+            "no está en PATH",
+            "El humano: instalar uv → https://docs.astral.sh/uv/getting-started/installation/",
+        )
 
 
 def check_deps() -> None:
@@ -89,16 +99,24 @@ def check_deps() -> None:
     if code == 0:
         add("OK", "Dependencias Python", "mcp + pydantic importables vía uv")
     else:
-        add("FAIL", "Dependencias Python", "entorno sin sincronizar",
-            "El agente puede resolverlo: uv sync")
+        add(
+            "FAIL",
+            "Dependencias Python",
+            "entorno sin sincronizar",
+            "El agente puede resolverlo: uv sync",
+        )
 
 
 def check_kicad_cli() -> None:
     code, out, _ = run(["kicad-cli", "version"])
     if code != 0:
-        add("FAIL", "kicad-cli", "no está en PATH",
+        add(
+            "FAIL",
+            "kicad-cli",
+            "no está en PATH",
             "El humano: instalar KiCad 10 → https://www.kicad.org/download/ "
-            "(en Ubuntu, el PPA oficial de KiCad; el paquete de la distro puede ser viejo)")
+            "(en Ubuntu, el PPA oficial de KiCad; el paquete de la distro puede ser viejo)",
+        )
         return
     major = int(out.split(".")[0]) if out.split(".")[0].isdigit() else 0
     if major >= 10:
@@ -106,11 +124,14 @@ def check_kicad_cli() -> None:
     elif major == 9:
         add("OK", "kicad-cli", f"v{out} (mínimo soportado; objetivo es 10)")
     elif major >= 7:
-        add("WARN", "kicad-cli", f"v{out}: sirve para netlist/exports pero SIN ERC por CLI",
-            "El humano: actualizar a KiCad 10 antes de la fase de validación ERC")
+        add(
+            "WARN",
+            "kicad-cli",
+            f"v{out}: sirve para netlist/exports pero SIN ERC por CLI",
+            "El humano: actualizar a KiCad 10 antes de la fase de validación ERC",
+        )
     else:
-        add("FAIL", "kicad-cli", f"v{out} demasiado antigua",
-            "El humano: instalar KiCad 10")
+        add("FAIL", "kicad-cli", f"v{out} demasiado antigua", "El humano: instalar KiCad 10")
 
 
 def check_erc() -> None:
@@ -118,8 +139,12 @@ def check_erc() -> None:
     if code == 0:
         add("OK", "ERC por CLI", "disponible (KiCad 8+)")
     else:
-        add("WARN", "ERC por CLI", "no disponible en esta versión de kicad-cli",
-            "Se resuelve al actualizar a KiCad 10 (ver check kicad-cli)")
+        add(
+            "WARN",
+            "ERC por CLI",
+            "no disponible en esta versión de kicad-cli",
+            "Se resuelve al actualizar a KiCad 10 (ver check kicad-cli)",
+        )
 
 
 def check_ipc_socket() -> None:
@@ -131,11 +156,14 @@ def check_ipc_socket() -> None:
     if found:
         add("OK", "Socket IPC de KiCad", str(found))
     else:
-        add("WARN", "Socket IPC de KiCad",
+        add(
+            "WARN",
+            "Socket IPC de KiCad",
             "no visible (KiCad cerrado o API deshabilitado). NO bloquea el MVP solo-lectura; "
             "imprescindible desde v0.2",
             "El humano: abrir KiCad → Preferences → Plugins → Enable API server, "
-            "y dejar KiCad abierto durante sesiones que usen IPC")
+            "y dejar KiCad abierto durante sesiones que usen IPC",
+        )
 
 
 def check_fixtures() -> None:
@@ -146,14 +174,19 @@ def check_fixtures() -> None:
     if shutil.which("kicad-cli") is None:
         add("WARN", "Fixtures", "sin validar (kicad-cli ausente)", "Ver check kicad-cli")
         return
-    code, out, err = run([sys.executable, str(fdir / "validate_fixtures.py"), str(fdir)],
-                         timeout=120)
+    code, out, err = run(
+        [sys.executable, str(fdir / "validate_fixtures.py"), str(fdir)], timeout=120
+    )
     if code == 0:
         add("OK", "Fixtures validados", out.replace("\n", " · "))
     else:
-        add("FAIL", "Fixtures validados", (out + " " + err)[:300],
+        add(
+            "FAIL",
+            "Fixtures validados",
+            (out + " " + err)[:300],
             "Si el fallo es de conectividad de fixtures: reportar al humano, NO editar "
-            "ground_truth para hacerlo pasar (frontera F1)")
+            "ground_truth para hacerlo pasar (frontera F1)",
+        )
 
 
 def check_fixture_004() -> None:
@@ -161,22 +194,34 @@ def check_fixture_004() -> None:
     if d.exists() and any(d.glob("*.kicad_sch")):
         add("OK", "Fixture 004 (real)", "presente")
     else:
-        add("WARN", "Fixture 004 (real)", "pendiente (tarea del humano)",
-            "El humano: ver criterios en docs/specs/fixtures.md §004_real")
+        add(
+            "WARN",
+            "Fixture 004 (real)",
+            "pendiente (tarea del humano)",
+            "El humano: ver criterios en docs/specs/fixtures.md §004_real",
+        )
 
 
 def check_settings() -> None:
     p = REPO / ".claude" / "settings.json"
     if not p.exists():
-        add("FAIL", "Permisos Claude Code", ".claude/settings.json ausente",
-            "Verificar clone: los permisos son parte del diseño de seguridad")
+        add(
+            "FAIL",
+            "Permisos Claude Code",
+            ".claude/settings.json ausente",
+            "Verificar clone: los permisos son parte del diseño de seguridad",
+        )
         return
     try:
         json.loads(p.read_text())
         add("OK", "Permisos Claude Code", "settings.json presente y parseable")
     except json.JSONDecodeError as e:
-        add("FAIL", "Permisos Claude Code", f"settings.json inválido: {e}",
-            "Reportar al humano (el agente tiene denegada la edición de .claude/)")
+        add(
+            "FAIL",
+            "Permisos Claude Code",
+            f"settings.json inválido: {e}",
+            "Reportar al humano (el agente tiene denegada la edición de .claude/)",
+        )
 
 
 def check_npx() -> None:
@@ -184,22 +229,41 @@ def check_npx() -> None:
     if code == 0:
         add("OK", "npx (MCP Inspector)", f"v{out}")
     else:
-        add("WARN", "npx (MCP Inspector)", "no disponible: no habrá Inspector interactivo",
+        add(
+            "WARN",
+            "npx (MCP Inspector)",
+            "no disponible: no habrá Inspector interactivo",
             "El humano: instalar Node.js si quiere usar el Inspector; los tests "
-            "con cliente MCP in-process no lo requieren")
+            "con cliente MCP in-process no lo requieren",
+        )
 
 
 # ------------------------------------------------------------------ main
 
+
 def main() -> int:
-    for fn in (check_python, check_git, check_uv, check_deps, check_kicad_cli,
-               check_erc, check_ipc_socket, check_fixtures, check_fixture_004,
-               check_settings, check_npx):
+    for fn in (
+        check_python,
+        check_git,
+        check_uv,
+        check_deps,
+        check_kicad_cli,
+        check_erc,
+        check_ipc_socket,
+        check_fixtures,
+        check_fixture_004,
+        check_settings,
+        check_npx,
+    ):
         try:
             fn()
         except Exception as e:  # un check roto no debe ocultar los demás
-            add("FAIL", fn.__name__, f"excepción del propio check: {e}",
-                "Reportar al humano: bug del script de verificación")
+            add(
+                "FAIL",
+                fn.__name__,
+                f"excepción del propio check: {e}",
+                "Reportar al humano: bug del script de verificación",
+            )
 
     ancho = max(len(c) for _, c, _, _ in RESULTS)
     icon = {"OK": "✓", "WARN": "△", "FAIL": "✗"}

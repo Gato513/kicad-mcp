@@ -21,7 +21,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult, TextContent
 
-from kicad_mcp.bridge.ipc import BBoxMm, BoardHandle, IpcBridge, Mm
+from kicad_mcp.bridge.ipc import BBoxMm, BoardHandle, FootprintData, FootprintPadData, IpcBridge, Mm
 from kicad_mcp.gates import g1
 from kicad_mcp.logging_config import estimate_tokens
 from kicad_mcp.tools.pcb import register as register_pcb
@@ -89,6 +89,23 @@ class _FakeBridge(IpcBridge):
                 "width_mm": float(width_mm),
                 "layer": layer,
             }
+        )
+
+    def snapshot_footprints(  # type: ignore[override]
+        self, board: BoardHandle
+    ) -> tuple[FootprintData, ...]:
+        # Componentes sintéticos derivados de refs+nets: da al pipeline post-
+        # mutación algo consistente que registrar en el store con mtimes=None.
+        primary_net = self._nets[0] if self._nets else None
+        return tuple(
+            FootprintData(
+                ref=ref,
+                value="V",
+                x_mm=Mm(0.0),
+                y_mm=Mm(0.0),
+                pads=(FootprintPadData(number="1", net_name=primary_net),),
+            )
+            for ref in self._refs
         )
 
 
@@ -283,8 +300,11 @@ async def test_move_footprint_success_writes_audit_and_short_confirm(
         "y_mm": 44.0,
         "base_snap": None,
     }
-    # Sin ``base_snap``, snap=0 señala "operación no vinculada" (sesión 04 T4).
-    assert accepted[0]["result"]["snap"] == 0
+    # Sesión 05 T5: la mutación registra un snapshot vivo post-mutación y
+    # ecoa su ``snap_id`` monótono en el confirm y el audit.
+    new_snap = accepted[0]["result"]["snap"]
+    assert new_snap >= 1, "el snap post-mutación debe ser monótono ≥ 1"
+    assert f"[snap:{new_snap}]" in confirm
     assert accepted[0]["result"]["backup"].startswith(".kicad-mcp/backups/")
 
 

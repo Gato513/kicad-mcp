@@ -24,7 +24,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult, TextContent
 
-from kicad_mcp.bridge.ipc import BBoxMm, BoardHandle, IpcBridge, Mm
+from kicad_mcp.bridge.ipc import BBoxMm, BoardHandle, FootprintData, FootprintPadData, IpcBridge, Mm
 from kicad_mcp.errors import ErrorCode, KicadMcpError
 from kicad_mcp.gates import g1
 from kicad_mcp.snapshots import (
@@ -86,6 +86,21 @@ class _FakeBridge(IpcBridge):
         self, board: BoardHandle, ref: str, x_mm: Mm, y_mm: Mm
     ) -> None:
         self.moves.append((ref, float(x_mm), float(y_mm)))
+
+    def snapshot_footprints(  # type: ignore[override]
+        self, board: BoardHandle
+    ) -> tuple[FootprintData, ...]:
+        primary_net = self._nets[0] if self._nets else None
+        return tuple(
+            FootprintData(
+                ref=ref,
+                value="V",
+                x_mm=Mm(0.0),
+                y_mm=Mm(0.0),
+                pads=(FootprintPadData(number="1", net_name=primary_net),),
+            )
+            for ref in self._refs
+        )
 
 
 def _make_project(tmp_path: Path) -> Path:
@@ -332,14 +347,20 @@ async def test_move_footprint_happy_path_with_valid_base_snap(
         )
     assert not result.isError, _text(result)
     confirm = _text(result)
-    assert f"[snap:{snap_id}]" in confirm, f"snap del confirm debe ecoar base_snap: {confirm!r}"
+    # Sesión 05 T5: el confirm ecoa el snap_id post-mutación (vivo,
+    # ADR-0007), no el base_snap. base_snap sigue en el audit.params.
+    new_snap = snap_id + 1
+    assert f"[snap:{new_snap}]" in confirm, f"esperaba el snap post-mutación: {confirm!r}"
+    # Y ese nuevo snap está en el store con mtimes=None.
+    entry = get_default_store().get(new_snap)
+    assert entry is not None
+    assert entry.mtimes is None
     assert bridge.moves == [("R7", 33.0, 44.0)]
 
-    # Audit: base_snap se registra en params y snap ecoa en result.
     entries = [
         json.loads(line)
         for line in (project / ".kicad-mcp" / "audit.jsonl").read_text().splitlines()
     ]
     accepted = [e for e in entries if e["tool"] == "move_footprint" and "result" in e]
     assert accepted[-1]["params"]["base_snap"] == snap_id
-    assert accepted[-1]["result"]["snap"] == snap_id
+    assert accepted[-1]["result"]["snap"] == new_snap

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..audit.logger import record as audit_record
 from ..bridge.ipc import BoardHandle, IpcBridge, Mm
+from ..bridge.state_builder import build_state_from_board
 from ..errors import ErrorCode, KicadMcpError
 from ..gates.g1 import ensure_session_backup
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
@@ -114,10 +115,12 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
 
             backup_info = ensure_session_backup(root)  # Gate G1
             bridge.move_footprint(board, ref, Mm(x_mm), Mm(y_mm))
-            # snap_id en el confirm y el audit: si el agente pasó
-            # ``base_snap`` lo eco, si no, ``0`` señala "operación no
-            # vinculada a un snapshot" (sesión 04 T4).
-            snap_id = base_snap if base_snap is not None else 0
+            # Snapshot vivo post-mutación (sesión 05 T5, ADR-0007): estado
+            # reconstruido desde el board de kipy, ``mtimes=None`` para no
+            # dispararse EXTERNAL_EDIT_DETECTED con el Save posterior del
+            # agente sobre su propia cadena.
+            new_state = build_state_from_board(bridge, board)
+            snap_id = get_default_store().register(new_state, mtimes=None)
             audit_record(
                 root,
                 tool="move_footprint",
@@ -130,7 +133,11 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             latency_ms=timer["latency_ms"],
             tokens_est=estimate_tokens(confirmation),
             snap_id=snap_id,
-            extra={"ref": ref, "backup_already_done": backup_info.get("already_done")},
+            extra={
+                "ref": ref,
+                "backup_already_done": backup_info.get("already_done"),
+                "base_snap": base_snap,
+            },
         )
         return confirmation
 
@@ -201,7 +208,12 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 width_mm=Mm(width_mm),
                 layer=layer,
             )
-            snap_id = base_snap if base_snap is not None else 0
+            # Snapshot vivo post-mutación (T5, ADR-0007). Aunque add_track no
+            # altera la lista de componentes (las tracks no viven en
+            # NormalizedState), re-registramos para que el agente pueda
+            # encadenar la próxima mutación con un base_snap fresco.
+            new_state = build_state_from_board(bridge, board)
+            snap_id = get_default_store().register(new_state, mtimes=None)
             track_params = _track_params(
                 net, start_x_mm, start_y_mm, end_x_mm, end_y_mm, width_mm, layer
             )
@@ -221,7 +233,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             latency_ms=timer["latency_ms"],
             tokens_est=estimate_tokens(confirmation),
             snap_id=snap_id,
-            extra={"net": net, "layer": layer},
+            extra={"net": net, "layer": layer, "base_snap": base_snap},
         )
         return confirmation
 

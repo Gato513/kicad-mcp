@@ -49,9 +49,7 @@ def _component_signature(comp: Component) -> tuple[object, ...]:
 
     ``lib`` NO participa (spec §2: no se emite en TOON, se recupera aparte).
     """
-    pins = tuple(
-        (pin.p, pin.name, pin.net) for pin in comp.pins
-    )
+    pins = tuple((pin.p, pin.name, pin.net) for pin in comp.pins)
     return (comp.value, comp.x, comp.y, pins)
 
 
@@ -89,9 +87,7 @@ _POWER_NET_RE = re.compile(
 
 
 def _sort_nets(names: set[str]) -> tuple[str, ...]:
-    return tuple(
-        sorted(names, key=lambda n: (0 if _POWER_NET_RE.match(n) else 1, n))
-    )
+    return tuple(sorted(names, key=lambda n: (0 if _POWER_NET_RE.match(n) else 1, n)))
 
 
 def compute_delta(prev: NormalizedState, curr: NormalizedState) -> Delta:
@@ -108,11 +104,7 @@ def compute_delta(prev: NormalizedState, curr: NormalizedState) -> Delta:
         for c in sorted(curr.components, key=lambda c: _natural_key(c.ref))
         if c.ref not in prev_by_ref
     )
-    removed = tuple(
-        r
-        for r in sorted(prev_by_ref.keys(), key=_natural_key)
-        if r not in curr_by_ref
-    )
+    removed = tuple(r for r in sorted(prev_by_ref.keys(), key=_natural_key) if r not in curr_by_ref)
     updated = tuple(
         curr_by_ref[ref]
         for ref in sorted(

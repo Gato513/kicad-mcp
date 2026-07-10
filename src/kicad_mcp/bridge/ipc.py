@@ -92,6 +92,33 @@ class BBoxMm:
         return self.min_x <= x <= self.max_x and self.min_y <= y <= self.max_y
 
 
+@dataclass(frozen=True)
+class FootprintPadData:
+    """Pad de un footprint expuesto por el bridge para construir estado.
+
+    Datos primitivos: el bridge nunca deja escapar tipos de kipy fuera de
+    su borde (regla #5). Sesión 05 T5.
+    """
+
+    number: str
+    net_name: str | None
+
+
+@dataclass(frozen=True)
+class FootprintData:
+    """Footprint del board expuesto por el bridge para construir estado.
+
+    Sesión 05 T5: alimenta al ``state_builder.build_state_from_board`` para
+    registrar snapshots vivos tras mutaciones IPC (ADR-0007).
+    """
+
+    ref: str
+    value: str
+    x_mm: Mm
+    y_mm: Mm
+    pads: tuple[FootprintPadData, ...]
+
+
 # --- Protocolo del cliente (para inyección en tests) --------------------------
 
 
@@ -198,10 +225,9 @@ def _map_ipc_failure(op_name: str, exc: BaseException) -> KicadMcpError:
             hint="Reintentar o reducir el alcance de la operación.",
         )
     exc_type = type(exc)
-    is_kipy_conn_error = (
-        exc_type.__qualname__ == "ConnectionError"
-        and (exc_type.__module__ or "").startswith("kipy")
-    )
+    is_kipy_conn_error = exc_type.__qualname__ == "ConnectionError" and (
+        exc_type.__module__ or ""
+    ).startswith("kipy")
     if isinstance(exc, ConnectionError) or is_kipy_conn_error:
         return KicadMcpError(
             code=ErrorCode.KICAD_NOT_RUNNING,
@@ -382,6 +408,41 @@ class IpcBridge:
                     Mm(max(xs) + margin),
                     Mm(max(ys) + margin),
                 )
+
+    def snapshot_footprints(self, board: BoardHandle) -> tuple[FootprintData, ...]:
+        """Datos primitivos de todos los footprints — para el snapshot post-mutación.
+
+        Sesión 05 T5. Se ejecuta bajo el lock del bridge; devuelve dataclasses
+        propias (nunca tipos de kipy) para que ``state_builder.build_state_from_board``
+        materialice un ``NormalizedState`` sin volver a IPC.
+        """
+        with self._lock:
+            self._detect_restart()
+            with self._supervise("snapshot_footprints"):
+                items: list[FootprintData] = []
+                for fp in board.raw.get_footprints():
+                    ref = str(fp.reference_field.text.value)
+                    value = str(fp.value_field.text.value)
+                    pos = fp.position
+                    x = nm_to_mm(Nm(int(pos.x)))
+                    y = nm_to_mm(Nm(int(pos.y)))
+                    pads: list[FootprintPadData] = []
+                    for pad in fp.definition.pads:
+                        number = str(pad.number)
+                        net = pad.net
+                        # net.name puede ser cadena vacía para pads no conectados.
+                        net_name = str(net.name) if net is not None and net.name else None
+                        pads.append(FootprintPadData(number=number, net_name=net_name))
+                    items.append(
+                        FootprintData(
+                            ref=ref,
+                            value=value,
+                            x_mm=x,
+                            y_mm=y,
+                            pads=tuple(pads),
+                        )
+                    )
+                return tuple(items)
 
     def get_footprint_position(self, board: BoardHandle, ref: str) -> tuple[Mm, Mm]:
         """Posición ``(x_mm, y_mm)`` del footprint ``ref`` según el board vivo.

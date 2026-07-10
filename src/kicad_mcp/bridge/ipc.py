@@ -201,6 +201,14 @@ def _default_client_factory(
 
 # --- Clasificación de fallos IPC (supervisión, sesión 04 T3) ------------------
 
+# Constantes ``ApiStatusCode`` del proto de kipy (envelope_pb2.pyi:70-77).
+# Se copian como int para preservar el contrato perezoso del bridge (nada de
+# kipy importado a nivel de módulo, sesión 04). Son estables por proto y el
+# atributo ``ApiError.code`` se compara por igualdad de int (kipy
+# ``client.py:89-91`` lo asigna desde ``reply.status.status``).
+_AS_UNHANDLED = 5
+_AS_BUSY = 7
+
 
 def _map_ipc_failure(op_name: str, exc: BaseException) -> KicadMcpError:
     """Traduce excepciones que atraviesan una operación IPC a errores del catálogo.
@@ -209,13 +217,23 @@ def _map_ipc_failure(op_name: str, exc: BaseException) -> KicadMcpError:
     - ``TimeoutError`` (builtin, socket, kipy) → ``KICAD_TIMEOUT``.
     - ``ConnectionError`` (builtin) o ``kipy.errors.ConnectionError`` →
       ``KICAD_NOT_RUNNING``.
-    - Cualquier otro (p. ej. ``kipy.errors.ApiError``) → ``KICAD_CLI_FAILED``
-      con el detalle sanitizado en el hint.
+    - ``kipy.errors.ApiError`` con ``code == AS_BUSY`` (7) → ``KICAD_CLI_FAILED``
+      con hint fijo accionable y ``data.ipc_status = "busy"`` (D-07.2). Estado
+      protocolar de KiCad (envelope_pb2.pyi:74-75): la UI está ocupada
+      procesando otro trabajo (refill zones, DRC realtime, router).
+    - ``kipy.errors.ApiError`` con ``code == AS_UNHANDLED`` (5) →
+      ``KICAD_CLI_FAILED`` con hint apuntando a abrir el editor requerido y
+      ``data.ipc_status = "unhandled"`` (D-07.2). Es el error que emite
+      KiCad cuando el request no tiene handler para el estado actual (p. ej.
+      pedir el board sin PCB Editor abierto — ver ``kipy/kicad.py:225-230``).
+    - Cualquier otra excepción (incluyendo ``ApiError`` con code no
+      distinguido) → ``KICAD_CLI_FAILED`` con el detalle sanitizado en el
+      hint.
 
-    Se identifica ``kipy.errors.ConnectionError`` por ``__qualname__`` **más**
-    ``__module__.startswith("kipy")``, para no forzar el import de ``kipy``
-    en un ciclo perezoso y a la vez no confundir un ``ConnectionError``
-    homónimo definido por otra librería que corra dentro del bloque
+    Se identifica ``kipy.errors.ConnectionError`` y ``kipy.errors.ApiError``
+    por ``__qualname__`` **más** ``__module__.startswith("kipy")``, para no
+    forzar el import de ``kipy`` en un ciclo perezoso y a la vez no confundir
+    homónimos definidos por otra librería que corra dentro del bloque
     supervisado (sesión 05 T1).
     """
     if isinstance(exc, TimeoutError):
@@ -225,15 +243,40 @@ def _map_ipc_failure(op_name: str, exc: BaseException) -> KicadMcpError:
             hint="Reintentar o reducir el alcance de la operación.",
         )
     exc_type = type(exc)
-    is_kipy_conn_error = exc_type.__qualname__ == "ConnectionError" and (
-        exc_type.__module__ or ""
-    ).startswith("kipy")
+    exc_module = exc_type.__module__ or ""
+    is_from_kipy = exc_module.startswith("kipy")
+    is_kipy_conn_error = exc_type.__qualname__ == "ConnectionError" and is_from_kipy
     if isinstance(exc, ConnectionError) or is_kipy_conn_error:
         return KicadMcpError(
             code=ErrorCode.KICAD_NOT_RUNNING,
             message="Conexión IPC con KiCad perdida durante la operación.",
             hint="Abrí KiCad y habilitá el API server; el próximo request reconectará.",
         )
+    # ApiError con ``code`` reconocido: F3 intacta, el código sigue siendo
+    # ``KICAD_CLI_FAILED``; sólo cambian el hint (accionable, fijo) y el
+    # ``data.ipc_status`` (canal estructurado, documentado en el catálogo).
+    if is_from_kipy and exc_type.__qualname__ == "ApiError":
+        api_code = getattr(exc, "code", None)
+        # ``ApiStatusCode`` en el proto es un int-enum; la igualdad por int
+        # cubre tanto el enum como cualquier alias plano.
+        if isinstance(api_code, int) and not isinstance(api_code, bool):
+            if api_code == _AS_BUSY:
+                return KicadMcpError(
+                    code=ErrorCode.KICAD_CLI_FAILED,
+                    message=f"KiCad está ocupado durante {op_name}.",
+                    hint=(
+                        "KiCad está ocupado con una operación en curso; "
+                        "reintentá en unos segundos."
+                    ),
+                    data={"ipc_status": "busy"},
+                )
+            if api_code == _AS_UNHANDLED:
+                return KicadMcpError(
+                    code=ErrorCode.KICAD_CLI_FAILED,
+                    message=f"KiCad no puede manejar {op_name} en el estado actual.",
+                    hint="El editor requerido no está abierto en KiCad (abrí el PCB Editor).",
+                    data={"ipc_status": "unhandled"},
+                )
     return KicadMcpError(
         code=ErrorCode.KICAD_CLI_FAILED,
         message=f"Fallo IPC en {op_name}.",

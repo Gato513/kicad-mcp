@@ -383,6 +383,115 @@ def test_supervise_recognizes_kipy_module_connection_error() -> None:
 
 
 @pytest.mark.unit
+def test_supervise_maps_kipy_api_error_busy_to_ipc_status_busy() -> None:
+    """``ApiError`` con ``code == AS_BUSY`` (7) ⇒ hint fijo + ``data.ipc_status='busy'``.
+
+    Sesión 07 D-07.2: el código sigue siendo ``KICAD_CLI_FAILED`` (F3), pero
+    el envelope gana ``data.ipc_status`` y un hint accionable estable, para
+    que el agente correlacione sin parsear texto de KiCad.
+    """
+
+    class _KipyApiError(Exception):
+        pass
+
+    _KipyApiError.__qualname__ = "ApiError"
+    _KipyApiError.__module__ = "kipy.errors"
+    exc = _KipyApiError("KiCad is busy performing an operation and can't accept API commands")
+    exc.code = 7  # AS_BUSY
+
+    raising = _RaisingClient(exc)
+    factory = _CountingFactory(lambda: raising)
+    bridge = IpcBridge(client_factory=factory)
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_version()
+    assert excinfo.value.code is ErrorCode.KICAD_CLI_FAILED
+    assert excinfo.value.data == {"ipc_status": "busy"}
+    assert "ocupado" in excinfo.value.hint.lower()
+
+
+@pytest.mark.unit
+def test_supervise_maps_kipy_api_error_unhandled_to_ipc_status_unhandled() -> None:
+    """``ApiError`` con ``code == AS_UNHANDLED`` (5) ⇒ hint fijo + ``data.ipc_status='unhandled'``.
+
+    Sesión 07 D-07.2. El caso "solo project manager, sin PCB Editor" viaja
+    con este ``code`` desde ``kipy.KiCad.get_board`` (kipy/kicad.py:225-230).
+    """
+
+    class _KipyApiError(Exception):
+        pass
+
+    _KipyApiError.__qualname__ = "ApiError"
+    _KipyApiError.__module__ = "kipy.errors"
+    exc = _KipyApiError("no handler available for request of type kiapi.commands.GetOpenDocuments")
+    exc.code = 5  # AS_UNHANDLED
+
+    raising = _RaisingClient(exc)
+    factory = _CountingFactory(lambda: raising)
+    bridge = IpcBridge(client_factory=factory)
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_version()
+    assert excinfo.value.code is ErrorCode.KICAD_CLI_FAILED
+    assert excinfo.value.data == {"ipc_status": "unhandled"}
+    assert "editor" in excinfo.value.hint.lower()
+
+
+@pytest.mark.unit
+def test_supervise_kipy_api_error_without_known_code_falls_through() -> None:
+    """``ApiError`` con ``code`` desconocido (p. ej. AS_BAD_REQUEST=3) sigue el bucket genérico.
+
+    No emite ``data.ipc_status``: el agente no debe asumir la clave presente
+    en cualquier ``KICAD_CLI_FAILED``.
+    """
+
+    class _KipyApiError(Exception):
+        pass
+
+    _KipyApiError.__qualname__ = "ApiError"
+    _KipyApiError.__module__ = "kipy.errors"
+    exc = _KipyApiError("some other kicad error")
+    exc.code = 3  # AS_BAD_REQUEST — no tratado especialmente
+
+    raising = _RaisingClient(exc)
+    factory = _CountingFactory(lambda: raising)
+    bridge = IpcBridge(client_factory=factory)
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_version()
+    assert excinfo.value.code is ErrorCode.KICAD_CLI_FAILED
+    assert excinfo.value.data is None
+    assert "some other kicad error" in excinfo.value.hint
+
+
+@pytest.mark.unit
+def test_supervise_kipy_connection_error_still_wins_over_api_error_path() -> None:
+    """Regresión sesión 06 T1: kipy ``ConnectionError`` sigue mapeado a ``KICAD_NOT_RUNNING``.
+
+    La rama de ``ApiError.code`` no debe robarle el mapeo a
+    ``kipy.errors.ConnectionError``, que va antes.
+    """
+
+    class _KipyConnectionError(Exception):
+        pass
+
+    _KipyConnectionError.__qualname__ = "ConnectionError"
+    _KipyConnectionError.__module__ = "kipy.errors"
+    exc = _KipyConnectionError("simulated kipy connection failure")
+    # Un ConnectionError no expone .code; forzamos una para descartar
+    # ambigüedad: el flujo debe cortarse antes por qualname.
+    exc.code = 7
+
+    raising = _RaisingClient(exc)
+    factory = _CountingFactory(lambda: raising)
+    bridge = IpcBridge(client_factory=factory)
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_version()
+    assert excinfo.value.code is ErrorCode.KICAD_NOT_RUNNING
+
+
+@pytest.mark.unit
 def test_supervise_preserves_typed_errors_unchanged() -> None:
     """``KicadMcpError`` levantado dentro de un op fluye sin remap.
 

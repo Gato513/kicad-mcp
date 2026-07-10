@@ -193,3 +193,18 @@ Emisores actuales:
   base es vivo pero el board de KiCad no está disponible al pedir el delta
   (sesión 06, D-06.1v2). El agente distingue esta variante del expirado por
   retención sin parsear el mensaje.
+- `KICAD_CLI_FAILED` con `data.ipc_status: "busy" | "unhandled"` → clasifica
+  fallos IPC de KiCad sin renombrar el código (sesión 07, D-07.2). Valores:
+  - `"busy"` — KiCad devolvió `ApiStatusCode.AS_BUSY`: la UI está procesando
+    otra operación (refill de zonas, DRC realtime, router auto). Hint fijo:
+    "KiCad está ocupado con una operación en curso; reintentá en unos
+    segundos." Reintentable por el agente; el bridge ya reintenta lecturas
+    idempotentes (D-07.1) antes de propagar.
+  - `"unhandled"` — KiCad devolvió `ApiStatusCode.AS_UNHANDLED`: el editor
+    requerido no está abierto. Hint fijo: "El editor requerido no está
+    abierto en KiCad (abrí el PCB Editor)." No reintentable sin acción del
+    usuario.
+
+  Los demás fallos IPC (incluido `ApiError` con código no distinguido) siguen
+  emitiendo `KICAD_CLI_FAILED` sin `data.ipc_status`; el hint incluye el
+  detalle sanitizado del mensaje original.

@@ -20,6 +20,47 @@ Reglas transversales:
 | `health` | Estado del servidor, KiCad, kicad-cli y proyecto activo | — | none | `KICAD_NOT_RUNNING`, `KICAD_CLI_MISSING`, `PROJECT_NOT_FOUND` |
 | `discover_tools` | Lista tools de una categoría con sus schemas | `category` | none | `INVALID_PARAMS` |
 
+Notas de `health` (sesión 07 D-07.3): el sub-payload `kicad_ipc` reporta tres
+niveles independientes con estados discriminables — un `bool` colapsaría
+"KiCad respondió que no" con "no pude preguntar", que son casos de acción
+distintos para el agente.
+
+- `socket`: `"ok"` (fichero del socket existe) | `"missing"`.
+- `ipc_responde`: `"ok"` (get_version respondió) | `"error"` | `"unknown"` (nivel
+  superior falló y no se evaluó).
+- `pcb_editor_abierto`: `"yes"` (get_open_documents(DOCTYPE_PCB) no-vacío) |
+  `"no"` (vacío o `AS_UNHANDLED`) | `"unknown"`.
+
+El `status` de nivel superior (`"ok"`/`"missing"`/`"error"`) se preserva para
+consumidores que sólo lo miren. `health` NO sondea busy: cuesta un GetItems
+real (~3 s en boards medianos) y el busy es transitorio; se surfacea por
+operación vía `KICAD_CLI_FAILED` con `data.ipc_status="busy"` (D-07.2).
+
+Ejemplo con KiCad abierto sobre un PCB:
+
+```json
+"kicad_ipc": {
+  "socket": "ok",
+  "ipc_responde": "ok",
+  "version": "10.0.4",
+  "pcb_editor_abierto": "yes",
+  "status": "ok"
+}
+```
+
+Ejemplo con KiCad cerrado:
+
+```json
+"kicad_ipc": {
+  "socket": "missing",
+  "ipc_responde": "unknown",
+  "pcb_editor_abierto": "unknown",
+  "status": "missing",
+  "code": "KICAD_NOT_RUNNING",
+  "hint": "Abrí KiCad y habilitá el API server ..."
+}
+```
+
 ## Categoría `world`
 
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |

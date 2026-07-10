@@ -366,6 +366,17 @@ class IpcBridge:
         raw = os.environ.get("KICAD_API_TOKEN")
         return raw or None
 
+    def socket_present(self) -> bool:
+        """``True`` si el fichero del socket IPC existe (fast-fail, sesión 04).
+
+        Cheap check para el nivel más bajo de ``health`` (sesión 07 D-07.3):
+        KiCad crea el socket al arrancar y lo borra al salir, así que su
+        presencia distingue "KiCad no está corriendo" (missing) de "KiCad
+        corriendo pero el server IPC puede estar ocupado o cerrado". No
+        toca red ni el hilo UI.
+        """
+        return not _socket_file_missing(self._socket_path)
+
     def _ensure_client(self) -> KiCadClientLike:
         if self._client is None:
             token = self._current_env_token()

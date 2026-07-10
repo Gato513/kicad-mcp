@@ -57,24 +57,75 @@ def _project_payload(root: Path | None) -> dict[str, Any]:
 
 
 def _ipc_payload(bridge: IpcBridge) -> dict[str, Any]:
-    """Snapshot del IPC para ``health``.
+    """Snapshot fino del IPC para ``health`` (sesión 07 D-07.3).
 
-    Deliberadamente breve: solo estado y versión. Un fallo del bridge
-    (KICAD_NOT_RUNNING, timeout) se reporta como subsistema sin
-    interrumpir el resto del ``health`` — igual criterio que
-    ``kicad-cli``.
+    Tres niveles independientes con estados discriminables:
+
+    - ``socket``: ``"ok"`` si el fichero del socket existe; ``"missing"``
+      si no. Fast-fail heredado de sesión 04.
+    - ``ipc_responde``: ``"ok"`` si ``get_version()`` responde;
+      ``"error"`` si el bridge levanta ``KicadMcpError``; ``"unknown"``
+      si el nivel superior (socket) ya falló y no lo evaluamos.
+    - ``pcb_editor_abierto``: ``"yes"`` si ``get_open_documents(DOCTYPE_PCB)``
+      es no-vacío; ``"no"`` si es vacío o KiCad respondió ``AS_UNHANDLED``
+      (project manager sin PCB Editor); ``"unknown"`` si niveles
+      superiores no lo permiten evaluar.
+
+    Distinguir ``"no"`` (KiCad respondió "no hay PCB Editor") de
+    ``"unknown"`` (no pude preguntar) evita el falso engañoso que un
+    ``bool`` produciría.
+
+    NO se prueba busy: detectar busy cuesta un ``get_items`` real (~3 s
+    en el board de prueba) — demasiado caro para health. El busy es
+    transitorio y se surfacea por operación vía ``_map_ipc_failure``
+    (D-07.2).
+
+    El ``status`` de nivel superior mantiene el contrato viejo
+    (``"ok"``/``"missing"``/``"error"``) para no romper consumidores que
+    ya lo miran; los tres niveles finos son aditivos.
     """
+    payload: dict[str, Any] = {}
+
+    # Nivel 1 — socket.
+    if not bridge.socket_present():
+        payload["socket"] = "missing"
+        payload["ipc_responde"] = "unknown"
+        payload["pcb_editor_abierto"] = "unknown"
+        payload["status"] = "missing"
+        payload["code"] = ErrorCode.KICAD_NOT_RUNNING.value
+        payload["hint"] = (
+            "Abrí KiCad y habilitá el API server en Preferences → Plugins → Enable API server."
+        )
+        return payload
+    payload["socket"] = "ok"
+
+    # Nivel 2 — get_version.
     try:
         v = bridge.get_version()
-        return {"status": "ok", "version": v.full}
     except KicadMcpError as exc:
-        payload: dict[str, Any] = {
-            "status": "missing" if exc.code is ErrorCode.KICAD_NOT_RUNNING else "error",
-            "code": exc.code.value,
-            "message": exc.message,
-            "hint": exc.hint,
-        }
+        payload["ipc_responde"] = "error"
+        payload["pcb_editor_abierto"] = "unknown"
+        payload["status"] = "missing" if exc.code is ErrorCode.KICAD_NOT_RUNNING else "error"
+        payload["code"] = exc.code.value
+        payload["message"] = exc.message
+        payload["hint"] = exc.hint
         return payload
+    payload["ipc_responde"] = "ok"
+    payload["version"] = v.full
+
+    # Nivel 3 — PCB Editor abierto.
+    try:
+        pcb_open = bridge.has_open_pcb()
+    except KicadMcpError as exc:
+        # ipc_responde=ok es la señal fuerte; el nivel 3 se degrada a
+        # unknown sin invalidar el resto. Ejemplo: busy tras retry aquí.
+        payload["pcb_editor_abierto"] = "unknown"
+        payload["pcb_probe_error"] = exc.code.value
+    else:
+        payload["pcb_editor_abierto"] = "yes" if pcb_open else "no"
+
+    payload["status"] = "ok"
+    return payload
 
 
 def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:

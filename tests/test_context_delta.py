@@ -33,7 +33,7 @@ def _text(result: CallToolResult) -> str:
     return block.text
 
 
-def _fake_state(added_c3: bool = False, snap: int = 0) -> NormalizedState:
+def _fake_state(added_c3: bool = False, snap: int = 0, kind: str = "sch") -> NormalizedState:
     comps = [
         Component(
             ref="U1",
@@ -63,7 +63,7 @@ def _fake_state(added_c3: bool = False, snap: int = 0) -> NormalizedState:
                 pins=(Pin(p="1", net="3V3"), Pin(p="2", net="GND")),
             )
         )
-    return NormalizedState(kind="sch", snap=snap, components=tuple(comps))
+    return NormalizedState(kind=kind, snap=snap, components=tuple(comps))
 
 
 @pytest.mark.unit
@@ -130,10 +130,106 @@ async def test_context_delta_external_edit_when_mtime_diverges(
 
 
 @pytest.mark.unit
-async def test_context_delta_skips_mtime_for_live_snapshot(
+async def test_context_delta_pcb_live_uses_board_not_disk(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Snapshot vivo (mtimes=None) ⇒ el chequeo se omite (ADR-0007)."""
+    """D-06.1v2: base vivo pcb ⇒ curr desde board, NO desde disco.
+
+    Fixture 1: registra un snapshot vivo ``kind="pcb"`` (patrón T5 sesión 05).
+    Mockea ``build_state_from_board`` (rama viva) para devolver el estado con
+    C3 añadido, y ``build_state_cached`` (rama disco) para FALLAR si es
+    llamada. Verifica que el delta refleja la mutación pcb-a-pcb sin cruzar
+    a disco ni comparar sch vs pcb (el bug que existía antes del fix).
+    """
+    project = tmp_path / "proj"
+    project.mkdir()
+    sch = project / "proj.kicad_sch"
+    sch.write_text("(kicad_sch)")
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+
+    base = _fake_state(added_c3=False, kind="pcb")
+    snap_id = get_default_store().register(base, mtimes=None)
+    # Avanzo el mtime: si el path incorrectamente cae a disco, chequearía
+    # mtimes y lanzaría EXTERNAL_EDIT — el test lo detecta.
+    st = sch.stat()
+    os.utime(sch, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
+
+    def _fail_disk_builder(*_: object, **__: object) -> tuple[NormalizedState, bool]:
+        raise AssertionError(
+            "build_state_cached NO debe llamarse cuando el base es vivo pcb (D-06.1v2)"
+        )
+
+    monkeypatch.setattr("kicad_mcp.tools.world.build_state_cached", _fail_disk_builder)
+    monkeypatch.setattr(
+        "kicad_mcp.tools.world.build_state_from_board",
+        lambda *_, **__: _fake_state(added_c3=True, kind="pcb"),
+    )
+    # El bridge tiene que devolver un board "no None" — cualquier objeto sirve
+    # porque build_state_from_board está mockeado.
+    monkeypatch.setattr(
+        "kicad_mcp.bridge.ipc.IpcBridge.get_open_board",
+        lambda self: object(),
+    )
+
+    mcp = create_server()
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "get_context_delta",
+            {"base_snap": snap_id, "focus_ref": "U1", "radius_mm": 40.0},
+        )
+    assert not result.isError, _text(result)
+    toon = _text(result)
+    assert toon.startswith(f"DTOON|v1|snap:{snap_id + 1}|base:{snap_id}|area:r40@U1\n")
+    assert "[+] C3" in toon  # la mutación pcb se refleja, no invertida
+
+
+@pytest.mark.unit
+async def test_context_delta_pcb_live_no_board_returns_snapshot_stale(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D-06.1v2: base vivo pcb + KiCad sin board ⇒ ``SNAPSHOT_STALE``.
+
+    La cadena viva se perdió (el usuario cerró el PCB, KiCad se reinició sin
+    reabrir, etc.). El código es SNAPSHOT_STALE — no KICAD_NOT_RUNNING: el
+    socket puede estar OK y la operación fallida es del llamador (su snapshot
+    ya no tiene contraparte). ``data.reason="live_chain_lost"`` permite al
+    agente correlacionar sin parsear el hint (F3 intacta).
+    """
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "proj.kicad_sch").write_text("(kicad_sch)")
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+
+    base = _fake_state(added_c3=False, kind="pcb")
+    snap_id = get_default_store().register(base, mtimes=None)
+
+    monkeypatch.setattr(
+        "kicad_mcp.bridge.ipc.IpcBridge.get_open_board",
+        lambda self: None,
+    )
+
+    mcp = create_server()
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "get_context_delta",
+            {"base_snap": snap_id, "focus_ref": "U1", "radius_mm": 40.0},
+        )
+    assert result.isError
+    text = _text(result)
+    assert "SNAPSHOT_STALE" in text
+    assert "cadena viva" in text  # el hint menciona la cadena viva
+
+
+@pytest.mark.unit
+async def test_context_delta_sch_disk_path_still_works(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D-06.1v2: base sch de disco ⇒ path histórico intacto (rama disco).
+
+    Verifica que la rama sch (mtimes dict, kind="sch") sigue leyendo desde
+    disco vía ``build_state_cached`` — cero regresión al agregar la rama
+    viva pcb.
+    """
     project = tmp_path / "proj"
     project.mkdir()
     sch = project / "proj.kicad_sch"
@@ -141,12 +237,14 @@ async def test_context_delta_skips_mtime_for_live_snapshot(
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
 
     base = _fake_state(added_c3=False)
-    snap_id = get_default_store().register(base, mtimes=None)
-    # Aunque el disco haya avanzado (o incluso desaparecido), un snapshot
-    # vivo no chequea mtimes: la operación debe proceder.
-    st = sch.stat()
-    os.utime(sch, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
+    snap_id = get_default_store().register(base, collect_project_mtimes(sch))
 
+    def _fail_board_builder(*_: object, **__: object) -> NormalizedState:
+        raise AssertionError(
+            "build_state_from_board NO debe llamarse en la rama sch/disco (D-06.1v2)"
+        )
+
+    monkeypatch.setattr("kicad_mcp.tools.world.build_state_from_board", _fail_board_builder)
     monkeypatch.setattr(
         "kicad_mcp.tools.world.build_state_cached",
         lambda *_, **__: (_fake_state(added_c3=True), False),
@@ -160,9 +258,8 @@ async def test_context_delta_skips_mtime_for_live_snapshot(
         )
     assert not result.isError, _text(result)
     toon = _text(result)
-    # Cabecera DTOON con base y snap frescos.
     assert toon.startswith(f"DTOON|v1|snap:{snap_id + 1}|base:{snap_id}|area:r40@U1\n")
-    assert "[+] C3" in toon  # el componente añadido está
+    assert "[+] C3" in toon
 
 
 @pytest.mark.unit

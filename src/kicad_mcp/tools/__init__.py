@@ -37,7 +37,7 @@ def register_all(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
 
     bridge = ipc_bridge or _IpcBridge()
     register_meta(mcp, ipc_bridge=bridge)
-    register_world(mcp)
+    register_world(mcp, ipc_bridge=bridge)
     register_validate(mcp)
     register_export(mcp)
     register_pcb(mcp, ipc_bridge=bridge)

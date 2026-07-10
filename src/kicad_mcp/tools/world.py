@@ -11,14 +11,18 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..bridge.state_builder import build_state_cached
+from ..bridge.state_builder import build_state_cached, build_state_from_board
 from ..errors import ErrorCode, KicadMcpError
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
 from ..snapshots import collect_project_mtimes, get_default_store, validate_base_snap
+from ..snapshots.store import SnapshotEntry
 from ..toon.encoder import encode, encode_delta, encode_delta_with_budget
+from ..toon.schema import NormalizedState
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
+
+    from ..bridge.ipc import IpcBridge
 
 
 def _resolve_root_schematic() -> Path:
@@ -99,8 +103,63 @@ def _resolve_root_pcb() -> Path:
     )
 
 
-def register(mcp: FastMCP) -> None:
-    """Registra las tools de la categoría ``world``."""
+def _build_current_for(
+    entry: SnapshotEntry, schematic: Path, ipc_bridge: IpcBridge, base_snap: int
+) -> tuple[NormalizedState, int, bool]:
+    """Materializa ``curr`` para ``get_context_delta`` según el kind del base.
+
+    D-06.1v2 (sesión 06): el snapshot base gobierna cómo se construye el
+    estado actual. Un base vivo (``mtimes is None``) de kind ``pcb`` viene
+    de una mutación in-memory (ADR-0007) y su contraparte hoy es el board
+    vivo de kipy; leer disco daría estado invertido (el disco no vio la
+    mutación aún) y además compararía sch contra pcb.
+
+    Devuelve ``(state, new_snap_id, cache_hit)``. El ``new_snap`` ya está
+    registrado en el store cuando esta función retorna (con ``mtimes=None``
+    para el path vivo, con mtimes de disco para el path sch).
+    """
+    store = get_default_store()
+    if entry.mtimes is None:
+        if entry.state.kind != "pcb":
+            raise KicadMcpError(
+                code=ErrorCode.KICAD_CLI_FAILED,
+                message="Estado interno inconsistente: snapshot vivo de kind no-pcb.",
+                hint=(
+                    "No hay camino que registre snapshots vivos de esquemático; "
+                    "reportar como bug al humano."
+                ),
+            )
+        board = ipc_bridge.get_open_board()
+        if board is None:
+            raise KicadMcpError(
+                code=ErrorCode.SNAPSHOT_STALE,
+                message=(
+                    "La cadena viva post-mutación se perdió; el board de KiCad no está disponible."
+                ),
+                hint=("Re-sincronizá con get_world_context antes de reintentar get_context_delta."),
+                data={"base_snap": base_snap, "reason": "live_chain_lost"},
+            )
+        curr_raw = build_state_from_board(ipc_bridge, board)
+        new_snap = store.register(curr_raw, mtimes=None)
+        return curr_raw, new_snap, False
+    curr_raw, cache_hit = build_state_cached(schematic, snap=0)
+    mtimes = collect_project_mtimes(schematic)
+    new_snap = store.register(curr_raw, mtimes)
+    return curr_raw, new_snap, cache_hit
+
+
+def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
+    """Registra las tools de la categoría ``world``.
+
+    ``ipc_bridge`` alimenta la rama viva de ``get_context_delta`` (D-06.1v2):
+    cuando el ``base_snap`` es vivo ``kind="pcb"``, el estado actual se
+    reconstruye desde el board de kipy y no desde el ``.kicad_sch`` de disco.
+    En runtime lo inyecta ``tools.register_all`` (singleton por proceso).
+    Los tests unit pueden pasar un fake compartido con ``pcb``.
+    """
+    from ..bridge.ipc import IpcBridge as _IpcBridge
+
+    bridge = ipc_bridge if ipc_bridge is not None else _IpcBridge()
 
     @mcp.tool(
         name="get_world_context",
@@ -175,9 +234,25 @@ def register(mcp: FastMCP) -> None:
             store = get_default_store()
             entry = validate_base_snap(store, base_snap, schematic)
 
-            curr_raw, cache_hit = build_state_cached(schematic, snap=0)
-            mtimes = collect_project_mtimes(schematic)
-            new_snap = store.register(curr_raw, mtimes)
+            curr_raw, new_snap, cache_hit = _build_current_for(entry, schematic, bridge, base_snap)
+            # Kinds homogéneos: si el path vivo/disco emite un kind distinto
+            # al del base (no debería, cada rama es kind-específica), es un
+            # bug interno. Un delta con kinds cruzados es semánticamente
+            # basura — F3 respetada: usamos KICAD_CLI_FAILED como código
+            # para "estado interno inconsistente" (precedente en
+            # state_builder._rebuild).
+            if curr_raw.kind != entry.state.kind:
+                raise KicadMcpError(
+                    code=ErrorCode.KICAD_CLI_FAILED,
+                    message=(
+                        "Estado interno inconsistente: kind del base_snap no "
+                        "coincide con el estado actual."
+                    ),
+                    hint=(
+                        f"base kind={entry.state.kind}, curr kind={curr_raw.kind}. "
+                        "Reportar como bug al humano."
+                    ),
+                )
             curr = curr_raw.model_copy(update={"snap": new_snap})
 
             if max_tokens is None:

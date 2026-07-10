@@ -24,7 +24,7 @@ from ..bridge.ipc import BoardHandle, IpcBridge, Mm
 from ..errors import ErrorCode, KicadMcpError
 from ..gates.g1 import ensure_session_backup
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
-from ..snapshots import collect_project_mtimes, get_default_store
+from ..snapshots import get_default_store, validate_base_snap
 from ..tools.world import _resolve_root_schematic
 
 if TYPE_CHECKING:
@@ -52,40 +52,14 @@ def _resolve_board(bridge: IpcBridge) -> BoardHandle:
 
 
 def _check_base_snap(base_snap: int) -> None:
-    """Valida ``base_snap`` contra el Snapshot Store (sesión 04 T4).
+    """Delega en :func:`validate_base_snap` para preservar contrato compartido.
 
-    - Ausente del store → ``SNAPSHOT_STALE``: el agente pidió una mutación
-      contra un snapshot ya evictado (retención = 10) o inexistente.
-    - Presente pero algún archivo del proyecto cambió su mtime respecto
-      del snapshot → ``EXTERNAL_EDIT_DETECTED``: el usuario editó por
-      fuera del agente entre ``get_world_context`` y la mutación.
-
-    Ambos errores son NO-reintentables (mismo criterio del catálogo): el
-    hint instruye pedir contexto fresco antes de continuar.
+    Sesión 05 T2: la lógica vive en ``snapshots/validation.py`` para que
+    ``get_context_delta`` (world) valide de la misma forma y en un único
+    sitio. Snapshots vivos (``mtimes=None``) omiten el chequeo de mtime.
     """
-    store = get_default_store()
-    entry = store.get(base_snap)
-    if entry is None:
-        raise KicadMcpError(
-            code=ErrorCode.SNAPSHOT_STALE,
-            message=f"base_snap={base_snap} no está en el store (retención={store.retention}).",
-            hint="Pedí get_world_context de nuevo antes de reintentar la mutación.",
-        )
     schematic = _resolve_root_schematic()
-    current_mtimes = collect_project_mtimes(schematic)
-    # Comparamos las rutas registradas: si alguna difiere → edición externa.
-    for path, mtime in entry.mtimes.items():
-        current = current_mtimes.get(path)
-        if current != mtime:
-            raise KicadMcpError(
-                code=ErrorCode.EXTERNAL_EDIT_DETECTED,
-                message=("Un archivo del proyecto fue editado fuera del agente."),
-                hint=(
-                    "El usuario modificó el proyecto en KiCad entre el "
-                    "get_world_context y esta mutación; pedí contexto de "
-                    "nuevo antes de continuar."
-                ),
-            )
+    validate_base_snap(get_default_store(), base_snap, schematic)
 
 
 def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:

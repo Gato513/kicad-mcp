@@ -31,13 +31,23 @@ SnapId = int
 
 @dataclass(frozen=True)
 class SnapshotEntry:
-    """Un snapshot registrado: estado emitido + mtimes de los archivos base."""
+    """Un snapshot registrado: estado emitido + mtimes de los archivos base.
+
+    ``mtimes`` puede ser ``None`` — "snapshot vivo" — cuando el estado se
+    reconstruyó desde una fuente in-memory (p. ej. el board de kipy tras
+    una mutación) y por lo tanto no hay un mtime de disco al que anclarlo.
+    La consecuencia intencionada (ver ADR-0007) es que la validación de
+    ``EXTERNAL_EDIT_DETECTED`` se omite para snapshots vivos: es el precio
+    a pagar para no dispararla como falso positivo tras el ``Save`` que
+    el propio agente eventualmente ejecute.
+    """
 
     snap_id: SnapId
     state: NormalizedState
-    mtimes: dict[str, int]
-    """``{ruta_absoluta_canónica: mtime_ns}``. Copia defensiva del dict pasado
-    a ``register``: mutaciones externas no afectan al store."""
+    mtimes: dict[str, int] | None
+    """``{ruta_absoluta_canónica: mtime_ns}`` o ``None``. Cuando ``dict``,
+    es copia defensiva del dict pasado a ``register`` (mutaciones externas
+    no afectan al store). Cuando ``None``, marca el snapshot como vivo."""
 
 
 class SnapshotStore:
@@ -56,17 +66,27 @@ class SnapshotStore:
         self._next_id: SnapId = 1
         self._lock = threading.Lock()
 
-    def register(self, state: NormalizedState, mtimes: dict[str, int]) -> SnapId:
+    def register(
+        self,
+        state: NormalizedState,
+        mtimes: dict[str, int] | None,
+    ) -> SnapId:
         """Registra un nuevo snapshot y devuelve su ``snap_id`` monótono.
 
-        Copia ``mtimes`` para desacoplar al store de mutaciones externas del
-        dict. Si al insertar se supera la retención, evicta el más viejo
-        (menor ``snap_id``).
+        ``mtimes=None`` marca el snapshot como **vivo** (ADR-0007): el estado
+        proviene de una fuente in-memory (típicamente el board de kipy
+        post-mutación), no hay ``mtime`` de disco al que anclarlo, y la
+        validación de ``EXTERNAL_EDIT_DETECTED`` se omitirá para ese snap.
+
+        Cuando ``mtimes`` es un dict, se copia defensivamente para desacoplar
+        al store de mutaciones externas. Si al insertar se supera la
+        retención, se evicta el más viejo (menor ``snap_id``).
         """
         with self._lock:
             snap_id = self._next_id
             self._next_id += 1
-            entry = SnapshotEntry(snap_id=snap_id, state=state, mtimes=dict(mtimes))
+            stored_mtimes: dict[str, int] | None = dict(mtimes) if mtimes is not None else None
+            entry = SnapshotEntry(snap_id=snap_id, state=state, mtimes=stored_mtimes)
             self._entries[snap_id] = entry
             while len(self._entries) > self._retention:
                 self._entries.popitem(last=False)

@@ -25,11 +25,13 @@ from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult, TextContent
 
 from kicad_mcp.bridge.ipc import BBoxMm, BoardHandle, IpcBridge, Mm
+from kicad_mcp.errors import ErrorCode, KicadMcpError
 from kicad_mcp.gates import g1
 from kicad_mcp.snapshots import (
     SnapshotStore,
     collect_project_mtimes,
     get_default_store,
+    validate_base_snap,
 )
 from kicad_mcp.tools.pcb import register as register_pcb
 from kicad_mcp.toon.schema import Component, NormalizedState, Pin
@@ -165,6 +167,92 @@ def test_collect_project_mtimes_ignores_missing_pcb(tmp_path: Path) -> None:
     sch.write_text("x")
     mtimes = collect_project_mtimes(sch)
     assert list(mtimes.keys()) == [str(sch.resolve())]
+
+
+# --- snapshots vivos (sesión 05 T2) ------------------------------------------
+
+
+@pytest.mark.unit
+def test_register_accepts_mtimes_none_as_live_snapshot() -> None:
+    """``register(state, mtimes=None)`` deja el sentinel intacto en la entrada.
+
+    Sesión 05 T2: los snapshots post-mutación se registran vivos porque el
+    ``.kicad_pcb`` de disco todavía no refleja la mutación (KiCad guarda
+    solo cuando el usuario lo pide).
+    """
+    store = SnapshotStore()
+    snap_id = store.register(_state(), mtimes=None)
+    entry = store.get(snap_id)
+    assert entry is not None
+    assert entry.mtimes is None
+
+
+@pytest.mark.unit
+def test_validate_base_snap_skips_mtime_check_for_live_snapshot(tmp_path: Path) -> None:
+    """Un snapshot vivo NO se rechaza aunque el disco haya cambiado.
+
+    ADR-0007: es explícito y aceptado. La regresión que este test evita es
+    disparar ``EXTERNAL_EDIT_DETECTED`` como falso positivo tras el ``Save``
+    que el propio agente eventualmente ejecuta.
+    """
+    sch = tmp_path / "proj.kicad_sch"
+    pcb = tmp_path / "proj.kicad_pcb"
+    sch.write_text("(kicad_sch)")
+    pcb.write_text("(kicad_pcb)")
+
+    store = SnapshotStore()
+    snap_id = store.register(_state(), mtimes=None)
+
+    # Avanzo el mtime del sch: para un snapshot de disco esto dispararía
+    # EXTERNAL_EDIT_DETECTED; para uno vivo debe ser transparente.
+    st = sch.stat()
+    os.utime(sch, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
+
+    entry = validate_base_snap(store, snap_id, sch)
+    assert entry.snap_id == snap_id
+    assert entry.mtimes is None
+
+
+@pytest.mark.unit
+def test_validate_base_snap_still_checks_mtime_for_disk_snapshot(tmp_path: Path) -> None:
+    """Un snapshot con ``mtimes`` dict sigue disparando ``EXTERNAL_EDIT_DETECTED``.
+
+    Verifica que la introducción del sentinel no rompió la ruta original
+    (regresión potencial obvia).
+    """
+    sch = tmp_path / "proj.kicad_sch"
+    sch.write_text("(kicad_sch)")
+
+    store = SnapshotStore()
+    snap_id = store.register(_state(), collect_project_mtimes(sch))
+    st = sch.stat()
+    os.utime(sch, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        validate_base_snap(store, snap_id, sch)
+    assert excinfo.value.code is ErrorCode.EXTERNAL_EDIT_DETECTED
+
+
+@pytest.mark.unit
+def test_snapshot_stale_exposes_structured_base_snap(tmp_path: Path) -> None:
+    """``SNAPSHOT_STALE`` lleva ``base_snap`` y ``retention`` en ``data`` (T2).
+
+    F3 intacta: el código no cambia, sólo se enriquece el payload para que
+    el agente correlacione el fallo con su plan sin parsear el mensaje.
+    """
+    store = SnapshotStore(retention=7)
+    sch = tmp_path / "proj.kicad_sch"
+    sch.write_text("x")
+    with pytest.raises(KicadMcpError) as excinfo:
+        validate_base_snap(store, 42, sch)
+
+    err = excinfo.value
+    assert err.code is ErrorCode.SNAPSHOT_STALE
+    assert err.data == {"base_snap": 42, "retention": 7}
+    # to_dict expone el payload al agente (frontera MCP futura).
+    payload = err.to_dict()
+    assert payload["data"]["base_snap"] == 42
+    assert payload["data"]["retention"] == 7
 
 
 # --- integración con tools MCP: base_snap ------------------------------------

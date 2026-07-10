@@ -12,6 +12,7 @@ from .store import (
     collect_project_mtimes,
     get_default_store,
 )
+from .validation import validate_base_snap
 
 __all__ = [
     "SnapId",
@@ -19,4 +20,5 @@ __all__ = [
     "SnapshotStore",
     "collect_project_mtimes",
     "get_default_store",
+    "validate_base_snap",
 ]

@@ -40,16 +40,37 @@ class ErrorCode(StrEnum):
 
 
 class KicadMcpError(Exception):
-    """Excepción base. Se serializa a ``{code, message, hint}`` para el agente."""
+    """Excepción base. Se serializa a ``{code, message, hint, data?}`` para el agente.
 
-    def __init__(self, code: ErrorCode, message: str, hint: str) -> None:
+    ``data`` es un payload estructurado opcional que enriquece el hint sin
+    romper F3 (el código y su semántica siguen intactos). Uso típico: emitir
+    el ``base_snap`` que causó un ``SNAPSHOT_STALE`` para que el agente lo
+    correlacione con su plan sin parsear el mensaje.
+    """
+
+    def __init__(
+        self,
+        code: ErrorCode,
+        message: str,
+        hint: str,
+        *,
+        data: dict[str, Any] | None = None,
+    ) -> None:
         self.code = code
         self.message = message
         self.hint = hint
+        self.data: dict[str, Any] | None = dict(data) if data else None
         # El texto propaga a través de FastMCP; incluir hint para que el
         # agente reciba la parte accionable sin depender de contenido
         # estructurado (que MVP no expone).
         super().__init__(f"[{code.value}] {message} hint: {hint}")
 
     def to_dict(self) -> dict[str, Any]:
-        return {"code": self.code.value, "message": self.message, "hint": self.hint}
+        payload: dict[str, Any] = {
+            "code": self.code.value,
+            "message": self.message,
+            "hint": self.hint,
+        }
+        if self.data is not None:
+            payload["data"] = self.data
+        return payload

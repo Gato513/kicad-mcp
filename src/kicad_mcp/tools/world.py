@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 from ..bridge.state_builder import build_state_cached
 from ..errors import ErrorCode, KicadMcpError
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
-from ..snapshots import collect_project_mtimes, get_default_store
-from ..toon.encoder import encode
+from ..snapshots import collect_project_mtimes, get_default_store, validate_base_snap
+from ..toon.encoder import encode, encode_delta, encode_delta_with_budget
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -141,6 +141,74 @@ def register(mcp: FastMCP) -> None:
                 "max_tokens": max_tokens,
                 "cache_hit": cache_hit,
                 "kind": state.kind,
+            },
+        )
+        return toon
+
+    @mcp.tool(
+        name="get_context_delta",
+        description="Delta TOON entre un base_snap y el estado actual",
+    )
+    def get_context_delta(
+        base_snap: int,
+        focus_ref: str,
+        radius_mm: float,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Serializa el delta entre ``base_snap`` y el estado actual (spec §3).
+
+        Errores:
+        - ``PROJECT_NOT_FOUND`` si no hay proyecto activo.
+        - ``SNAPSHOT_STALE`` si ``base_snap`` no está en el store.
+        - ``EXTERNAL_EDIT_DETECTED`` si el snapshot base era de disco y algún
+          archivo del proyecto cambió en el filesystem desde entonces. Un
+          snapshot vivo (ADR-0007) omite este chequeo.
+        - ``CONTEXT_BUDGET_IMPOSSIBLE`` si ni la degradación §4 hace caber
+          el delta en ``max_tokens`` (D-05.5, mismo mecanismo que el estado
+          completo).
+
+        El nuevo estado se registra como un snapshot fresco antes de emitir
+        el delta; su ``snap_id`` va en la cabecera ``DTOON`` como ``snap:``.
+        """
+        with tool_call_timer() as timer:
+            schematic = _resolve_root_schematic()
+            store = get_default_store()
+            entry = validate_base_snap(store, base_snap, schematic)
+
+            curr_raw, cache_hit = build_state_cached(schematic, snap=0)
+            mtimes = collect_project_mtimes(schematic)
+            new_snap = store.register(curr_raw, mtimes)
+            curr = curr_raw.model_copy(update={"snap": new_snap})
+
+            if max_tokens is None:
+                toon = encode_delta(
+                    curr,
+                    base=entry.state,
+                    focus_ref=focus_ref,
+                    radius_mm=radius_mm,
+                    base_snap=base_snap,
+                )
+            else:
+                toon = encode_delta_with_budget(
+                    curr,
+                    base=entry.state,
+                    focus_ref=focus_ref,
+                    radius_mm=radius_mm,
+                    base_snap=base_snap,
+                    max_tokens=max_tokens,
+                )
+        log_tool_call(
+            tool_name="get_context_delta",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(toon),
+            snap_id=new_snap,
+            extra={
+                "base_snap": base_snap,
+                "focus_ref": focus_ref,
+                "radius_mm": radius_mm,
+                "max_tokens": max_tokens,
+                "cache_hit": cache_hit,
+                "kind": curr.kind,
             },
         )
         return toon

@@ -25,9 +25,39 @@ Reglas transversales:
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
 | `get_world_context` | Estado del proyecto en TOON v1 | `max_tokens?=800`, `focus_ref?`, `radius_mm?` | full | `KICAD_TIMEOUT`, `KICAD_NOT_RUNNING`, `PROJECT_NOT_FOUND`, `CONTEXT_BUDGET_IMPOSSIBLE`, `UNSUPPORTED_HIERARCHY` |
+| `get_context_delta` | Delta TOON entre un `base_snap` y el estado actual | `base_snap`, `focus_ref`, `radius_mm`, `max_tokens?` | delta | `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `UNSUPPORTED_HIERARCHY` |
 | `get_component_detail` | Detalle completo de un componente: lib, pines, propiedades, footprint | `ref` | none | `COMPONENT_NOT_FOUND` |
 | `get_net_detail` | Miembros y componentes de una net | `net` | none | `NET_NOT_FOUND` |
 | `list_unconnected` | Pines sin net asignada en todo el proyecto | — | none | (los de lectura de estado) |
+
+Notas de `get_context_delta` (sesión 05 T4):
+
+- Registra el estado actual como snapshot fresco antes de emitir el delta;
+  el `snap_id` nuevo va en la cabecera TOON como `snap:`. El `base_snap`
+  del pedido va como `base:`. El área local sigue el formato
+  `area:r{radius_mm}@{focus_ref}` (spec §3).
+- `SNAPSHOT_STALE` incluye en su payload estructurado `data.base_snap` y
+  `data.retention` para que el agente correlacione el fallo sin parsear
+  el mensaje (F3 intacta: código no renombrado).
+- Cuando el `base_snap` corresponde a un snapshot vivo (ADR-0007), el
+  chequeo de `EXTERNAL_EDIT_DETECTED` se omite deliberadamente.
+- `max_tokens` opcional: si se pasa, se aplica la misma cascada de
+  degradación §4 que en `get_world_context` (colapso de nets de poder,
+  omisión de posiciones), en el mismo orden y con `CONTEXT_BUDGET_IMPOSSIBLE`
+  como fallback (D-05.5).
+- Ejemplo de salida (delta contra el golden 003):
+
+  ```
+  DTOON|v1|snap:8|base:7|area:r40@U1
+  [+] C3  100nF  x105.0 y50.0  1>3V3 2>GND
+  [~N] 3V3: C1.1 C2.1 C3.1 R1.1 U1.1
+  [~N] GND: C1.2 C2.2 C3.2 U1.8
+  [AREA]
+  C1 ok
+  C2 ok
+  R1 ok
+  U1 ok
+  ```
 
 ## Categoría `validate`
 
@@ -86,7 +116,8 @@ Parámetro común `base_snap` (sesión 04 T4, aditivo):
 v0.2: `add_symbol`, `set_value`, `connect_pins`, `place_footprint`,
 `add_via`, `add_zone`, `reload_in_gui` (los ya implementados
 —`move_footprint`, `add_track`— se mueven a la sección `pcb`).
-v0.3: `get_context_delta`, `get_session_summary`, `checkpoint`.
+v0.3: `get_session_summary`, `checkpoint` (el ya implementado
+`get_context_delta` se mueve a la categoría `world`).
 v0.4: `suggest_positions`, `route_with_freerouting`.
 
 Reservarlos ahora evita que el agente invente nombres divergentes en prompts,

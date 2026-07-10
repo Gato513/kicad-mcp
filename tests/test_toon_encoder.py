@@ -3,9 +3,6 @@
 - ``golden``: comparación byte-a-byte contra ``tests/golden/`` (frontera F1).
 - ``unit``: transformación de una fixture (``tests/fixtures/001_basico``) al
   schema de entrada y verificación de la cabecera contra ``counts``.
-
-Los golden 002/003 se marcan ``xfail`` porque su funcionalidad (degradación
-por presupuesto y ΔTOON) queda para v0.3.
 """
 
 from __future__ import annotations

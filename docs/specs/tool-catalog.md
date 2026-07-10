@@ -41,6 +41,21 @@ Notas de `get_context_delta` (sesión 05 T4):
   el mensaje (F3 intacta: código no renombrado).
 - Cuando el `base_snap` corresponde a un snapshot vivo (ADR-0007), el
   chequeo de `EXTERNAL_EDIT_DETECTED` se omite deliberadamente.
+- **Kind-aware (sesión 06, D-06.1v2).** El kind del `base_snap` gobierna
+  cómo se construye el estado actual:
+  - Base vivo `kind="pcb"` (T5 sesión 05): el estado actual se reconstruye
+    desde el board de kipy vía `build_state_from_board`; el snapshot nuevo
+    también se registra vivo (`mtimes=None`). No se lee disco.
+  - Base vivo `kind="pcb"` pero KiCad sin board disponible: `SNAPSHOT_STALE`
+    con `data.reason="live_chain_lost"` (la cadena viva se perdió: cerraron
+    el PCB o KiCad se reinició sin reabrir). El hint dirige a
+    `get_world_context` para re-sincronizar. NO es `KICAD_NOT_RUNNING`: el
+    socket puede estar OK; el problema es del snapshot del llamador.
+  - Base de disco `kind="sch"` (path histórico): se sigue leyendo del
+    `.kicad_sch` vía `build_state_cached` (con mtimes de disco). Kinds
+    cruzados (base pcb vs curr sch o viceversa) son bug interno: la tool
+    lo detecta y responde `KICAD_CLI_FAILED` con hint explícito antes de
+    emitir un delta semánticamente basura.
 - `max_tokens` opcional: si se pasa, se aplica la misma cascada de
   degradación §4 que en `get_world_context` (colapso de nets de poder,
   omisión de posiciones), en el mismo orden y con `CONTEXT_BUDGET_IMPOSSIBLE`
@@ -154,3 +169,27 @@ Reglas de la taxonomía: los códigos son SCREAMING_SNAKE en inglés (estables
 ante cambios de idioma de la UI); `message` y `hint` en el idioma de la
 sesión; un error nunca incluye tracebacks, rutas absolutas del sistema ni
 texto sin sanear proveniente del proyecto.
+
+**Campo `data` del envelope (estándar opcional, F3 intacta).** El envelope
+completo es `{code, message, hint, data?}`, donde `data: dict[str, Any] |
+None` es un payload estructurado que enriquece el hint sin romper la
+taxonomía: el código y su semántica siguen intactos, y el agente puede
+correlacionar el fallo con su plan sin parsear el mensaje. Reglas:
+
+- `data` es opcional; su ausencia equivale a `null` y se omite del envelope
+  serializado. Consumidores tolerantes: nunca asumir presencia.
+- Las claves de `data` son `snake_case` y estables por código de error (una
+  vez publicadas no se renombran). Su semántica se documenta en la entrada
+  del código o de la tool que las emite.
+- Los códigos no cambian por decidir emitir `data`. Cualquier código puede
+  ganar un payload estructurado en una sesión futura sin quebrar F3.
+
+Emisores actuales:
+
+- `SNAPSHOT_STALE` → `data.base_snap: int`, `data.retention: int`. El agente
+  usa `base_snap` para saber cuál de sus snaps expiró y `retention` para
+  entender cuántos hacia atrás puede cachar.
+- `SNAPSHOT_STALE` con `data.reason: "live_chain_lost"` → se emite cuando el
+  base es vivo pero el board de KiCad no está disponible al pedir el delta
+  (sesión 06, D-06.1v2). El agente distingue esta variante del expirado por
+  retención sin parsear el mensaje.

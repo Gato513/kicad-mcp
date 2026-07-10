@@ -101,7 +101,40 @@ Pasos:
 **Skip esperados:**
 - Sin `KICAD_MCP_GUI_TEST=1` → skip claro.
 - Sin `KICAD_MCP_GUI_REF` → skip con ejemplo del env var.
+- Sin `KICAD_MCP_PROJECT` → skip (para el test de la tool MCP; el round-trip
+  crudo del bridge no lo necesita).
 - KiCad abierto pero sin board en foco → skip con "No hay board abierto".
+
+**Env vars (checklist, sesión 06 auditoría):**
+
+| Env var                | Requerida para                                    | Ejemplo                              |
+|------------------------|---------------------------------------------------|--------------------------------------|
+| `KICAD_MCP_GUI_TEST=1` | Todos los `integration_gui`                       | `1`                                  |
+| `KICAD_MCP_PROJECT`    | Tests que registran audit y snapshots             | `/tmp/gui-test-project`              |
+| `KICAD_MCP_GUI_REF`    | Round-trip y confirm con ref del board            | `U19` (cualquier ref existente)      |
+| `KICAD_API_SOCKET`     | Direccionar el socket (default: `/tmp/kicad/api.sock`) | `ipc:///tmp/kicad/api.sock`     |
+
+**Diagnóstico H1 vs H2 (sesión 06 T1).** Si el round-trip falla con
+`x1 == x0` **exacto** (la mutación no se movió aunque el confirm reportó
+éxito), el candidato inmediato es una de estas dos causas:
+
+- **H1 histórica**: kipy exige `begin_commit()` / `push_commit()` explícito.
+  **DESCARTADA** por doc de kipy 0.7.1 (`kipy/board.py:315-316`): *"If you
+  do not call begin_commit, any changes made to the board will be committed
+  immediately"*. Sin `begin_commit` la escritura es inmediata.
+- **H1 real (nombre confuso, causa distinta)**: el bridge está mutando una
+  **copia local del proto** en lugar del interno. En kipy 0.7.1
+  (`board_types.py:1935-1937` y `geometry.py:38-42`), el getter
+  `fp.position` devuelve `Vector2(self._proto.position)` — un objeto NUEVO
+  que hace `CopyFrom` del proto. Escribir `fp.position.x = valor` muta esa
+  copia; `raw_board.update_items(fp)` envía el proto original sin cambios.
+  Fix: usar el setter `fp.position = Vector2.from_xy(nm_x, nm_y)` que
+  escribe sobre `self._proto.position` y arrastra fields/pads por delta.
+- **H2**: la re-lectura devuelve estado cacheado. Descartada por
+  inspección de `board.get_footprints()` en kipy (siempre pide `GetItems`
+  al server; no hay cache local).
+
+Este diagnóstico está anclado en el `ADR-0008` (kipy write semantics).
 
 ## Protocolo de mutaciones (`move_footprint`, `add_track`)
 

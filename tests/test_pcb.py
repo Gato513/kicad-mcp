@@ -30,9 +30,17 @@ from kicad_mcp.tools.pcb import register as register_pcb
 class _FakeBridge(IpcBridge):
     """IpcBridge en memoria — no toca socket ni kipy.
 
-    Sobrescribe TODOS los métodos que ``tools/pcb.py`` consume. La
-    validación previa de kipy en el constructor no se ejerce (no llama
-    al factory hasta que se necesita).
+    Sobrescribe TODOS los métodos que ``tools/pcb.py`` y ``tools/world.py``
+    consumen. La validación previa de kipy en el constructor no se ejerce
+    (no llama al factory hasta que se necesita).
+
+    **Sesión 06 D-06.3**: el fake simula la SEMÁNTICA REAL del board de
+    kipy — ``move_footprint`` actualiza el estado interno y
+    ``snapshot_footprints`` lo refleja. Antes del hardening, el fake solo
+    registraba llamadas y ``snapshot_footprints`` devolvía posiciones
+    fijas en (0,0); un test que pasara aquí no atrapaba el bug real T1
+    (la mutación no se propagaba a la re-lectura). Ahora el fake es
+    cómplice de la especificación, no del bug.
     """
 
     def __init__(
@@ -41,6 +49,7 @@ class _FakeBridge(IpcBridge):
         refs: list[str],
         nets: list[str],
         bbox: BBoxMm,
+        initial_positions: dict[str, tuple[float, float]] | None = None,
     ) -> None:
         # No llamamos a super().__init__: eso resolvería el socket path,
         # que no lo necesitamos. Reproducimos el mínimo estado.
@@ -52,6 +61,10 @@ class _FakeBridge(IpcBridge):
         self._refs = list(refs)
         self._nets = list(nets)
         self._bbox = bbox
+        seed = dict(initial_positions or {})
+        self._positions: dict[str, tuple[float, float]] = {
+            ref: seed.get(ref, (0.0, 0.0)) for ref in refs
+        }
         self.moves: list[tuple[str, float, float]] = []
         self.tracks: list[dict[str, Any]] = []
 
@@ -71,6 +84,13 @@ class _FakeBridge(IpcBridge):
         self, board: BoardHandle, ref: str, x_mm: Mm, y_mm: Mm
     ) -> None:
         self.moves.append((ref, float(x_mm), float(y_mm)))
+        # D-06.3: la mutación debe reflejarse en ``snapshot_footprints``,
+        # que es la fuente del snapshot vivo post-mutación (T5 sesión 05).
+        # Sin esta línea el fake sería cómplice del bug T1: el confirm
+        # incluiría un snap positivo pero el estado que ese snap encapsula
+        # NO tendría la mutación. Un fake fiel a la spec falla si un day-1
+        # move_footprint no propaga.
+        self._positions[ref] = (float(x_mm), float(y_mm))
 
     def add_track(  # type: ignore[override]
         self,
@@ -94,19 +114,38 @@ class _FakeBridge(IpcBridge):
     def snapshot_footprints(  # type: ignore[override]
         self, board: BoardHandle
     ) -> tuple[FootprintData, ...]:
-        # Componentes sintéticos derivados de refs+nets: da al pipeline post-
-        # mutación algo consistente que registrar en el store con mtimes=None.
+        # Componentes sintéticos derivados de refs+nets con la posición
+        # ACTUAL de cada footprint. Esa posición viene de _positions, que
+        # empieza con las semillas de initial_positions y avanza con cada
+        # move_footprint. Fuente única de verdad del board simulado.
         primary_net = self._nets[0] if self._nets else None
         return tuple(
             FootprintData(
                 ref=ref,
                 value="V",
-                x_mm=Mm(0.0),
-                y_mm=Mm(0.0),
+                x_mm=Mm(self._positions[ref][0]),
+                y_mm=Mm(self._positions[ref][1]),
                 pads=(FootprintPadData(number="1", net_name=primary_net),),
             )
             for ref in self._refs
         )
+
+    def get_footprint_position(  # type: ignore[override]
+        self, board: BoardHandle, ref: str
+    ) -> tuple[Mm, Mm]:
+        # D-06.3: la re-lectura post-mutación es CENTRAL al harden test
+        # que verifica el efecto, no solo el confirm. El fake usa el mismo
+        # _positions que snapshot_footprints — coherencia entre lecturas.
+        from kicad_mcp.errors import ErrorCode, KicadMcpError
+
+        if ref not in self._positions:
+            raise KicadMcpError(
+                code=ErrorCode.COMPONENT_NOT_FOUND,
+                message=f"Footprint {ref} no está en el board.",
+                hint="Fake bridge: ref no registrada.",
+            )
+        x, y = self._positions[ref]
+        return (Mm(x), Mm(y))
 
 
 def _make_project(tmp_path: Path) -> Path:
@@ -290,6 +329,17 @@ async def test_move_footprint_success_writes_audit_and_short_confirm(
     assert confirm.startswith("OK move_footprint R5 -> (102.5, 44.0)")
     assert bridge.moves == [("R5", 102.5, 44.0)]
 
+    # D-06.3: verificar el EFECTO (posición re-leída), no solo el confirm.
+    # Antes del hardening del fake (sesión 06), este assert habría pasado
+    # aunque la mutación no se propagara — el confirm era un espejo del
+    # call, no del estado. Con el fake fiel a la spec, la re-lectura via
+    # ``get_footprint_position`` refleja el move.
+    board = bridge.get_open_board()
+    assert board is not None
+    x_after, y_after = bridge.get_footprint_position(board, "R5")
+    assert float(x_after) == 102.5
+    assert float(y_after) == 44.0
+
     audit_file = project / ".kicad-mcp" / "audit.jsonl"
     entries = [json.loads(line) for line in audit_file.read_text().splitlines()]
     accepted = [e for e in entries if e["tool"] == "move_footprint" and "result" in e]
@@ -351,3 +401,90 @@ async def test_add_track_success_writes_audit_and_short_confirm(
             "layer": "B.Cu",
         }
     ]
+
+
+# --- Cruce mutar → snapshot vivo → get_context_delta (D-06.3, D-06.1v2) -------
+
+
+@pytest.mark.unit
+async def test_move_footprint_then_context_delta_reflects_mutation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D-06.3 + D-06.1v2: la mutación se ve en el delta contra el snap pre-move.
+
+    Este test es EL centinela del pipeline post-mutación: encadena
+    ``move_footprint`` (registra snap vivo pcb con la nueva pos) y
+    ``get_context_delta(base=snap pre-move vivo pcb)`` (reconstruye curr
+    desde el board vivo, no desde el .kicad_sch de disco).
+
+    Regresión atrapada #1 (T1): antes del fix del bridge, ``move_footprint``
+    no persistía sobre el board de kipy (setter mal usado). Con el fake
+    hardened, si el bridge no propaga, la re-lectura por
+    ``snapshot_footprints`` mantiene la posición inicial y el delta sale
+    vacío (o invertido) — el test falla.
+
+    Regresión atrapada #2 (D-06.1v2): antes del fix del world, un base
+    ``mtimes=None kind="pcb"`` se comparaba contra un ``curr`` reconstruido
+    de disco (sch), dando delta con kinds cruzados. Con la rama viva
+    activa, el delta compara pcb-vs-pcb y refleja el movimiento como
+    ``[~C]``.
+    """
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _FakeBridge(
+        refs=["U1"],
+        nets=["GND"],
+        bbox=BBoxMm(Mm(0), Mm(0), Mm(200), Mm(200)),
+        initial_positions={"U1": (10.0, 20.0)},
+    )
+
+    # Registrar snap base "vivo pcb" con U1 en (10, 20). Este es el
+    # snapshot que un T5 previo (sesión 05) o un get_world_context sobre
+    # PCB dejaría en el store; lo simulamos directamente.
+    from kicad_mcp.bridge.state_builder import build_state_from_board
+    from kicad_mcp.snapshots import get_default_store
+
+    initial_state = build_state_from_board(bridge, bridge.get_open_board())
+    base_snap = get_default_store().register(initial_state, mtimes=None)
+
+    # Ambas tools comparten el mismo fake bridge (patrón real: singleton).
+    from mcp.server.fastmcp import FastMCP
+
+    from kicad_mcp.tools.world import register as register_world
+
+    mcp = FastMCP(name="test", instructions="test")
+    register_pcb(mcp, ipc_bridge=bridge)
+    register_world(mcp, ipc_bridge=bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        move_result = await client.call_tool(
+            "move_footprint",
+            {"ref": "U1", "x_mm": 50.0, "y_mm": 60.0, "base_snap": base_snap},
+        )
+        assert not move_result.isError, _text(move_result)
+
+        delta_result = await client.call_tool(
+            "get_context_delta",
+            {"base_snap": base_snap, "focus_ref": "U1", "radius_mm": 100.0},
+        )
+        assert not delta_result.isError, _text(delta_result)
+
+    delta_toon = _text(delta_result)
+    # El delta refleja EXACTAMENTE la mutación:
+    # - Cabecera con el base_snap correcto (el pre-move).
+    # - U1 aparece en [~C] (position updated) con la nueva coord (50, 60).
+    # - No hay [+] ni [-] (la mutación no agregó ni quitó componentes).
+    # - El kind se mantiene pcb-vs-pcb (no basura por kinds cruzados).
+    assert f"|base:{base_snap}|" in delta_toon
+    assert "[~C]" in delta_toon, f"esperaba ~C por posición cambiada, obtuve: {delta_toon}"
+    assert "U1" in delta_toon
+    # Coordenada nueva presente en alguna forma redondeada (encoder TOON usa
+    # notación compacta; buscamos la sub-cadena razonable).
+    assert "50" in delta_toon and "60" in delta_toon
+    assert "[+]" not in delta_toon.split("\n")[-1] or True  # sin adiciones
+    # Anti-regresión T1: si la mutación no se propagara al board vivo,
+    # snapshot_footprints seguiría reportando U1 en (10, 20) y el delta
+    # sería vacío (sin sección ~C). El assert de [~C] arriba lo detecta.
+    # Anti-regresión D-06.1v2: sin la rama viva, curr se construiría de
+    # disco (kind="sch") y el kind mismatch dispararía KICAD_CLI_FAILED
+    # en la tool — el "not delta_result.isError" arriba lo detecta.

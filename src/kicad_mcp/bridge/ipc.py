@@ -185,8 +185,11 @@ def _map_ipc_failure(op_name: str, exc: BaseException) -> KicadMcpError:
     - Cualquier otro (p. ej. ``kipy.errors.ApiError``) → ``KICAD_CLI_FAILED``
       con el detalle sanitizado en el hint.
 
-    Se identifica ``kipy.errors.ConnectionError`` por ``__qualname__`` para
-    no forzar el import de ``kipy`` en un ciclo perezoso.
+    Se identifica ``kipy.errors.ConnectionError`` por ``__qualname__`` **más**
+    ``__module__.startswith("kipy")``, para no forzar el import de ``kipy``
+    en un ciclo perezoso y a la vez no confundir un ``ConnectionError``
+    homónimo definido por otra librería que corra dentro del bloque
+    supervisado (sesión 05 T1).
     """
     if isinstance(exc, TimeoutError):
         return KicadMcpError(
@@ -194,8 +197,12 @@ def _map_ipc_failure(op_name: str, exc: BaseException) -> KicadMcpError:
             message=f"IPC excedió el timeout durante {op_name}.",
             hint="Reintentar o reducir el alcance de la operación.",
         )
-    exc_qualname = type(exc).__qualname__
-    if isinstance(exc, ConnectionError) or exc_qualname == "ConnectionError":
+    exc_type = type(exc)
+    is_kipy_conn_error = (
+        exc_type.__qualname__ == "ConnectionError"
+        and (exc_type.__module__ or "").startswith("kipy")
+    )
+    if isinstance(exc, ConnectionError) or is_kipy_conn_error:
         return KicadMcpError(
             code=ErrorCode.KICAD_NOT_RUNNING,
             message="Conexión IPC con KiCad perdida durante la operación.",

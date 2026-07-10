@@ -332,6 +332,57 @@ def test_supervise_does_not_retry_silently_within_same_request() -> None:
 
 
 @pytest.mark.unit
+def test_supervise_distinguishes_kipy_connection_error_from_foreign_lookalike() -> None:
+    """Un ``ConnectionError`` de OTRA librería NO mapea a ``KICAD_NOT_RUNNING``.
+
+    Sesión 05 T1: si un módulo ajeno (p. ej. ``requests``) define su propio
+    ``ConnectionError`` que se filtra dentro del bloque ``_supervise``, la
+    identificación por sólo ``__qualname__`` lo clasificaría mal. La regla
+    endurecida exige, además, que ``__module__`` empiece con ``"kipy"``.
+    """
+
+    class _ForeignConnectionError(Exception):
+        pass
+
+    _ForeignConnectionError.__qualname__ = "ConnectionError"
+    _ForeignConnectionError.__module__ = "requests.exceptions"
+
+    raising = _RaisingClient(_ForeignConnectionError("look-alike but from requests"))
+    factory = _CountingFactory(lambda: raising)
+    bridge = IpcBridge(client_factory=factory)
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_version()
+    assert excinfo.value.code is ErrorCode.KICAD_CLI_FAILED, (
+        "un ConnectionError ajeno a kipy debe caer al bucket genérico"
+    )
+
+
+@pytest.mark.unit
+def test_supervise_recognizes_kipy_module_connection_error() -> None:
+    """La detección positiva sigue activa para ``kipy.errors.ConnectionError``.
+
+    Sin depender del import real de ``kipy`` (contrato del bridge: import
+    perezoso), simulamos una excepción con el ``__qualname__`` y el
+    ``__module__`` que ``kipy`` produce.
+    """
+
+    class _KipyConnectionError(Exception):
+        pass
+
+    _KipyConnectionError.__qualname__ = "ConnectionError"
+    _KipyConnectionError.__module__ = "kipy.errors"
+
+    raising = _RaisingClient(_KipyConnectionError("simulated kipy failure"))
+    factory = _CountingFactory(lambda: raising)
+    bridge = IpcBridge(client_factory=factory)
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_version()
+    assert excinfo.value.code is ErrorCode.KICAD_NOT_RUNNING
+
+
+@pytest.mark.unit
 def test_supervise_preserves_typed_errors_unchanged() -> None:
     """``KicadMcpError`` levantado dentro de un op fluye sin remap.
 

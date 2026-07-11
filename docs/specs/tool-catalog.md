@@ -178,6 +178,7 @@ audit line JSONL por cada mutación aceptada o rechazada.
 |---|---|---|---|---|
 | `move_footprint` | Mueve un footprint del PCB a (x_mm, y_mm) | `ref`, `x_mm`, `y_mm`, `base_snap?` | confirm | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
 | `add_track` | Track lineal entre dos puntos, en un net y layer | `net`, `start_x_mm`, `start_y_mm`, `end_x_mm`, `end_y_mm`, `width_mm?=0.25`, `layer?="F.Cu"`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
+| `add_via` | Via pasante en (x_mm, y_mm) asignada a un net | `x_mm`, `y_mm`, `net`, `size_mm?=0.8`, `drill_mm?=0.4`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
 
 Respuestas de éxito son confirmaciones cortas (≤ 50 tokens, ADR-0004),
 p. ej. `OK move_footprint R5 -> (102.5, 44.0) [snap:12]`.
@@ -202,6 +203,19 @@ dispara.
 Contrato de errores intacto: la superficie es la misma; solo cambia la
 economía interna. Latencia medida contra el board de 202 refs: ~13.6 s
 (sesión 07) → ~3.5 s (sesión 08), bajo el techo de 4 s de D-08.4.
+
+**`add_via` (sesión 09, B3, D-09.3).** Crea una via **pasante** (through, drill
+F.Cu→B.Cu) vía `kipy.board_types.Via` + `create_items` — el mismo pipeline
+rápido que `add_track`. Validaciones pre-mutación: net existe
+(`NET_NOT_FOUND` con similares), posición dentro del bbox (`INVALID_PARAMS`),
+y `0 < drill_mm < size_mm` (`INVALID_PARAMS`: un drill ≥ diámetro es una via
+imposible). Defaults sanos: `size_mm=0.8`, `drill_mm=0.4` (los clásicos de
+KiCad). Post-estado: una via **no** vive en `NormalizedState` (que modela
+footprints + pines), así que —igual que `add_track`— el estado post es
+idéntico al pre y se DERIVA del snapshot leído (cero pasadas post, sin
+verificación puntual por KIID). G1 + audit + confirm ≤50 tokens con
+`snap_id`; sin retry en la escritura (D-07.1). Confirm:
+`OK add_via GND @(150.0,80.0) d0.80/0.40 [snap:N]`.
 
 ## Categoría `sch` (v0.2 — mutaciones de esquemático, sesión 08)
 
@@ -273,9 +287,9 @@ Parámetro común `base_snap` (sesión 04 T4, aditivo):
 
 ## Nombres reservados (fases futuras — no implementar, no renombrar)
 
-v0.2: `set_value`, `connect_pins`, `place_footprint`, `add_via`,
+v0.2: `set_value`, `connect_pins`, `place_footprint`,
 `add_zone`, `reload_in_gui` (los ya implementados —`move_footprint`,
-`add_track`, `add_symbol`— se mueven a las secciones `pcb` y `sch`).
+`add_track`, `add_via`, `add_symbol`— se mueven a las secciones `pcb` y `sch`).
 v0.3: `get_session_summary`, `checkpoint` (el ya implementado
 `get_context_delta` se mueve a la categoría `world`).
 v0.4: `suggest_positions`, `route_with_freerouting`.

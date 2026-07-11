@@ -91,6 +91,7 @@ class _FakeBridge(IpcBridge):
         }
         self.moves: list[tuple[str, float, float]] = []
         self.tracks: list[dict[str, Any]] = []
+        self.vias: list[dict[str, Any]] = []
         # Sesión 08 D-08.1: contadores de invocaciones (test contador).
         self.get_footprints_calls: int = 0  # pasadas O(board) que hacen refs+bbox+snapshot
         self.get_footprints_by_id_calls: int = 0  # verificación puntual O(1)
@@ -199,6 +200,29 @@ class _FakeBridge(IpcBridge):
         )
         if timings is not None:
             timings["lookup_ms"] = 0.0
+
+    def add_via(  # type: ignore[override]
+        self,
+        board: BoardHandle,
+        net: str,
+        x_mm: Mm,
+        y_mm: Mm,
+        diameter_mm: Mm,
+        drill_mm: Mm,
+        *,
+        timings: dict[str, float] | None = None,
+    ) -> str:
+        self.vias.append(
+            {
+                "net": net,
+                "pos": [float(x_mm), float(y_mm)],
+                "size_mm": float(diameter_mm),
+                "drill_mm": float(drill_mm),
+            }
+        )
+        if timings is not None:
+            timings["lookup_ms"] = 0.0
+        return "00000000-0000-0000-0000-0000000000ff"
 
     def snapshot_footprints(  # type: ignore[override]
         self, board: BoardHandle
@@ -495,6 +519,109 @@ async def test_add_track_success_writes_audit_and_short_confirm(
             "layer": "B.Cu",
         }
     ]
+
+
+# --- add_via (B3, D-09.3) -----------------------------------------------------
+
+
+@pytest.mark.unit
+async def test_add_via_success_writes_audit_and_short_confirm(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _FakeBridge(
+        refs=["U1"],
+        nets=["GND", "3V3"],
+        bbox=BBoxMm(Mm(0), Mm(0), Mm(200), Mm(200)),
+    )
+    mcp = _make_server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "add_via",
+            {"x_mm": 100.0, "y_mm": 80.0, "net": "GND", "size_mm": 0.8, "drill_mm": 0.4},
+        )
+    assert not result.isError, _text(result)
+    confirm = _text(result)
+    assert estimate_tokens(confirm) <= 50, f"{confirm!r} demasiado largo"
+    assert confirm.startswith("OK add_via GND @(100.0,80.0) d0.80/0.40")
+    assert "[snap:" in confirm
+    assert bridge.vias == [{"net": "GND", "pos": [100.0, 80.0], "size_mm": 0.8, "drill_mm": 0.4}]
+
+    # Audit escrito con la mutación aceptada.
+    audit_file = project / ".kicad-mcp" / "audit.jsonl"
+    entries = [json.loads(line) for line in audit_file.read_text().splitlines()]
+    accepted = [e for e in entries if e["tool"] == "add_via" and "result" in e]
+    assert len(accepted) == 1
+    assert accepted[0]["params"]["net"] == "GND"
+
+
+@pytest.mark.unit
+async def test_add_via_uses_default_sizes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Sin size/drill explícitos: defaults sanos 0.8 / 0.4 mm."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _FakeBridge(refs=["U1"], nets=["GND"], bbox=BBoxMm(Mm(0), Mm(0), Mm(200), Mm(200)))
+    mcp = _make_server(bridge)
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("add_via", {"x_mm": 50.0, "y_mm": 50.0, "net": "GND"})
+    assert not result.isError, _text(result)
+    assert bridge.vias[0]["size_mm"] == 0.8
+    assert bridge.vias[0]["drill_mm"] == 0.4
+
+
+@pytest.mark.unit
+async def test_add_via_reports_net_not_found_with_similars(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _FakeBridge(
+        refs=["U1"], nets=["3V3", "3V3_MCU", "GND"], bbox=BBoxMm(Mm(0), Mm(0), Mm(100), Mm(100))
+    )
+    mcp = _make_server(bridge)
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("add_via", {"x_mm": 10.0, "y_mm": 10.0, "net": "3v3"})
+    assert result.isError
+    text = _text(result)
+    assert "NET_NOT_FOUND" in text
+    assert "3V3" in text
+    assert bridge.vias == []
+
+
+@pytest.mark.unit
+async def test_add_via_rejects_out_of_bounds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _FakeBridge(refs=["U1"], nets=["GND"], bbox=BBoxMm(Mm(0), Mm(0), Mm(100), Mm(100)))
+    mcp = _make_server(bridge)
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("add_via", {"x_mm": 999.0, "y_mm": 999.0, "net": "GND"})
+    assert result.isError
+    assert "INVALID_PARAMS" in _text(result)
+    assert bridge.vias == []
+
+
+@pytest.mark.unit
+async def test_add_via_rejects_drill_ge_diameter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Drill ≥ diámetro (o ≤ 0) es una via imposible ⇒ INVALID_PARAMS."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _FakeBridge(refs=["U1"], nets=["GND"], bbox=BBoxMm(Mm(0), Mm(0), Mm(100), Mm(100)))
+    mcp = _make_server(bridge)
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "add_via",
+            {"x_mm": 50.0, "y_mm": 50.0, "net": "GND", "size_mm": 0.4, "drill_mm": 0.6},
+        )
+    assert result.isError
+    assert "INVALID_PARAMS" in _text(result)
+    assert bridge.vias == []
 
 
 # --- Cruce mutar → snapshot vivo → get_context_delta (D-06.3, D-06.1v2) -------
@@ -820,6 +947,89 @@ async def test_add_track_round_trip_against_open_board() -> None:
         )
     finally:
         # Teardown D-09.2: borra el track creado con kipy directo (test-only).
+        if created is not None:
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                raw.remove_items(created)
+
+
+@pytest.mark.integration_gui
+async def test_add_via_round_trip_against_open_board() -> None:
+    """B3 (D-09.3): round-trip E2E de ``add_via`` contra KiCad real.
+
+    Mismo patrón que B2: tool ``add_via`` en un net real → re-lectura de vias
+    vía kipy directo (diff de KIIDs) → verificación de posición (±1 nm), net,
+    diámetro y drill → teardown que borra la via con kipy directo dentro del
+    test (D-09.2, try/finally).
+
+    Precondiciones: ``KICAD_MCP_GUI_TEST=1``, ``KICAD_MCP_PROJECT`` apuntando
+    al proyecto abierto, y el PCB Editor abierto con un board.
+    """
+    if os.environ.get("KICAD_MCP_GUI_TEST") != "1":
+        pytest.skip("KICAD_MCP_GUI_TEST != 1; ver docs/pruebas-gui.md")
+    if not os.environ.get("KICAD_MCP_PROJECT"):
+        pytest.skip("KICAD_MCP_PROJECT no definida; apuntar al proyecto abierto")
+
+    from kicad_mcp.server import create_server
+
+    bridge = IpcBridge()
+    board = bridge.get_open_board()
+    if board is None:
+        pytest.skip("no hay board abierto en KiCad")
+
+    net = _pick_real_net(bridge, board)
+    if net is None:
+        pytest.skip("el board no tiene nets con nombre; no se puede colocar via")
+
+    ctx = bridge.read_board_context(board)
+    bbox = ctx.bbox
+    # Coords dentro del bbox, desplazadas del centro para no colisionar con el
+    # track del test B2 si corren en la misma sesión.
+    cx = round((float(bbox.min_x) + float(bbox.max_x)) / 2.0 + 5.0, 3)
+    cy = round((float(bbox.min_y) + float(bbox.max_y)) / 2.0 + 5.0, 3)
+    size = 0.8
+    drill = 0.4
+
+    raw = board.raw
+    before_ids = {str(v.id.value) for v in raw.get_vias()}
+
+    created = None
+    try:
+        mcp = create_server()
+        async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+            result = await client.call_tool(
+                "add_via",
+                {"x_mm": cx, "y_mm": cy, "net": net, "size_mm": size, "drill_mm": drill},
+            )
+        assert not result.isError, _text(result)
+        confirm = _text(result)
+        assert confirm.startswith(f"OK add_via {net}"), confirm
+        import re
+
+        match = re.search(r"\[snap:(\d+)\]", confirm)
+        assert match is not None and int(match.group(1)) > 0, confirm
+
+        after = list(raw.get_vias())
+        new_vias = [v for v in after if str(v.id.value) not in before_ids]
+        assert len(new_vias) == 1, f"esperaba 1 via nueva; hubo {len(new_vias)}"
+        created = new_vias[0]
+
+        exp_x, exp_y = int(mm_to_nm(Mm(cx))), int(mm_to_nm(Mm(cy)))
+        assert abs(created.position.x - exp_x) <= 1, f"pos.x {created.position.x} != {exp_x}"
+        assert abs(created.position.y - exp_y) <= 1, f"pos.y {created.position.y} != {exp_y}"
+        assert str(created.net.name) == net, f"net {created.net.name!r} != {net!r}"
+        assert abs(created.diameter - int(mm_to_nm(Mm(size)))) <= 1
+        assert abs(created.drill_diameter - int(mm_to_nm(Mm(drill)))) <= 1
+
+        print(
+            f"\n=== B3 add_via round-trip ===\n  confirm: {confirm}"
+            f"\n  net={net} pos=({cx},{cy}) size={size} drill={drill}"
+            f"\n  kipy read: pos={created.position} net={created.net.name} "
+            f"d={created.diameter} drill={created.drill_diameter}"
+            f"\n=== fin ==="
+        )
+    finally:
         if created is not None:
             import contextlib
 

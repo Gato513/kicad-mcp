@@ -598,6 +598,39 @@ def test_mutation_move_footprint_does_not_retry_on_busy() -> None:
 
 
 @pytest.mark.unit
+def test_mutation_add_via_does_not_retry_on_busy() -> None:
+    """AS_BUSY en ``add_via`` ⇒ error INMEDIATO, exactamente 1 llamada IPC.
+
+    B3 (D-09.3): como toda mutación (D-07.1), ``add_via`` viaja por
+    ``_supervise`` directo, NO por ``_run_supervised_read``: un busy no se
+    reintenta (KiCad podría haber aceptado la primera y el retry duplicaría
+    la via). El busy se dispara en la búsqueda del net (``get_nets``).
+    """
+
+    class _BusyNetsBoard:
+        def __init__(self) -> None:
+            self.get_nets_calls = 0
+
+        def get_nets(self) -> Any:
+            self.get_nets_calls += 1
+            raise _kipy_busy()
+
+    busy_board = _BusyNetsBoard()
+    board = BoardHandle(_raw=busy_board)
+    bridge = IpcBridge(client_factory=_factory(_FakeClient(board=busy_board)))
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.add_via(board, "GND", Mm(50.0), Mm(50.0), Mm(0.8), Mm(0.4))
+
+    assert excinfo.value.code is ErrorCode.KICAD_CLI_FAILED
+    assert excinfo.value.data == {"ipc_status": "busy"}
+    assert busy_board.get_nets_calls == 1, (
+        "una mutación NO se reintenta ante AS_BUSY (D-07.1); "
+        f"hubo {busy_board.get_nets_calls} invocaciones"
+    )
+
+
+@pytest.mark.unit
 def test_run_supervised_read_rejects_non_idempotent_op_name() -> None:
     """``_run_supervised_read`` con un op fuera de la whitelist ⇒ AssertionError.
 

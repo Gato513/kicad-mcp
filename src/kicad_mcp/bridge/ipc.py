@@ -931,3 +931,59 @@ class IpcBridge:
                 track.layer = layer_value
                 track.net = net_obj
                 raw_board.create_items(track)
+
+    def add_via(
+        self,
+        board: BoardHandle,
+        net: str,
+        x_mm: Mm,
+        y_mm: Mm,
+        diameter_mm: Mm,
+        drill_mm: Mm,
+        *,
+        timings: dict[str, float] | None = None,
+    ) -> str:
+        """Crea una via pasante (through) en ``(x_mm, y_mm)`` asignada a ``net``.
+
+        Precondición: net válido, coordenadas dentro del bbox, drill < diámetro
+        (el llamador valida antes para emitir errores tipados con hints ricos).
+
+        La ``Via`` de kipy nace pasante (``VT_THROUGH``, drill F.Cu→B.Cu) por
+        default (``board_types.py:1606-1608``); fijamos posición, diámetro,
+        drill y net. Se crea con ``create_items`` — el mismo camino que
+        ``add_track``. Devuelve el KIID de la via creada (para la verificación
+        puntual del round-trip E2E), o ``""`` si KiCad no lo reporta.
+
+        Si ``timings`` es un dict, se rellena ``timings["lookup_ms"]`` con la
+        latencia de la búsqueda O(nets) del net por nombre (paralelo a
+        ``add_track``).
+        """
+        from kipy.board_types import Via
+        from kipy.geometry import Vector2
+
+        with self._lock:
+            self._detect_restart()
+            with self._supervise("add_via"):
+                raw_board = board.raw
+                lookup_start = time.perf_counter()
+                net_obj = next(
+                    (n for n in raw_board.get_nets() if str(n.name) == net),
+                    None,
+                )
+                if timings is not None:
+                    timings["lookup_ms"] = (time.perf_counter() - lookup_start) * 1000
+                if net_obj is None:
+                    raise KicadMcpError(
+                        code=ErrorCode.NET_NOT_FOUND,
+                        message=f"Net {net} no está en el board (post-validación).",
+                        hint="Snapshot del board cambió entre la validación y la mutación.",
+                    )
+                via = Via()
+                via.position = Vector2.from_xy(int(mm_to_nm(x_mm)), int(mm_to_nm(y_mm)))
+                via.diameter = int(mm_to_nm(diameter_mm))
+                via.drill_diameter = int(mm_to_nm(drill_mm))
+                via.net = net_obj
+                created = raw_board.create_items(via)
+                if created:
+                    return str(created[0].id.value)
+                return ""

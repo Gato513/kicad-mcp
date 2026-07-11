@@ -412,6 +412,121 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         )
         return confirmation
 
+    @mcp.tool(
+        name="add_via",
+        description="Agrega una via pasante en (x_mm, y_mm) asignada a un net",
+    )
+    def add_via(
+        x_mm: float,
+        y_mm: float,
+        net: str,
+        size_mm: float = 0.8,
+        drill_mm: float = 0.4,
+        base_snap: int | None = None,
+    ) -> str:
+        # D-09.3 (B3): via pasante vía kipy Via + create_items, mismo pipeline
+        # rápido que add_track (D-08.1/D-08.2). Una via NO vive en
+        # NormalizedState (que modela footprints + pines), así que —igual que
+        # add_track— el post-estado es idéntico al pre en términos de
+        # NormalizedState: se DERIVA del snapshot leído (cero pasadas post,
+        # sin re-lectura ni verificación puntual por KIID). No hay retry en la
+        # escritura (D-07.1): add_via viaja por _supervise directo en el bridge.
+        with tool_call_timer() as timer:
+            root = _project_root()
+            if base_snap is not None:
+                _check_base_snap(base_snap)
+            board = _resolve_board(bridge)
+
+            read_start = time.perf_counter()
+            ctx = bridge.read_board_context(board)
+            nets = bridge.list_net_names(board)
+            read_ms = (time.perf_counter() - read_start) * 1000
+            if net not in nets:
+                similars = _similars(net, nets)
+                hint = "nets similares: " + ", ".join(similars) if similars else "sin sugerencias"
+                _audit_error(
+                    root,
+                    "add_via",
+                    _via_params(net, x_mm, y_mm, size_mm, drill_mm),
+                    ErrorCode.NET_NOT_FOUND,
+                )
+                raise KicadMcpError(
+                    code=ErrorCode.NET_NOT_FOUND,
+                    message=f"Net {net} no existe en el board.",
+                    hint=hint,
+                )
+            bbox = ctx.bbox
+            if not bbox.contains(Mm(x_mm), Mm(y_mm)):
+                _audit_error(
+                    root,
+                    "add_via",
+                    _via_params(net, x_mm, y_mm, size_mm, drill_mm),
+                    ErrorCode.INVALID_PARAMS,
+                )
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message=f"Coordenadas ({x_mm}, {y_mm}) fuera del bounding box del board.",
+                    hint=(
+                        f"Rango permitido: x∈[{bbox.min_x:.1f}, {bbox.max_x:.1f}], "
+                        f"y∈[{bbox.min_y:.1f}, {bbox.max_y:.1f}] (mm)."
+                    ),
+                )
+            if not (0 < drill_mm < size_mm):
+                _audit_error(
+                    root,
+                    "add_via",
+                    _via_params(net, x_mm, y_mm, size_mm, drill_mm),
+                    ErrorCode.INVALID_PARAMS,
+                )
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message=f"Drill {drill_mm} mm inválido para una via de {size_mm} mm.",
+                    hint="El drill debe ser positivo y estrictamente menor al diámetro.",
+                )
+
+            backup_info = ensure_session_backup(root)  # Gate G1
+            add_via_timings: dict[str, float] = {}
+            bridge.add_via(
+                board,
+                net=net,
+                x_mm=Mm(x_mm),
+                y_mm=Mm(y_mm),
+                diameter_mm=Mm(size_mm),
+                drill_mm=Mm(drill_mm),
+                timings=add_via_timings,
+            )
+            # Post-estado: la via no altera la lista de componentes → derivamos
+            # del snapshot pre (cero pasadas post, idéntico a add_track).
+            new_state = build_state_from_snapshot(ctx.footprints)
+            snap_id = get_default_store().register(new_state, mtimes=None)
+            via_params = _via_params(net, x_mm, y_mm, size_mm, drill_mm)
+            via_params["base_snap"] = base_snap
+            audit_record(
+                root,
+                tool="add_via",
+                params=via_params,
+                result={"snap": snap_id, "backup": backup_info.get("backup")},
+            )
+            confirmation = (
+                f"OK add_via {net} @({x_mm:.1f},{y_mm:.1f}) "
+                f"d{size_mm:.2f}/{drill_mm:.2f} [snap:{snap_id}]"
+            )
+        add_via_extra: dict[str, Any] = {
+            "net": net,
+            "base_snap": base_snap,
+            "read_ms": round(read_ms, 3),
+        }
+        if "lookup_ms" in add_via_timings:
+            add_via_extra["lookup_ms"] = round(add_via_timings["lookup_ms"], 3)
+        log_tool_call(
+            tool_name="add_via",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(confirmation),
+            snap_id=snap_id,
+            extra=add_via_extra,
+        )
+        return confirmation
+
 
 def _track_params(
     net: str,
@@ -429,6 +544,10 @@ def _track_params(
         "width_mm": width,
         "layer": layer,
     }
+
+
+def _via_params(net: str, x: float, y: float, size: float, drill: float) -> dict[str, Any]:
+    return {"net": net, "pos": [x, y], "size_mm": size, "drill_mm": drill}
 
 
 def _audit_error(

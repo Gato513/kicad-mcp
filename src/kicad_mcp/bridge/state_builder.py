@@ -41,7 +41,6 @@ def _index_placements(placements: tuple[Placement, ...]) -> dict[str, Placement]
 
 
 def _build_pins(
-    ref: str,
     all_pin_ids: tuple[str, ...],
     connections: dict[str, str],
     unconnected: set[str],
@@ -57,7 +56,6 @@ def _build_pins(
             # KiCad lo trataría como flotante. Lo emitimos como sin conectar
             # para no perder el pin (spec §2: pin sin conectar → ">-").
             pins.append(Pin(p=pin_id, net=None))
-        _ = ref  # firma consistente si alguien quiere depurar por ref
     return tuple(pins)
 
 
@@ -200,7 +198,6 @@ def _rebuild(schematic: Path, *, snap: int) -> NormalizedState:
     for c in netlist.components:
         p = placements_by_ref[c.ref]
         pins = _build_pins(
-            c.ref,
             c.pin_ids,
             connections.get(c.ref, {}),
             unconnected_by_ref.get(c.ref, set()),

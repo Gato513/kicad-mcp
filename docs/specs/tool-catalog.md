@@ -160,6 +160,78 @@ registra la tool (vivo, ADR-0007). El agente lo usa como `base_snap` de la
 próxima mutación encadenada; el `base_snap` pasado como parámetro se
 preserva en `.kicad-mcp/audit.jsonl` para trazabilidad.
 
+**Sesión 08 D-08.1/D-08.2 — pipeline rápido de mutaciones.** El pre-work
+del tool (validación de refs, validación de bbox, localización del target)
+se colapsa en UNA sola pasada `get_footprints()` vía la operación
+compuesta interna del bridge (`read_board_context`). El post-snapshot se
+DERIVA localmente aplicando la mutación conocida y se verifica por KIID
+con `get_items_by_id` (filtrado del lado de KiCad, O(1) de red). Si la
+verificación diverge de lo derivado (más allá de ±1 nm), la tool cae a
+re-lectura completa (fallback) y loguea `post_snapshot_fallback`. El log
+JSON de la tool incorpora `extra.read_ms` (pre), `extra.lookup_ms`
+(escritura), `extra.verify_ms` (KIID) y `extra.post_fallback` cuando se
+dispara.
+
+Contrato de errores intacto: la superficie es la misma; solo cambia la
+economía interna. Latencia medida contra el board de 202 refs: ~13.6 s
+(sesión 07) → ~3.5 s (sesión 08), bajo el techo de 4 s de D-08.4.
+
+## Categoría `sch` (v0.2 — mutaciones de esquemático, sesión 08)
+
+Superficie de mutación complementaria a `pcb`: opera sobre archivos
+`.kicad_sch` con `kicad-skip`, no vía IPC. Mismo Gate G1 + audit JSONL.
+
+| Tool | Descripción | Parámetros | Refresh | Errores posibles |
+|---|---|---|---|---|
+| `add_symbol` | Clona un símbolo ya presente en una hoja y lo coloca con nueva ref | `sheet`, `lib_id`, `ref`, `x_mm`, `y_mm`, `base_snap?` | confirm | `INVALID_PARAMS`, `PATH_OUTSIDE_PROJECT`, `PROJECT_NOT_FOUND`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `KICAD_CLI_FAILED` |
+
+`add_symbol` — decisiones vinculantes (D-08.5):
+
+1. **Librería**: SOLO clonado desde un símbolo/template ya instanciado en
+   el archivo objetivo (`lib_id` existente). Pick desde librerías
+   externas fuera de scope permanente hasta nueva decisión. El hint del
+   error `INVALID_PARAMS` cuando el lib_id no está lista los disponibles.
+2. **Cableado**: `add_symbol` **coloca**, no conecta. El símbolo nuevo
+   sale con todos sus pines como `net=None` (§2 TOON: `">-"`). Conexión
+   de pines en `connect_pins` (v0.5).
+3. **Superficie**: toca SOLO el `.kicad_sch` indicado. No genera
+   footprint ni toca el `.kicad_pcb`. La re-anotación/sync sch↔pcb la
+   hace KiCad (F5 → File → Update PCB from Schematic o similar).
+4. **Snapshot Store**: registra un snapshot de DISCO post-write con
+   `mtimes` frescos del proyecto (D-06.2). El patrón vivo
+   (`mtimes=None`) es exclusivo de mutaciones IPC. El `snap_id` del
+   confirm es válido como `base_snap` de la próxima mutación.
+
+Confirmación de éxito (≤ 50 tokens): `OK add_symbol R99 FIXLIB:R2
+@(175.0,60.0) in fixture.kicad_sch [snap:1]`.
+
+**Hazard del editor abierto (documentado, no resuelto en MVP).** Si el
+usuario tiene el `.kicad_sch` abierto en KiCad al momento de la
+mutación, KiCad detectará el cambio en disco cuando vuelva a la ventana
+y le mostrará "El archivo cambió en disco, ¿recargar?". Cerrar el
+archivo en KiCad antes de mutar es la práctica segura; sync sch↔pcb en
+KiCad exige que el usuario haga la re-anotación.
+
+Validaciones pre-mutación:
+
+- Ref sanitizada (regla 6): `^[A-Za-z][A-Za-z0-9_]{0,14}[0-9]$`, ≤16
+  chars. Refs con backticks, pipes, espacios o chars de control se
+  rechazan con `INVALID_PARAMS` antes de tocar disco.
+- Ref sin colisión en NINGUNA hoja del proyecto (recorre todos los
+  `.kicad_sch` del root). Colisión → `INVALID_PARAMS` + hint con la hoja
+  donde ya vive el ref.
+- `lib_id` instanciado en la hoja destino. Si no, `INVALID_PARAMS` con
+  hint listando los primeros 5 lib_ids disponibles.
+- Coordenadas dentro del bbox de la hoja (bounding box de los símbolos
+  existentes + 200 mm de margen). Fuera → `INVALID_PARAMS`.
+- `base_snap` opcional: mismo contrato que las tools de `pcb`
+  (`SNAPSHOT_STALE` / `EXTERNAL_EDIT_DETECTED`).
+
+Verificación de efecto (D-06.3): re-lee el archivo escrito con
+`kicad-skip` y confirma que el símbolo aparece con el `lib_id` y las
+coordenadas pedidas (tolerancia 1e-3 mm). Divergencia → `KICAD_CLI_FAILED`
+(bug interno, mutación quedó en estado inconsistente).
+
 Parámetro común `base_snap` (sesión 04 T4, aditivo):
 - Ausente → la mutación procede sin verificación de coherencia con el
   estado que vio el agente (comportamiento pre-v0.3).
@@ -174,9 +246,9 @@ Parámetro común `base_snap` (sesión 04 T4, aditivo):
 
 ## Nombres reservados (fases futuras — no implementar, no renombrar)
 
-v0.2: `add_symbol`, `set_value`, `connect_pins`, `place_footprint`,
-`add_via`, `add_zone`, `reload_in_gui` (los ya implementados
-—`move_footprint`, `add_track`— se mueven a la sección `pcb`).
+v0.2: `set_value`, `connect_pins`, `place_footprint`, `add_via`,
+`add_zone`, `reload_in_gui` (los ya implementados —`move_footprint`,
+`add_track`, `add_symbol`— se mueven a las secciones `pcb` y `sch`).
 v0.3: `get_session_summary`, `checkpoint` (el ya implementado
 `get_context_delta` se mueve a la categoría `world`).
 v0.4: `suggest_positions`, `route_with_freerouting`.

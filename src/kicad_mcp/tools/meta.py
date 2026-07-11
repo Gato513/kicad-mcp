@@ -93,9 +93,12 @@ def _ipc_payload(bridge: IpcBridge) -> dict[str, Any]:
         payload["pcb_editor_abierto"] = "unknown"
         payload["status"] = "missing"
         payload["code"] = ErrorCode.KICAD_NOT_RUNNING.value
-        payload["hint"] = (
-            "Abrí KiCad y habilitá el API server en Preferences → Plugins → Enable API server."
-        )
+        # D-08.6: hint corto (~19 tokens) para que el payload health
+        # cerrado quepa bajo el techo de ~100 tokens (sesión 07 §T3
+        # midió 113). La ruta cerrada del health está dirigida al
+        # humano; comprimir aquí es correcto porque el detalle "abrir
+        # Preferences → Plugins" es la parte accionable y suficiente.
+        payload["hint"] = "Abrí KiCad y habilitá el API server (Preferences → Plugins)."
         return payload
     payload["socket"] = "ok"
 

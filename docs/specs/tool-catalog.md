@@ -18,7 +18,6 @@ Reglas transversales:
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
 | `health` | Estado del servidor, KiCad, kicad-cli y proyecto activo | — | none | `KICAD_NOT_RUNNING`, `KICAD_CLI_MISSING`, `PROJECT_NOT_FOUND` |
-| `discover_tools` | Lista tools de una categoría con sus schemas | `category` | none | `INVALID_PARAMS` |
 
 Notas de `health` (sesión 07 D-07.3): el sub-payload `kicad_ipc` reporta tres
 niveles independientes con estados discriminables — un `bool` colapsaría
@@ -67,9 +66,6 @@ Ejemplo con KiCad cerrado:
 |---|---|---|---|---|
 | `get_world_context` | Estado del proyecto (sch de disco o pcb vivo) en TOON v1 | `max_tokens?=800`, `focus_ref?`, `radius_mm?`, `kind?="sch"` | full | `KICAD_TIMEOUT`, `KICAD_NOT_RUNNING`, `KICAD_CLI_FAILED`, `PROJECT_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `UNSUPPORTED_HIERARCHY` |
 | `get_context_delta` | Delta TOON entre un `base_snap` y el estado actual | `base_snap`, `focus_ref`, `radius_mm`, `max_tokens?` | delta | `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `UNSUPPORTED_HIERARCHY` |
-| `get_component_detail` | Detalle completo de un componente: lib, pines, propiedades, footprint | `ref` | none | `COMPONENT_NOT_FOUND` |
-| `get_net_detail` | Miembros y componentes de una net | `net` | none | `NET_NOT_FOUND` |
-| `list_unconnected` | Pines sin net asignada en todo el proyecto | — | none | (los de lectura de estado) |
 
 Notas de `get_world_context` (parámetro `kind`, sesión 09 D-09.1):
 
@@ -300,8 +296,22 @@ v0.3: `get_session_summary`, `checkpoint` (el ya implementado
 `get_context_delta` se mueve a la categoría `world`).
 v0.4: `suggest_positions`, `route_with_freerouting`.
 
+**Consultas de detalle (D-09.4 / D-R7 — reservadas, no implementadas):**
+`get_component_detail`, `get_net_detail`, `list_unconnected`. Estaban en las
+tablas principales de `world` sin código en `src/` (deuda de contrato: el
+catálogo lo consume otro LLM en runtime, F1/F3, y un agente que lo lea
+intentaría llamarlas). Se implementan **sólo** si el dogfooding demuestra que
+el agente las necesita (el `NormalizedState` ya tiene los datos, son baratas).
+
 Reservarlos ahora evita que el agente invente nombres divergentes en prompts,
 docs o tests intermedios.
+
+**Eliminada del diseño (no reservada):** `discover_tools` / router por
+categorías. Resolvía "100+ schemas queman la ventana"
+(`arquitectura.md §4.1`), pero este server expone ~13 tools y el roadmap
+realista suma <10 más: 12-13 tools no justifican un router (D-R7,
+`ADR-0009 §nota relacionada`). Nunca se escribió código; se retira del
+catálogo para no prometer una superficie que no existe.
 
 ## Taxonomía de errores (completa, F3)
 

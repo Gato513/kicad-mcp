@@ -1,6 +1,7 @@
-"""Tools de la categoría ``meta``: ``health`` (MVP), ``discover_tools`` (futuro).
+"""Tools de la categoría ``meta``: ``health``.
 
-Ver `docs/specs/tool-catalog.md` §meta.
+Ver `docs/specs/tool-catalog.md` §meta. ``discover_tools`` se eliminó del
+diseño en la sesión 09 (D-R7, ADR-0009): ~13 tools no justifican un router.
 """
 
 from __future__ import annotations

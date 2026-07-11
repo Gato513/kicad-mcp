@@ -1,8 +1,9 @@
 """Registro de tools MCP, agrupadas por categoría (arquitectura §4.1).
 
-Cargar por categoría en fases futuras (`discover_tools`); en el MVP se
-registran las de `meta` (`health`) y quedan reservadas las categorías
-`world`, `validate` y `export` (`docs/specs/tool-catalog.md`).
+Todas las categorías (`meta`, `world`, `validate`, `export`, `pcb`, `sch`)
+se registran de una en `register_all` (`docs/specs/tool-catalog.md`). El
+router `discover_tools`/carga perezosa por categoría se eliminó del diseño
+(D-R7, ADR-0009): ~13 tools no justifican esa indirección.
 
 El ``IpcBridge`` es un **singleton por proceso servidor** (arquitectura
 §10, sesión 04): una única conexión al socket IPC compartida por todas

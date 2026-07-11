@@ -32,6 +32,7 @@ def register_all(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
     from .export import register as register_export
     from .meta import register as register_meta
     from .pcb import register as register_pcb
+    from .sch import register as register_sch
     from .validate import register as register_validate
     from .world import register as register_world
 
@@ -41,3 +42,4 @@ def register_all(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
     register_validate(mcp)
     register_export(mcp)
     register_pcb(mcp, ipc_bridge=bridge)
+    register_sch(mcp)

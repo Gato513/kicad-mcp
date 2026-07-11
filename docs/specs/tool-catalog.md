@@ -159,15 +159,21 @@ items: [{ref?|net?|pos?}]}` — posiciones en **mm**.
 | `export_manufacturing` | Gerbers + drill a directorio del proyecto. Gate G3 | `output_dir?=fab/` | none | `EXPORT_BLOCKED_BY_DRC`, `KICAD_CLI_FAILED`, `PATH_OUTSIDE_PROJECT`, `PROJECT_NOT_FOUND` |
 | `export_bom` | BOM en CSV | `output_path?` | none | `KICAD_CLI_FAILED`, `PATH_OUTSIDE_PROJECT` |
 | `export_netlist` | Netlist del esquemático | `output_path?` | none | `KICAD_CLI_FAILED`, `PATH_OUTSIDE_PROJECT` |
-| `export_render` | PDF del esquemático (sch_pdf) o del PCB (pcb_pdf) | `kind: "sch_pdf"\|"pcb_pdf"\|"pcb_png"`, `output_path?` | none | `KICAD_CLI_FAILED`, `INVALID_PARAMS`, `PATH_OUTSIDE_PROJECT`, `PROJECT_NOT_FOUND` |
+| `export_render` | Render del proyecto: sch_pdf, pcb_pdf o pcb_png (3D) | `kind: "sch_pdf"\|"pcb_pdf"\|"pcb_png"`, `output_path?` | none | `KICAD_CLI_FAILED`, `INVALID_PARAMS`, `PATH_OUTSIDE_PROJECT`, `PROJECT_NOT_FOUND` |
 
 Notas de `export_render`:
 - `sch_pdf` → PDF del esquemático (una hoja por página).
 - `pcb_pdf` → PDF del PCB en modo single-page con capas por defecto
   `F.Cu, B.Cu, F.SilkS, B.SilkS, Edge.Cuts`. Aceptado desde v0.1.
-- `pcb_png` → **reservado**: `kicad-cli 10` no expone `pcb export png`, por
-  lo que la tool devuelve `INVALID_PARAMS` con hint apuntando a `pcb_pdf`.
-  Se activará sin renombrar el kind cuando kicad-cli lo soporte.
+- `pcb_png` → **render 3D REAL** del board vía `kicad-cli pcb render`
+  (verificado presente en 10.0.4, sesión 09 D-09.3). **NO es un plano de
+  capas** — es la vista 3D renderizada del board (propósito: feedback visual
+  para el cliente MCP, que acepta imágenes, D-R5). Defaults fijos: vista
+  `top`, proyección ortográfica, calidad `basic`, 1600×900. El CLI expone
+  además `--perspective`, `--zoom`, `--rotate`, `--side`, etc.; su exposición
+  como parámetros de la tool queda diferida (no se necesitó en el MVP). El
+  formato lo fija la extensión de salida (`.png`). Respuesta: `{kind,
+  output_path, bytes}` como los demás exports.
 
 ## Categoría `pcb` (v0.2 — primeras mutaciones, sesión 03)
 

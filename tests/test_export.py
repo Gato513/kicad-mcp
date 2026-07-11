@@ -45,18 +45,28 @@ async def test_export_render_rejects_invalid_kind(monkeypatch: pytest.MonkeyPatc
     assert "INVALID_PARAMS" in _error_text(result)
 
 
-@pytest.mark.unit
-async def test_export_render_pcb_png_returns_invalid_params(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("KICAD_MCP_PROJECT", str(FIXTURES / "001_basico"))
+@pytest.mark.integration
+async def test_export_render_pcb_png_real(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """D-09.3: pcb_png es un render 3D REAL vía ``kicad-cli pcb render``.
+
+    Verifica magic bytes PNG y tamaño > 0 contra el fixture pcb-only 005.
+    """
+    project_copy = mirror_fixture(FIXTURES / "005_pcb_limpio", tmp_path / "005")
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project_copy))
+
     mcp = create_server()
     async with create_connected_server_and_client_session(mcp._mcp_server) as client:
-        result = await client.call_tool("export_render", {"kind": "pcb_png"})
-    assert result.isError
-    text = _error_text(result)
-    assert "INVALID_PARAMS" in text
-    assert "pcb_pdf" in text
+        result = await client.call_tool(
+            "export_render", {"kind": "pcb_png", "output_path": "renders/board.png"}
+        )
+    payload = _parse(result)
+    assert not result.isError, payload
+    assert payload["kind"] == "pcb_png"
+    png = project_copy / "renders" / "board.png"
+    assert png.is_file()
+    assert png.stat().st_size > 0
+    with png.open("rb") as f:
+        assert f.read(8) == b"\x89PNG\r\n\x1a\n"
 
 
 @pytest.mark.unit

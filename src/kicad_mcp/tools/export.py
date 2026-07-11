@@ -135,7 +135,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="export_render",
-        description="PDF del esquemático (sch_pdf) o PDF del PCB (pcb_pdf)",
+        description="Render del proyecto: sch_pdf, pcb_pdf o pcb_png (3D)",
     )
     def export_render(kind: str, output_path: str | None = None) -> dict[str, Any]:
         if kind not in _RENDER_KINDS:
@@ -144,29 +144,17 @@ def register(mcp: FastMCP) -> None:
                 message=f"``kind`` inválido: {kind!r}",
                 hint=f"Valores válidos: {sorted(_RENDER_KINDS)}",
             )
-        if kind == "pcb_png":
-            raise KicadMcpError(
-                code=ErrorCode.INVALID_PARAMS,
-                message="pcb_png no está soportado por kicad-cli 10.",
-                hint="Usar pcb_pdf (single-mode); PNG llegará cuando kicad-cli lo exponga.",
-            )
         with tool_call_timer() as timer:
-            sch = _resolve_root_schematic()
             if kind == "sch_pdf":
+                sch = _resolve_root_schematic()
                 out = _resolve_output(output_path, "schematic.pdf")
                 out.parent.mkdir(parents=True, exist_ok=True)
                 _run_cli(
                     ["kicad-cli", "sch", "export", "pdf", "-o", str(out), str(sch)],
                     action="sch PDF",
                 )
-            else:  # pcb_pdf
-                pcb = sch.with_suffix(".kicad_pcb")
-                if not pcb.is_file():
-                    raise KicadMcpError(
-                        code=ErrorCode.PROJECT_NOT_FOUND,
-                        message="No se encontró el .kicad_pcb del proyecto activo.",
-                        hint=f"Se buscaba {pcb.name} junto al esquemático.",
-                    )
+            elif kind == "pcb_pdf":
+                pcb = _resolve_root_pcb()
                 out = _resolve_output(output_path, "pcb.pdf")
                 out.parent.mkdir(parents=True, exist_ok=True)
                 _run_cli(
@@ -183,6 +171,20 @@ def register(mcp: FastMCP) -> None:
                         str(pcb),
                     ],
                     action="pcb PDF",
+                )
+            else:  # pcb_png — render 3D del board vía `kicad-cli pcb render`
+                pcb = _resolve_root_pcb()
+                out = _resolve_output(output_path, "pcb.png")
+                out.parent.mkdir(parents=True, exist_ok=True)
+                # D-09.3: render 3D REAL (verificado en 10.0.4). NO es un plano
+                # de capas — es la vista 3D del board (propósito: feedback
+                # visual para Claude Code, D-R5). Defaults fijos documentados:
+                # vista top, proyección ortográfica, calidad basic, 1600x900
+                # (los defaults del CLI). El formato lo determina la extensión
+                # de la salida (.png → PNG).
+                _run_cli(
+                    ["kicad-cli", "pcb", "render", "--side", "top", "-o", str(out), str(pcb)],
+                    action="pcb PNG",
                 )
             payload = {"kind": kind, "output_path": out.name, "bytes": out.stat().st_size}
         log_tool_call(

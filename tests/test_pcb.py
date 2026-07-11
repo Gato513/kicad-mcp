@@ -13,6 +13,7 @@ Se verifica:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from kicad_mcp.bridge.ipc import (
     FootprintPadData,
     IpcBridge,
     Mm,
+    mm_to_nm,
 )
 from kicad_mcp.gates import g1
 from kicad_mcp.logging_config import estimate_tokens
@@ -701,3 +703,125 @@ async def test_move_footprint_falls_back_to_full_read_on_divergence(
     )
     # La verificación puntual se disparó UNA vez antes del fallback.
     assert bridge.get_footprints_by_id_calls == 1
+
+
+# --- integration_gui: E2E de add_track contra KiCad real (B2, D-09.2) ---------
+
+
+def _pick_real_net(bridge: IpcBridge, board: BoardHandle) -> str | None:
+    """Elige un net no vacío del board vivo (para el round-trip de add_track)."""
+    nets = bridge.list_net_names(board)
+    for candidate in nets:
+        if candidate and candidate.strip():
+            return candidate
+    return None
+
+
+@pytest.mark.integration_gui
+async def test_add_track_round_trip_against_open_board() -> None:
+    """B2 (D-09.2): round-trip E2E de ``add_track`` contra KiCad real.
+
+    Cierra el gap #1 de §1.2 del análisis: ``add_track`` nunca se validó
+    contra KiCad real (la misma clase de cobertura que ocultó el bug T1 de
+    ``move_footprint`` durante 3 sesiones, ADR-0008).
+
+    Flujo:
+    1. Elige un net real del board (get_nets) y coords dentro del bbox.
+    2. Llama a la tool ``add_track`` (pipeline completo: validación, G1,
+       audit, snapshot, confirm con snap_id).
+    3. Re-lee los tracks vía kipy directo y localiza el nuevo por diff de
+       KIIDs.
+    4. Verifica geometría (start/end ±1 nm) y net asignada.
+    5. **Teardown** (D-09.2): borra el track creado con kipy directo dentro
+       del test (código de test, no de producción — borrar es territorio del
+       Gate G2, que no existe aún; NO se agrega borrado al bridge ni al
+       catálogo). ``try/finally`` garantiza limpieza aun si un assert falla.
+
+    Precondiciones: ``KICAD_MCP_GUI_TEST=1``, ``KICAD_MCP_PROJECT`` apuntando
+    al proyecto abierto, y el PCB Editor abierto con un board.
+    """
+    if os.environ.get("KICAD_MCP_GUI_TEST") != "1":
+        pytest.skip("KICAD_MCP_GUI_TEST != 1; ver docs/pruebas-gui.md")
+    if not os.environ.get("KICAD_MCP_PROJECT"):
+        pytest.skip("KICAD_MCP_PROJECT no definida; apuntar al proyecto abierto")
+
+    from kicad_mcp.server import create_server
+
+    bridge = IpcBridge()
+    board = bridge.get_open_board()
+    if board is None:
+        pytest.skip("no hay board abierto en KiCad")
+
+    net = _pick_real_net(bridge, board)
+    if net is None:
+        pytest.skip("el board no tiene nets con nombre; no se puede rutear")
+
+    ctx = bridge.read_board_context(board)
+    bbox = ctx.bbox
+    # Coords dentro del bbox (centro): el track no necesita tocar pads para
+    # que KiCad le asigne el net (lo asignamos por objeto). Track de 2 mm.
+    cx = round((float(bbox.min_x) + float(bbox.max_x)) / 2.0, 3)
+    cy = round((float(bbox.min_y) + float(bbox.max_y)) / 2.0, 3)
+    start = (cx, cy)
+    end = (round(cx + 2.0, 3), round(cy + 2.0, 3))
+    width = 0.25
+    layer = "F.Cu"
+
+    raw = board.raw
+    before_ids = {str(t.id.value) for t in raw.get_tracks()}
+
+    created = None
+    try:
+        mcp = create_server()
+        async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+            result = await client.call_tool(
+                "add_track",
+                {
+                    "net": net,
+                    "start_x_mm": start[0],
+                    "start_y_mm": start[1],
+                    "end_x_mm": end[0],
+                    "end_y_mm": end[1],
+                    "width_mm": width,
+                    "layer": layer,
+                },
+            )
+        assert not result.isError, _text(result)
+        confirm = _text(result)
+        assert confirm.startswith(f"OK add_track {net}"), confirm
+        import re
+
+        match = re.search(r"\[snap:(\d+)\]", confirm)
+        assert match is not None and int(match.group(1)) > 0, confirm
+
+        # Re-lectura vía kipy directo: localizar el track nuevo por diff KIID.
+        after = list(raw.get_tracks())
+        new_tracks = [t for t in after if str(t.id.value) not in before_ids]
+        assert len(new_tracks) == 1, f"esperaba 1 track nuevo; hubo {len(new_tracks)}"
+        created = new_tracks[0]
+
+        # Geometría ±1 nm (redondeo banker's known).
+        exp_sx, exp_sy = int(mm_to_nm(Mm(start[0]))), int(mm_to_nm(Mm(start[1])))
+        exp_ex, exp_ey = int(mm_to_nm(Mm(end[0]))), int(mm_to_nm(Mm(end[1])))
+        assert abs(created.start.x - exp_sx) <= 1, f"start.x {created.start.x} != {exp_sx}"
+        assert abs(created.start.y - exp_sy) <= 1, f"start.y {created.start.y} != {exp_sy}"
+        assert abs(created.end.x - exp_ex) <= 1, f"end.x {created.end.x} != {exp_ex}"
+        assert abs(created.end.y - exp_ey) <= 1, f"end.y {created.end.y} != {exp_ey}"
+        # Net asignada.
+        assert str(created.net.name) == net, f"net {created.net.name!r} != {net!r}"
+        # Width ±1 nm.
+        assert abs(created.width - int(mm_to_nm(Mm(width)))) <= 1
+
+        print(
+            f"\n=== B2 add_track round-trip ===\n  confirm: {confirm}"
+            f"\n  net={net} start={start} end={end} @ {layer}"
+            f"\n  kipy read: start={created.start} end={created.end} net={created.net.name}"
+            f"\n=== fin ==="
+        )
+    finally:
+        # Teardown D-09.2: borra el track creado con kipy directo (test-only).
+        if created is not None:
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                raw.remove_items(created)

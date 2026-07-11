@@ -114,6 +114,12 @@ class FootprintData:
 
     Sesión 05 T5: alimenta al ``state_builder.build_state_from_board`` para
     registrar snapshots vivos tras mutaciones IPC (ADR-0007).
+
+    Sesión 08 D-08.1/D-08.2: ``kiid`` captura el KIID de KiCad (uuid como
+    string) durante la pasada única de ``read_board_context``. Habilita la
+    verificación puntual post-mutación por ``get_items_by_id`` sin volver a
+    iterar el board (D-08.2). Default ``""`` para retrocompat con snapshots
+    reconstruidos desde disco (sin KIID accesible).
     """
 
     ref: str
@@ -121,6 +127,68 @@ class FootprintData:
     x_mm: Mm
     y_mm: Mm
     pads: tuple[FootprintPadData, ...]
+    kiid: str = ""
+
+
+@dataclass(frozen=True)
+class BoardContext:
+    """Estado del board consolidado en UNA sola pasada ``get_footprints()``.
+
+    D-08.1: los tools de mutación necesitan (1) la lista de refs para
+    validar existencia, (2) el bbox para validar coordenadas, y (3) el
+    snapshot completo con KIID para localizar el target y construir el
+    post-estado. Antes cada uno costaba una pasada O(board) separada
+    (~3 s cada una contra el board de 202 refs, sesión 07 §T5). Esta
+    dataclass es el resultado consolidado: los tools consumen ``refs`` +
+    ``bbox`` para validar y ``footprints`` para encontrar el target por
+    ref con su KIID ya en mano (sin volver a pasar por get_footprints).
+
+    Es una lectura idempotente → entra en la whitelist de retry (D-08.3).
+    Devuelve primitivos/dataclasses del bridge, jamás tipos de kipy
+    (regla 5).
+    """
+
+    refs: tuple[str, ...]
+    bbox: BBoxMm
+    footprints: tuple[FootprintData, ...]
+
+
+# --- Helper de conversión kipy → FootprintData (única fuente de la verdad) ----
+
+
+def _footprint_to_data(fp: Any, *, capture_kiid: bool) -> FootprintData:
+    """Convierte un ``kipy.FootprintInstance`` en ``FootprintData`` primitivo.
+
+    Sesión 08: unifica la conversión que antes vivía duplicada dentro de
+    ``snapshot_footprints`` y ``read_board_context``. La regla 5 exige que
+    ningún tipo de kipy salga del bridge; este helper es el único punto
+    donde ese cruce ocurre para la superficie ``FootprintData``.
+
+    ``capture_kiid=True`` activa la lectura del ``fp.id.value`` (uuid del
+    footprint) — solo lo necesita ``read_board_context`` (D-08.1) para
+    permitir la verificación puntual por KIID de D-08.2. La lectura
+    aislada de ``snapshot_footprints`` la omite (aditiva y compatible).
+    """
+    ref = str(fp.reference_field.text.value)
+    value = str(fp.value_field.text.value)
+    pos = fp.position
+    x = nm_to_mm(Nm(int(pos.x)))
+    y = nm_to_mm(Nm(int(pos.y)))
+    pads: list[FootprintPadData] = []
+    for pad in fp.definition.pads:
+        number = str(pad.number)
+        net = pad.net
+        net_name = str(net.name) if net is not None and net.name else None
+        pads.append(FootprintPadData(number=number, net_name=net_name))
+    kiid = str(fp.id.value) if capture_kiid else ""
+    return FootprintData(
+        ref=ref,
+        value=value,
+        x_mm=x,
+        y_mm=y,
+        pads=tuple(pads),
+        kiid=kiid,
+    )
 
 
 # --- Protocolo del cliente (para inyección en tests) --------------------------
@@ -316,6 +384,14 @@ _IDEMPOTENT_OPS: frozenset[str] = frozenset(
         "board_bbox_mm",
         "snapshot_footprints",
         "get_footprint_position",
+        # Sesión 08 D-08.1/D-08.3: lectura compuesta que colapsa 3 iteraciones
+        # O(board) en una. Se aplica antes de cualquier escritura, por lo que
+        # es semánticamente segura de reintentar ante AS_BUSY.
+        "read_board_context",
+        # D-08.2: verificación puntual por KIID tras la mutación. Filtra en
+        # KiCad (get_items_by_id), no itera el board del lado del bridge.
+        # Es una lectura pura del estado post-mutación — retry-elegible.
+        "verify_footprint_by_kiid",
     }
 )
 
@@ -602,6 +678,12 @@ class IpcBridge:
         Sesión 05 T5. Se ejecuta bajo el lock del bridge; devuelve dataclasses
         propias (nunca tipos de kipy) para que ``state_builder.build_state_from_board``
         materialice un ``NormalizedState`` sin volver a IPC.
+
+        Sesión 08: sigue disponible como fallback aislado; el pre-work de los
+        tools de mutación viaja por ``read_board_context`` (una pasada, con
+        bbox + refs + KIIDs). Aquí NO se captura el KIID para no cambiar el
+        contrato de retorno de la lectura aislada — quien necesite KIID pide
+        ``read_board_context``.
         """
         with self._lock:
             self._detect_restart()
@@ -609,30 +691,88 @@ class IpcBridge:
             def _do() -> tuple[FootprintData, ...]:
                 items: list[FootprintData] = []
                 for fp in board.raw.get_footprints():
-                    ref = str(fp.reference_field.text.value)
-                    value = str(fp.value_field.text.value)
-                    pos = fp.position
-                    x = nm_to_mm(Nm(int(pos.x)))
-                    y = nm_to_mm(Nm(int(pos.y)))
-                    pads: list[FootprintPadData] = []
-                    for pad in fp.definition.pads:
-                        number = str(pad.number)
-                        net = pad.net
-                        # net.name puede ser cadena vacía para pads no conectados.
-                        net_name = str(net.name) if net is not None and net.name else None
-                        pads.append(FootprintPadData(number=number, net_name=net_name))
-                    items.append(
-                        FootprintData(
-                            ref=ref,
-                            value=value,
-                            x_mm=x,
-                            y_mm=y,
-                            pads=tuple(pads),
-                        )
-                    )
+                    items.append(_footprint_to_data(fp, capture_kiid=False))
                 return tuple(items)
 
             return self._run_supervised_read("snapshot_footprints", _do)
+
+    def read_board_context(self, board: BoardHandle) -> BoardContext:
+        """Lectura compuesta del board — UNA sola pasada por ``get_footprints()``.
+
+        Sesión 08 D-08.1. Reemplaza el trío
+        ``list_footprint_refs`` + ``board_bbox_mm`` + ``snapshot_footprints``
+        que los tools de mutación disparaban en secuencia (~9 s en el board de
+        202 refs, sesión 07 §T5). En una sola iteración construye:
+
+        - ``refs``: refs para la validación ``COMPONENT_NOT_FOUND`` + similares.
+        - ``bbox``: bounding box con margen (misma semántica de
+          ``board_bbox_mm`` — ver docstring de ese método).
+        - ``footprints``: snapshot completo con ``kiid`` capturado (habilita
+          ``bridge.move_footprint(..., kiid=...)`` y la verificación puntual
+          por KIID de D-08.2).
+
+        Retry-elegible (D-08.3): es lectura idempotente y corre siempre antes
+        de cualquier escritura, por construcción — es imposible que reintentar
+        duplique una mutación.
+        """
+        with self._lock:
+            self._detect_restart()
+
+            def _do() -> BoardContext:
+                refs: list[str] = []
+                xs: list[float] = []
+                ys: list[float] = []
+                fps_data: list[FootprintData] = []
+                for fp in board.raw.get_footprints():
+                    data = _footprint_to_data(fp, capture_kiid=True)
+                    refs.append(data.ref)
+                    xs.append(float(data.x_mm))
+                    ys.append(float(data.y_mm))
+                    fps_data.append(data)
+                if not fps_data:
+                    bbox = BBoxMm(Mm(-1e6), Mm(-1e6), Mm(1e6), Mm(1e6))
+                else:
+                    margin = 100.0
+                    bbox = BBoxMm(
+                        Mm(min(xs) - margin),
+                        Mm(min(ys) - margin),
+                        Mm(max(xs) + margin),
+                        Mm(max(ys) + margin),
+                    )
+                return BoardContext(
+                    refs=tuple(refs),
+                    bbox=bbox,
+                    footprints=tuple(fps_data),
+                )
+
+            return self._run_supervised_read("read_board_context", _do)
+
+    def verify_footprint_by_kiid(self, board: BoardHandle, kiid: str) -> FootprintData | None:
+        """Re-lee un único footprint por KIID (D-08.2, verificación puntual).
+
+        Usa ``get_items_by_id`` de kipy (``kipy/board.py:384-399``): filtra en
+        el lado de KiCad, sin iterar el board del lado del bridge. Costo de
+        red equivalente a una request; O(1) frente al ~3 s de una pasada
+        completa. Habilita comparar la posición derivada localmente contra
+        la que KiCad realmente aplicó (con redondeos y clamps propios).
+
+        Devuelve ``None`` si el KIID no está en el board (edge case: alguien
+        eliminó el ítem por fuera entre la mutación y la verificación).
+        """
+        from kipy.proto.common.types.base_types_pb2 import KIID
+
+        with self._lock:
+            self._detect_restart()
+
+            def _do() -> FootprintData | None:
+                kiid_proto = KIID()
+                kiid_proto.value = kiid
+                items = board.raw.get_items_by_id([kiid_proto])
+                if not items:
+                    return None
+                return _footprint_to_data(items[0], capture_kiid=True)
+
+            return self._run_supervised_read("verify_footprint_by_kiid", _do)
 
     def get_footprint_position(self, board: BoardHandle, ref: str) -> tuple[Mm, Mm]:
         """Posición ``(x_mm, y_mm)`` del footprint ``ref`` según el board vivo.
@@ -671,6 +811,7 @@ class IpcBridge:
         x_mm: Mm,
         y_mm: Mm,
         *,
+        kiid: str | None = None,
         timings: dict[str, float] | None = None,
     ) -> None:
         """Mueve el footprint ``ref`` a ``(x_mm, y_mm)`` y persiste el commit.
@@ -679,11 +820,15 @@ class IpcBridge:
         las coordenadas están dentro del bounding box. La validación se
         hace afuera para poder emitir errores tipados con hints ricos.
 
+        Sesión 08 D-08.1: si ``kiid`` viene resuelto (típicamente porque
+        el tool ya lo capturó vía ``read_board_context``), la búsqueda del
+        target usa ``get_items_by_id`` — O(1) de red — en lugar de iterar
+        ``get_footprints`` O(board). Colapsa ~3 s de lookup contra el
+        board de 202 refs. Sin ``kiid``, se preserva el camino iterativo
+        histórico (integration_gui tests y llamadas ad-hoc del bridge).
+
         Si ``timings`` es un dict, se rellena ``timings["lookup_ms"]`` con
-        la latencia de la búsqueda O(board) de la ref (sesión 07 T5,
-        D-07.5). Sirve como instrumento de medición para decidir si vale
-        la pena optimizar la búsqueda (cache ref→item, GetItems filtrado,
-        etc.). El logging es aditivo — F3 intacta.
+        la latencia de la búsqueda del target (sesión 07 T5, D-07.5).
         """
         # ``fp.position`` es un getter que devuelve ``Vector2(self._proto.position)``
         # (kipy geometry.py:38-42: Vector2 hace CopyFrom del proto). Escribir
@@ -693,17 +838,24 @@ class IpcBridge:
         # sobre el proto interno del FootprintInstance y además arrastra
         # fields/pads por delta (board_types.py:1939-1964).
         from kipy.geometry import Vector2
+        from kipy.proto.common.types.base_types_pb2 import KIID as _KIID_proto
 
         with self._lock:
             self._detect_restart()
             with self._supervise("move_footprint"):
                 raw_board = board.raw
                 lookup_start = time.perf_counter()
-                target_fp = None
-                for fp in raw_board.get_footprints():
-                    if str(fp.reference_field.text.value) == ref:
-                        target_fp = fp
-                        break
+                target_fp: Any = None
+                if kiid:
+                    kiid_proto = _KIID_proto()
+                    kiid_proto.value = kiid
+                    items = raw_board.get_items_by_id([kiid_proto])
+                    target_fp = items[0] if items else None
+                else:
+                    for fp in raw_board.get_footprints():
+                        if str(fp.reference_field.text.value) == ref:
+                            target_fp = fp
+                            break
                 if timings is not None:
                     timings["lookup_ms"] = (time.perf_counter() - lookup_start) * 1000
                 if target_fp is not None:

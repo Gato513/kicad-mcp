@@ -21,7 +21,15 @@ from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult, TextContent
 
-from kicad_mcp.bridge.ipc import BBoxMm, BoardHandle, FootprintData, FootprintPadData, IpcBridge, Mm
+from kicad_mcp.bridge.ipc import (
+    BBoxMm,
+    BoardContext,
+    BoardHandle,
+    FootprintData,
+    FootprintPadData,
+    IpcBridge,
+    Mm,
+)
 from kicad_mcp.gates import g1
 from kicad_mcp.logging_config import estimate_tokens
 from kicad_mcp.tools.pcb import register as register_pcb
@@ -50,6 +58,7 @@ class _FakeBridge(IpcBridge):
         nets: list[str],
         bbox: BBoxMm,
         initial_positions: dict[str, tuple[float, float]] | None = None,
+        divergence_mm: float = 0.0,
     ) -> None:
         # No llamamos a super().__init__: eso resolvería el socket path,
         # que no lo necesitamos. Reproducimos el mínimo estado.
@@ -65,20 +74,78 @@ class _FakeBridge(IpcBridge):
         self._positions: dict[str, tuple[float, float]] = {
             ref: seed.get(ref, (0.0, 0.0)) for ref in refs
         }
+        # Sesión 08 D-08.2: divergencia simulada del post-estado real vs
+        # el pedido — se agrega a la posición reportada por
+        # ``verify_footprint_by_kiid`` (no a ``_positions``, que representa
+        # el "board" real; queremos simular que KiCad clampea/redondea
+        # más allá de la tolerancia y disparar el fallback).
+        self._divergence_mm = divergence_mm
+        # Sesión 08 D-08.1: KIID sintético estable por ref (uuid derivado
+        # del hash). Deja al bridge.move_footprint del real "encontrar"
+        # los items por KIID — aquí en el fake no hace falta, ``kiid`` es
+        # informativo. Se emite en ``read_board_context.footprints``.
+        self._kiids: dict[str, str] = {
+            ref: f"00000000-0000-0000-0000-{i:012x}" for i, ref in enumerate(refs)
+        }
         self.moves: list[tuple[str, float, float]] = []
         self.tracks: list[dict[str, Any]] = []
+        # Sesión 08 D-08.1: contadores de invocaciones (test contador).
+        self.get_footprints_calls: int = 0  # pasadas O(board) que hacen refs+bbox+snapshot
+        self.get_footprints_by_id_calls: int = 0  # verificación puntual O(1)
 
     def get_open_board(self) -> BoardHandle | None:
         return BoardHandle(_raw=object())
 
     def list_footprint_refs(self, board: BoardHandle) -> list[str]:  # type: ignore[override]
+        # Ruta legacy (no la usan los tools tras D-08.1); si la ejerce algún
+        # test debe contarse como pasada O(board).
+        self.get_footprints_calls += 1
         return list(self._refs)
 
     def list_net_names(self, board: BoardHandle) -> list[str]:  # type: ignore[override]
         return list(self._nets)
 
     def board_bbox_mm(self, board: BoardHandle) -> BBoxMm:  # type: ignore[override]
+        # Ruta legacy — misma nota que list_footprint_refs.
+        self.get_footprints_calls += 1
         return self._bbox
+
+    def read_board_context(self, board: BoardHandle) -> BoardContext:  # type: ignore[override]
+        """D-08.1: pasada única — refs, bbox, footprints con KIID."""
+        self.get_footprints_calls += 1
+        primary_net = self._nets[0] if self._nets else None
+        fps = tuple(
+            FootprintData(
+                ref=ref,
+                value="V",
+                x_mm=Mm(self._positions[ref][0]),
+                y_mm=Mm(self._positions[ref][1]),
+                pads=(FootprintPadData(number="1", net_name=primary_net),),
+                kiid=self._kiids[ref],
+            )
+            for ref in self._refs
+        )
+        return BoardContext(refs=tuple(self._refs), bbox=self._bbox, footprints=fps)
+
+    def verify_footprint_by_kiid(  # type: ignore[override]
+        self, board: BoardHandle, kiid: str
+    ) -> FootprintData | None:
+        """D-08.2: verificación puntual — O(1), no cuenta como pasada O(board)."""
+        self.get_footprints_by_id_calls += 1
+        primary_net = self._nets[0] if self._nets else None
+        for ref, ref_kiid in self._kiids.items():
+            if ref_kiid == kiid:
+                x, y = self._positions[ref]
+                # Divergencia simulada (solo en la vista "live" de KIID).
+                return FootprintData(
+                    ref=ref,
+                    value="V",
+                    x_mm=Mm(x + self._divergence_mm),
+                    y_mm=Mm(y + self._divergence_mm),
+                    pads=(FootprintPadData(number="1", net_name=primary_net),),
+                    kiid=kiid,
+                )
+        return None
 
     def move_footprint(  # type: ignore[override]
         self,
@@ -87,8 +154,14 @@ class _FakeBridge(IpcBridge):
         x_mm: Mm,
         y_mm: Mm,
         *,
+        kiid: str | None = None,
         timings: dict[str, float] | None = None,
     ) -> None:
+        # D-08.1: con ``kiid`` resuelto, NO se itera get_footprints.
+        # Los tools tras el refactor SIEMPRE pasan kiid; los fakes
+        # antiguos y el path legacy caen a la iteración.
+        if kiid is None:
+            self.get_footprints_calls += 1
         self.moves.append((ref, float(x_mm), float(y_mm)))
         # D-06.3: la mutación debe reflejarse en ``snapshot_footprints``,
         # que es la fuente del snapshot vivo post-mutación (T5 sesión 05).
@@ -132,6 +205,10 @@ class _FakeBridge(IpcBridge):
         # ACTUAL de cada footprint. Esa posición viene de _positions, que
         # empieza con las semillas de initial_positions y avanza con cada
         # move_footprint. Fuente única de verdad del board simulado.
+        # Sesión 08: es la ruta que toma el fallback D-08.2 (re-lectura
+        # completa cuando el derivado diverge del live). Cuenta como
+        # pasada O(board) porque itera todos los footprints.
+        self.get_footprints_calls += 1
         primary_net = self._nets[0] if self._nets else None
         return tuple(
             FootprintData(
@@ -140,6 +217,7 @@ class _FakeBridge(IpcBridge):
                 x_mm=Mm(self._positions[ref][0]),
                 y_mm=Mm(self._positions[ref][1]),
                 pads=(FootprintPadData(number="1", net_name=primary_net),),
+                kiid=self._kiids[ref],
             )
             for ref in self._refs
         )
@@ -502,3 +580,124 @@ async def test_move_footprint_then_context_delta_reflects_mutation(
     # Anti-regresión D-06.1v2: sin la rama viva, curr se construiría de
     # disco (kind="sch") y el kind mismatch dispararía KICAD_CLI_FAILED
     # en la tool — el "not delta_result.isError" arriba lo detecta.
+
+
+# --- Contadores de pasadas O(board) (D-08.1 + D-08.2) -------------------------
+
+
+@pytest.mark.unit
+async def test_move_footprint_makes_exactly_one_pre_pass_zero_post_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D-08.1 + D-08.2: 1 mutación vía tool = 1 pasada O(board) PRE + 0 POST.
+
+    Antes de la sesión 08 este pipeline hacía 4 pasadas O(board):
+    ``list_footprint_refs`` + ``board_bbox_mm`` + ``move_footprint`` interno
+    + ``snapshot_footprints``. Con la operación compuesta ``read_board_context``
+    (D-08.1) sube 3 → 1 el pre; con la derivación local + verificación
+    puntual por KIID (D-08.2) sube 1 → 0 el post. Total: 1 pasada.
+
+    La verificación puntual usa ``verify_footprint_by_kiid`` (filtro
+    del lado de KiCad, O(1) de red), que NO cuenta como pasada O(board).
+    """
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _FakeBridge(
+        refs=["U1", "R5", "C10"],
+        nets=["GND"],
+        bbox=BBoxMm(Mm(0), Mm(0), Mm(200), Mm(200)),
+        initial_positions={"U1": (10.0, 20.0), "R5": (30.0, 40.0), "C10": (50.0, 60.0)},
+    )
+    mcp = _make_server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "move_footprint", {"ref": "R5", "x_mm": 100.0, "y_mm": 110.0}
+        )
+    assert not result.isError, _text(result)
+
+    assert bridge.get_footprints_calls == 1, (
+        f"1 mutación debe provocar EXACTAMENTE 1 pasada O(board); "
+        f"hubo {bridge.get_footprints_calls}"
+    )
+    # La verificación puntual por KIID SÍ debe haberse llamado (D-08.2).
+    assert bridge.get_footprints_by_id_calls == 1, (
+        f"esperaba 1 verificación puntual por KIID; hubo {bridge.get_footprints_by_id_calls}"
+    )
+
+
+@pytest.mark.unit
+async def test_move_footprint_registers_derived_post_snapshot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D-08.2: el snapshot registrado refleja la mutación (derivado local).
+
+    Sin re-lectura completa (los contadores del test previo lo prueban),
+    el snapshot post debe reflejar EXACTAMENTE la posición pedida —
+    verificado consultando el store por el snap_id del confirm.
+    """
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _FakeBridge(
+        refs=["R5"],
+        nets=["GND"],
+        bbox=BBoxMm(Mm(0), Mm(0), Mm(200), Mm(200)),
+        initial_positions={"R5": (10.0, 20.0)},
+    )
+    mcp = _make_server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("move_footprint", {"ref": "R5", "x_mm": 77.5, "y_mm": 88.5})
+    assert not result.isError, _text(result)
+    import re
+
+    match = re.search(r"\[snap:(\d+)\]", _text(result))
+    assert match is not None
+    snap_id = int(match.group(1))
+
+    from kicad_mcp.snapshots import get_default_store
+
+    entry = get_default_store().get(snap_id)
+    assert entry is not None
+    r5 = next(c for c in entry.state.components if c.ref == "R5")
+    assert (r5.x, r5.y) == (77.5, 88.5), f"derivado debe reflejar la mutación: {r5}"
+
+
+@pytest.mark.unit
+async def test_move_footprint_falls_back_to_full_read_on_divergence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D-08.2: divergencia derivado vs live → fallback a re-lectura completa.
+
+    Simulamos que KiCad reporta una posición distinta de la pedida (más
+    allá de ±1 nm). El pipeline debe:
+    - Loguear warning ``post_snapshot_fallback``.
+    - Caer a ``snapshot_footprints`` → 2ª pasada O(board) contada.
+    - Registrar el snapshot con la posición LIVE (no la derivada).
+
+    El contador ``get_footprints_calls == 2`` es la evidencia estructural:
+    1 pre (``read_board_context``) + 1 post (fallback ``snapshot_footprints``).
+    """
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _FakeBridge(
+        refs=["R5"],
+        nets=["GND"],
+        bbox=BBoxMm(Mm(0), Mm(0), Mm(200), Mm(200)),
+        initial_positions={"R5": (10.0, 20.0)},
+        divergence_mm=5.0,  # KiCad "reporta" +5 mm más que lo pedido
+    )
+    mcp = _make_server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "move_footprint", {"ref": "R5", "x_mm": 100.0, "y_mm": 100.0}
+        )
+    assert not result.isError, _text(result)
+
+    # 1 pasada pre + 1 pasada post (fallback) = 2.
+    assert bridge.get_footprints_calls == 2, (
+        f"esperaba 2 pasadas (1 pre + 1 fallback post); hubo {bridge.get_footprints_calls}"
+    )
+    # La verificación puntual se disparó UNA vez antes del fallback.
+    assert bridge.get_footprints_by_id_calls == 1

@@ -20,7 +20,7 @@ from pathlib import Path
 
 from ..errors import ErrorCode, KicadMcpError
 from ..toon.schema import Component, NormalizedState, Pin
-from .ipc import BoardHandle, IpcBridge
+from .ipc import BoardHandle, FootprintData, IpcBridge
 from .netlist import Netlist, load_netlist
 from .sch_positions import Placement, parse_root_positions
 
@@ -122,21 +122,18 @@ def clear_cache() -> None:
     _CACHE.clear()
 
 
-def build_state_from_board(bridge: IpcBridge, board: BoardHandle) -> NormalizedState:
-    """Reconstruye ``NormalizedState`` (kind="pcb") desde el board vivo de kipy.
+def build_state_from_snapshot(footprints: tuple[FootprintData, ...]) -> NormalizedState:
+    """Materializa ``NormalizedState`` (kind="pcb") desde un snapshot ya leído.
 
-    Sesión 05 T5. Camino paralelo a ``build_state_cached`` — este NO lee de
-    disco: consulta el board via ``bridge.snapshot_footprints`` (lock-safe)
-    y materializa el estado tal como kipy lo tiene tras la mutación. El
-    ``.kicad_pcb`` de disco todavía no lo refleja (KiCad sólo guarda con
-    ``Save``), por eso el llamador registra este snapshot con ``mtimes=None``
-    (snapshot vivo, ADR-0007).
+    Sesión 08 D-08.1: los tools de mutación traen los footprints en un
+    único pasaje de ``read_board_context`` y, tras la mutación, aplican
+    la derivación local (D-08.2) sobre esa misma tupla. Este helper es
+    la conversión pura ``FootprintData → NormalizedState`` — sin tocar
+    IPC, sin volver a iterar el board.
 
-    El ``snap`` se emite como 0; el llamador lo sobreescribe con el ``snap_id``
-    que devuelve el ``SnapshotStore.register`` (mismo patrón que
-    ``get_world_context``).
+    Mantiene el contrato de ``build_state_from_board`` (kind="pcb",
+    ``snap=0``; el llamador sobrescribe con el ``snap_id`` del store).
     """
-    footprints = bridge.snapshot_footprints(board)
     components: list[Component] = []
     for fp in footprints:
         pins = tuple(Pin(p=pad.number, net=pad.net_name) for pad in fp.pads)
@@ -151,6 +148,27 @@ def build_state_from_board(bridge: IpcBridge, board: BoardHandle) -> NormalizedS
             )
         )
     return NormalizedState(kind="pcb", snap=0, components=tuple(components))
+
+
+def build_state_from_board(bridge: IpcBridge, board: BoardHandle) -> NormalizedState:
+    """Reconstruye ``NormalizedState`` (kind="pcb") desde el board vivo de kipy.
+
+    Sesión 05 T5. Camino paralelo a ``build_state_cached`` — este NO lee de
+    disco: consulta el board via ``bridge.snapshot_footprints`` (lock-safe)
+    y materializa el estado tal como kipy lo tiene tras la mutación. El
+    ``.kicad_pcb`` de disco todavía no lo refleja (KiCad sólo guarda con
+    ``Save``), por eso el llamador registra este snapshot con ``mtimes=None``
+    (snapshot vivo, ADR-0007).
+
+    Sesión 08: el pipeline eficiente ya no pasa por acá — los tools usan
+    ``read_board_context`` (una pasada) y ``build_state_from_snapshot``
+    para armar el pre-estado, y derivan el post-estado localmente
+    (D-08.2). Esta función queda como fallback (rama de divergencia) y
+    para call-sites histórics (state_builder tests). Es una pasada
+    O(board) más una en total.
+    """
+    footprints = bridge.snapshot_footprints(board)
+    return build_state_from_snapshot(footprints)
 
 
 def _rebuild(schematic: Path, *, snap: int) -> NormalizedState:

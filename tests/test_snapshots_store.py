@@ -24,7 +24,15 @@ from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult, TextContent
 
-from kicad_mcp.bridge.ipc import BBoxMm, BoardHandle, FootprintData, FootprintPadData, IpcBridge, Mm
+from kicad_mcp.bridge.ipc import (
+    BBoxMm,
+    BoardContext,
+    BoardHandle,
+    FootprintData,
+    FootprintPadData,
+    IpcBridge,
+    Mm,
+)
 from kicad_mcp.errors import ErrorCode, KicadMcpError
 from kicad_mcp.gates import g1
 from kicad_mcp.snapshots import (
@@ -82,6 +90,51 @@ class _FakeBridge(IpcBridge):
     def board_bbox_mm(self, board: BoardHandle) -> BBoxMm:  # type: ignore[override]
         return self._bbox
 
+    def read_board_context(self, board: BoardHandle) -> BoardContext:  # type: ignore[override]
+        """D-08.1: compone en una pasada refs+bbox+footprints con KIID sintético."""
+        primary_net = self._nets[0] if self._nets else None
+        fps = tuple(
+            FootprintData(
+                ref=ref,
+                value="V",
+                x_mm=Mm(0.0),
+                y_mm=Mm(0.0),
+                pads=(FootprintPadData(number="1", net_name=primary_net),),
+                kiid=f"00000000-0000-0000-0000-{i:012x}",
+            )
+            for i, ref in enumerate(self._refs)
+        )
+        return BoardContext(refs=tuple(self._refs), bbox=self._bbox, footprints=fps)
+
+    def verify_footprint_by_kiid(  # type: ignore[override]
+        self, board: BoardHandle, kiid: str
+    ) -> FootprintData | None:
+        """D-08.2: devuelve la posición LIVE del footprint tras la mutación.
+
+        Como el fake registra los moves en ``self.moves`` sin propagarlos
+        a ``snapshot_footprints`` (para preservar el patrón simple de
+        este archivo), reflejamos la última posición pedida como la
+        posición live — coincide con la derivada, sin fallback.
+        """
+        primary_net = self._nets[0] if self._nets else None
+        for i, ref in enumerate(self._refs):
+            if kiid == f"00000000-0000-0000-0000-{i:012x}":
+                # Última posición pedida para esta ref, si hubo alguna.
+                last = next(
+                    (m for m in reversed(self.moves) if m[0] == ref),
+                    None,
+                )
+                x_mm, y_mm = (last[1], last[2]) if last else (0.0, 0.0)
+                return FootprintData(
+                    ref=ref,
+                    value="V",
+                    x_mm=Mm(x_mm),
+                    y_mm=Mm(y_mm),
+                    pads=(FootprintPadData(number="1", net_name=primary_net),),
+                    kiid=kiid,
+                )
+        return None
+
     def move_footprint(  # type: ignore[override]
         self,
         board: BoardHandle,
@@ -89,6 +142,7 @@ class _FakeBridge(IpcBridge):
         x_mm: Mm,
         y_mm: Mm,
         *,
+        kiid: str | None = None,
         timings: dict[str, float] | None = None,
     ) -> None:
         self.moves.append((ref, float(x_mm), float(y_mm)))

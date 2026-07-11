@@ -16,12 +16,13 @@ pueden pasar un fake vía ``register(mcp, ipc_bridge=fake)``.
 from __future__ import annotations
 
 import difflib
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..audit.logger import record as audit_record
-from ..bridge.ipc import BoardHandle, IpcBridge, Mm
-from ..bridge.state_builder import build_state_from_board
+from ..bridge.ipc import BoardHandle, FootprintData, IpcBridge, Mm
+from ..bridge.state_builder import build_state_from_board, build_state_from_snapshot
 from ..errors import ErrorCode, KicadMcpError
 from ..gates.g1 import ensure_session_backup
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
@@ -39,6 +40,129 @@ def _project_root() -> Path:
 def _similars(target: str, candidates: list[str], *, limit: int = 3) -> list[str]:
     """Sugerencias por edit-distance para hints de COMPONENT/NET_NOT_FOUND."""
     return difflib.get_close_matches(target, candidates, n=limit, cutoff=0.5)
+
+
+def _find_target(footprints: tuple[FootprintData, ...], ref: str) -> FootprintData:
+    """Localiza el ``FootprintData`` con ``ref`` en el snapshot ya leído.
+
+    Precondición: ``ref`` está en ``footprints`` (la validación se hizo
+    antes con ``ctx.refs``). Si no lo encuentra es un bug estructural del
+    llamador, no un caso a manejar en runtime.
+    """
+    for fp in footprints:
+        if fp.ref == ref:
+            return fp
+    raise KicadMcpError(
+        code=ErrorCode.COMPONENT_NOT_FOUND,
+        message=f"Footprint {ref} no está en el snapshot leído.",
+        hint="Bug interno: ref validado pero no localizado en el snapshot.",
+    )
+
+
+def _derive_post_state(
+    pre_footprints: tuple[FootprintData, ...],
+    ref: str,
+    x_mm: float,
+    y_mm: float,
+) -> tuple[FootprintData, ...]:
+    """Aplica la mutación conocida sobre el snapshot pre — cero IPC.
+
+    D-08.2: la mutación la disparamos nosotros, así que el post-estado es
+    predecible: reemplazar el footprint mutado por una copia con la
+    posición nueva. La verificación puntual por KIID (D-08.2) confirma
+    que KiCad aplicó exactamente lo pedido (redondeo half-even known ±1 nm);
+    si diverge, el llamador cae a re-lectura completa (fallback).
+    """
+    updated: list[FootprintData] = []
+    for fp in pre_footprints:
+        if fp.ref == ref:
+            updated.append(
+                FootprintData(
+                    ref=fp.ref,
+                    value=fp.value,
+                    x_mm=Mm(x_mm),
+                    y_mm=Mm(y_mm),
+                    pads=fp.pads,
+                    kiid=fp.kiid,
+                )
+            )
+        else:
+            updated.append(fp)
+    return tuple(updated)
+
+
+def _register_post_snapshot(
+    bridge: IpcBridge,
+    board: BoardHandle,
+    *,
+    pre_footprints: tuple[FootprintData, ...],
+    mutated_kiid: str,
+    mutated_ref: str,
+    target_x_mm: float,
+    target_y_mm: float,
+    mutation_timings: dict[str, float],
+) -> Any:
+    """Construye el ``NormalizedState`` post-mutación (D-08.2).
+
+    Estrategia:
+    1. Deriva localmente el post-snapshot (cero IPC) a partir de
+       ``pre_footprints`` reemplazando el mutado con la posición pedida.
+    2. Verifica el efecto real via ``verify_footprint_by_kiid`` (una
+       única request filtrada por KiCad, no itera). Compara la posición
+       leída contra la derivada con tolerancia de ±1 nm (redondeo
+       banker's known).
+    3. Si diverge (o no se pudo capturar KIID) → fallback a re-lectura
+       completa (``snapshot_footprints``) para no cachear un estado
+       incorrecto. El fallback deja huella en ``mutation_timings``
+       (``post_fallback=True``) y en el log JSON de la tool.
+
+    Retorna el ``NormalizedState`` (kind="pcb") listo para
+    ``store.register(..., mtimes=None)``.
+    """
+    derived = _derive_post_state(pre_footprints, mutated_ref, target_x_mm, target_y_mm)
+    # Sin KIID no hay verificación puntual: la única forma segura es
+    # re-leer completo. Es el path que toman los tests unit con fakes
+    # antiguos que no capturan KIID.
+    if not mutated_kiid:
+        mutation_timings["post_fallback"] = True
+        return build_state_from_board(bridge, board)
+
+    verify_start = time.perf_counter()
+    live = bridge.verify_footprint_by_kiid(board, mutated_kiid)
+    mutation_timings["verify_ms"] = (time.perf_counter() - verify_start) * 1000
+
+    if live is None:
+        # KIID desapareció entre la mutación y la verificación (edición
+        # externa concurrente). El derivado no es fiable → re-leer.
+        mutation_timings["post_fallback"] = True
+        return build_state_from_board(bridge, board)
+
+    tolerance_mm = 1e-6  # ±1 nm — banker's rounding known (docs/adr/…)
+    dx = abs(float(live.x_mm) - target_x_mm)
+    dy = abs(float(live.y_mm) - target_y_mm)
+    if dx <= tolerance_mm and dy <= tolerance_mm:
+        return build_state_from_snapshot(derived)
+
+    # Divergencia real (KiCad clampeó/redondeó distinto del previsto):
+    # log warning + fallback a re-lectura completa. Cero pérdida de
+    # corrección; sólo pagamos el costo del snapshot completo esa vez.
+    import logging
+
+    logging.getLogger("kicad_mcp").warning(
+        '{"tool_name":"post_snapshot_fallback","ref":"%s","kiid":"%s",'
+        '"target_x":%s,"target_y":%s,"live_x":%s,"live_y":%s,'
+        '"delta_x_mm":%s,"delta_y_mm":%s}',
+        mutated_ref,
+        mutated_kiid,
+        target_x_mm,
+        target_y_mm,
+        float(live.x_mm),
+        float(live.y_mm),
+        dx,
+        dy,
+    )
+    mutation_timings["post_fallback"] = True
+    return build_state_from_board(bridge, board)
 
 
 def _resolve_board(bridge: IpcBridge) -> BoardHandle:
@@ -81,7 +205,14 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 _check_base_snap(base_snap)
             board = _resolve_board(bridge)
 
-            refs = bridge.list_footprint_refs(board)
+            # D-08.1: UNA sola pasada O(board) para el pre-work. Devuelve
+            # refs (validación), bbox (validación) y footprints con KIID
+            # (localización del target + snapshot pre para derivación).
+            read_start = time.perf_counter()
+            ctx = bridge.read_board_context(board)
+            read_ms = (time.perf_counter() - read_start) * 1000
+            refs = list(ctx.refs)
+            bbox = ctx.bbox
             if ref not in refs:
                 similars = _similars(ref, refs)
                 hint = "refs similares: " + ", ".join(similars) if similars else "sin sugerencias"
@@ -96,7 +227,6 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                     message=f"Footprint {ref} no existe en el board.",
                     hint=hint,
                 )
-            bbox = bridge.board_bbox_mm(board)
             if not bbox.contains(Mm(x_mm), Mm(y_mm)):
                 _audit_error(
                     root,
@@ -112,19 +242,35 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                         f"y∈[{bbox.min_y:.1f}, {bbox.max_y:.1f}] (mm)."
                     ),
                 )
+            target = _find_target(ctx.footprints, ref)
 
             backup_info = ensure_session_backup(root)  # Gate G1
-            # Sesión 07 T5 (D-07.5): la mutación rellena ``timings["lookup_ms"]``
-            # con la latencia de la búsqueda O(board) de la ref. Sirve para
-            # decidir en la 08 si vale la pena optimizar (cache ref→item,
-            # GetItems filtrado, etc.).
+            # Sesión 07 T5 (D-07.5) / Sesión 08 D-08.1: la mutación rellena
+            # ``timings["lookup_ms"]`` con la latencia del target-lookup en
+            # el bridge. Con ``kiid`` resuelto, es O(1) de red — antes era
+            # una pasada O(board) de ~3 s.
             mutation_timings: dict[str, float] = {}
-            bridge.move_footprint(board, ref, Mm(x_mm), Mm(y_mm), timings=mutation_timings)
-            # Snapshot vivo post-mutación (sesión 05 T5, ADR-0007): estado
-            # reconstruido desde el board de kipy, ``mtimes=None`` para no
-            # dispararse EXTERNAL_EDIT_DETECTED con el Save posterior del
-            # agente sobre su propia cadena.
-            new_state = build_state_from_board(bridge, board)
+            bridge.move_footprint(
+                board,
+                ref,
+                Mm(x_mm),
+                Mm(y_mm),
+                kiid=target.kiid or None,
+                timings=mutation_timings,
+            )
+            # T1 (D-08.1): el post-snapshot todavía re-lee el board. En T2
+            # (D-08.2) se reemplaza por derivación local + verificación
+            # puntual por KIID. Aislar aquí facilita el cambio incremental.
+            new_state = _register_post_snapshot(
+                bridge,
+                board,
+                pre_footprints=ctx.footprints,
+                mutated_kiid=target.kiid,
+                mutated_ref=ref,
+                target_x_mm=x_mm,
+                target_y_mm=y_mm,
+                mutation_timings=mutation_timings,
+            )
             snap_id = get_default_store().register(new_state, mtimes=None)
             audit_record(
                 root,
@@ -137,9 +283,14 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             "ref": ref,
             "backup_already_done": backup_info.get("already_done"),
             "base_snap": base_snap,
+            "read_ms": round(read_ms, 3),
         }
         if "lookup_ms" in mutation_timings:
             extra["lookup_ms"] = round(mutation_timings["lookup_ms"], 3)
+        if "verify_ms" in mutation_timings:
+            extra["verify_ms"] = round(mutation_timings["verify_ms"], 3)
+        if mutation_timings.get("post_fallback"):
+            extra["post_fallback"] = True
         log_tool_call(
             tool_name="move_footprint",
             latency_ms=timer["latency_ms"],
@@ -169,7 +320,12 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 _check_base_snap(base_snap)
             board = _resolve_board(bridge)
 
+            # D-08.1: bbox + snapshot pre en una sola pasada. list_net_names
+            # sigue aparte (es una pasada sobre get_nets, no get_footprints).
+            read_start = time.perf_counter()
+            ctx = bridge.read_board_context(board)
             nets = bridge.list_net_names(board)
+            read_ms = (time.perf_counter() - read_start) * 1000
             if net not in nets:
                 similars = _similars(net, nets)
                 hint = "nets similares: " + ", ".join(similars) if similars else "sin sugerencias"
@@ -184,7 +340,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                     message=f"Net {net} no existe en el board.",
                     hint=hint,
                 )
-            bbox = bridge.board_bbox_mm(board)
+            bbox = ctx.bbox
             for label, x, y in (
                 ("start", start_x_mm, start_y_mm),
                 ("end", end_x_mm, end_y_mm),
@@ -218,11 +374,12 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 layer=layer,
                 timings=add_track_timings,
             )
-            # Snapshot vivo post-mutación (T5, ADR-0007). Aunque add_track no
-            # altera la lista de componentes (las tracks no viven en
-            # NormalizedState), re-registramos para que el agente pueda
-            # encadenar la próxima mutación con un base_snap fresco.
-            new_state = build_state_from_board(bridge, board)
+            # Sesión 08 D-08.2: ``add_track`` NO altera la lista de
+            # componentes (las tracks no viven en NormalizedState). El
+            # post-estado es idéntico al pre en términos de NormalizedState,
+            # así que derivamos del snapshot leído sin re-iterar el board.
+            # Cero pasadas post.
+            new_state = build_state_from_snapshot(ctx.footprints)
             snap_id = get_default_store().register(new_state, mtimes=None)
             track_params = _track_params(
                 net, start_x_mm, start_y_mm, end_x_mm, end_y_mm, width_mm, layer
@@ -242,6 +399,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             "net": net,
             "layer": layer,
             "base_snap": base_snap,
+            "read_ms": round(read_ms, 3),
         }
         if "lookup_ms" in add_track_timings:
             add_track_extra["lookup_ms"] = round(add_track_timings["lookup_ms"], 3)

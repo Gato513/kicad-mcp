@@ -1,17 +1,24 @@
-"""Tools de la categoría ``world``: ``get_world_context`` (MVP).
+"""Tools de la categoría ``world``: ``get_world_context`` y ``get_context_delta``.
 
-Ver `docs/specs/tool-catalog.md §world`. El MVP implementa
-``get_world_context`` cableado al ``state_builder`` (netlist + posiciones)
-y al ``encoder`` con presupuesto de tokens y área local.
+Ver `docs/specs/tool-catalog.md §world`. ``get_world_context`` lee el
+estado del proyecto (``kind="sch"`` desde el ``.kicad_sch`` de disco vía
+``state_builder``; ``kind="pcb"`` desde el board vivo de kipy vía
+``bridge.read_board_context``, D-09.1) y lo serializa con el ``encoder``,
+con presupuesto de tokens y área local. ``get_context_delta`` emite el
+ΔTOON kind-aware entre un ``base_snap`` y el estado actual.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
-from ..bridge.state_builder import build_state_cached, build_state_from_board
+from ..bridge.state_builder import (
+    build_state_cached,
+    build_state_from_board,
+    build_state_from_snapshot,
+)
 from ..errors import ErrorCode, KicadMcpError
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
 from ..snapshots import collect_project_mtimes, get_default_store, validate_base_snap
@@ -163,25 +170,54 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
 
     @mcp.tool(
         name="get_world_context",
-        description="Estado del proyecto en TOON v1",
+        description="Estado del proyecto (sch de disco o pcb vivo) en TOON v1",
     )
     def get_world_context(
         max_tokens: int = 800,
         focus_ref: str | None = None,
         radius_mm: float | None = None,
+        kind: Literal["sch", "pcb"] = "sch",
     ) -> str:
         # Devuelve el string TOON puro (sin envelope JSON). La cabecera
         # ya lleva ``snap`` y ``kind`` — reintroducir un wrapper añadía
         # ~30 % de tokens sin dato nuevo (medido en sesión 02).
         # ``snap`` se obtiene del Snapshot Store (sesión 04 T4): monótono
         # por proceso, con retención de 10.
+        #
+        # D-09.1: ``kind="pcb"`` lee el board VIVO de kipy en UNA pasada IPC
+        # (``read_board_context``), registra un snapshot vivo (``mtimes=None``,
+        # ADR-0007) y devuelve el TOON con el ``snap_id`` en la cabecera — el
+        # agente puede mutar o pedir delta inmediatamente con ese base_snap.
+        # La degradación §4 (focus/radius/max_tokens) es agnóstica del kind.
+        if kind not in ("sch", "pcb"):
+            raise KicadMcpError(
+                code=ErrorCode.INVALID_PARAMS,
+                message=f"``kind`` inválido: {kind!r}",
+                hint="Valores válidos: 'sch' (disco) o 'pcb' (board vivo).",
+            )
         with tool_call_timer() as timer:
-            schematic = _resolve_root_schematic()
-            # Registro en el store: reconstruimos con snap=0 (placeholder) y
-            # luego materializamos el snap real via model_copy.
-            state_raw, cache_hit = build_state_cached(schematic, snap=0)
-            mtimes = collect_project_mtimes(schematic)
-            snap_id = get_default_store().register(state_raw, mtimes)
+            cache_hit = False
+            if kind == "pcb":
+                # Board vivo: KiCad cerrado → KICAD_NOT_RUNNING (fast-fail del
+                # bridge); PCB Editor cerrado → KICAD_CLI_FAILED con
+                # data.ipc_status="unhandled" (mapeo D-07.2 al pedir el board).
+                board = bridge.get_open_board()
+                if board is None:
+                    raise KicadMcpError(
+                        code=ErrorCode.PROJECT_NOT_FOUND,
+                        message="No hay board abierto en KiCad.",
+                        hint="Abrí el .kicad_pcb del proyecto activo en KiCad.",
+                    )
+                ctx = bridge.read_board_context(board)
+                state_raw = build_state_from_snapshot(ctx.footprints)
+                snap_id = get_default_store().register(state_raw, mtimes=None)
+            else:
+                schematic = _resolve_root_schematic()
+                # Registro en el store: reconstruimos con snap=0 (placeholder) y
+                # luego materializamos el snap real via model_copy.
+                state_raw, cache_hit = build_state_cached(schematic, snap=0)
+                mtimes = collect_project_mtimes(schematic)
+                snap_id = get_default_store().register(state_raw, mtimes)
             state = state_raw.model_copy(update={"snap": snap_id})
             toon = encode(
                 state,

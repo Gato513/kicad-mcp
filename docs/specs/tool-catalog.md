@@ -65,11 +65,38 @@ Ejemplo con KiCad cerrado:
 
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
-| `get_world_context` | Estado del proyecto en TOON v1 | `max_tokens?=800`, `focus_ref?`, `radius_mm?` | full | `KICAD_TIMEOUT`, `KICAD_NOT_RUNNING`, `PROJECT_NOT_FOUND`, `CONTEXT_BUDGET_IMPOSSIBLE`, `UNSUPPORTED_HIERARCHY` |
+| `get_world_context` | Estado del proyecto (sch de disco o pcb vivo) en TOON v1 | `max_tokens?=800`, `focus_ref?`, `radius_mm?`, `kind?="sch"` | full | `KICAD_TIMEOUT`, `KICAD_NOT_RUNNING`, `KICAD_CLI_FAILED`, `PROJECT_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `UNSUPPORTED_HIERARCHY` |
 | `get_context_delta` | Delta TOON entre un `base_snap` y el estado actual | `base_snap`, `focus_ref`, `radius_mm`, `max_tokens?` | delta | `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `UNSUPPORTED_HIERARCHY` |
 | `get_component_detail` | Detalle completo de un componente: lib, pines, propiedades, footprint | `ref` | none | `COMPONENT_NOT_FOUND` |
 | `get_net_detail` | Miembros y componentes de una net | `net` | none | `NET_NOT_FOUND` |
 | `list_unconnected` | Pines sin net asignada en todo el proyecto | — | none | (los de lectura de estado) |
+
+Notas de `get_world_context` (parámetro `kind`, sesión 09 D-09.1):
+
+- `kind="sch"` (default, retrocompatible): ancla en el `.kicad_sch` raíz de
+  disco (netlist vía kicad-cli + posiciones parseadas). Cabecera `SCH|…`.
+  Multi-hoja → `UNSUPPORTED_HIERARCHY`. Es el path histórico.
+- `kind="pcb"`: lee el **board VIVO** de KiCad en UNA pasada IPC
+  (`read_board_context`), sin necesidad de haber mutado antes. Registra un
+  snapshot vivo (`mtimes=None`, ADR-0007) y devuelve el TOON con `kind="pcb"`
+  y el `snap_id` en la cabecera (`PCB|…|snap:N`) — el agente puede mutar o
+  pedir `get_context_delta` inmediatamente con ese `snap_id` como `base_snap`.
+- `focus_ref`/`radius_mm`/`max_tokens` aplican igual en ambos kinds: la
+  cascada de degradación §4 es agnóstica del kind.
+- Errores propios de `kind="pcb"`:
+  - KiCad cerrado → `KICAD_NOT_RUNNING` (fast-fail del bridge, sin esperar
+    el timeout de 2 s).
+  - KiCad abierto pero **sin PCB Editor** → `KICAD_CLI_FAILED` con
+    `data.ipc_status="unhandled"` (mapeo D-07.2); el hint dirige a abrir el
+    PCB Editor.
+  - `kind` distinto de `"sch"`/`"pcb"` → `INVALID_PARAMS`.
+- Ejemplo `kind="pcb"` (board de prueba, cabecera):
+
+  ```
+  PCB|v1|202c|…|snap:5
+  U19  <valor>  x… y…  1>… 2>… …
+  …
+  ```
 
 Notas de `get_context_delta` (sesión 05 T4):
 

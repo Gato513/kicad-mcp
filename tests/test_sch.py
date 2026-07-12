@@ -74,6 +74,19 @@ def _refs_in(sheet_path: Path) -> list[str]:
     return [str(sym.Reference.value) for sym in sch.symbol]
 
 
+def _prop_in(sheet_path: Path, ref: str, prop_name: str) -> str:
+    """Valor de una propiedad de un símbolo (por ref) leído de disco."""
+    from skip import Schematic
+
+    sch = Schematic(str(sheet_path))
+    for sym in sch.symbol:
+        if str(sym.Reference.value) == ref:
+            for prop in sym.property:
+                if str(prop.name) == prop_name:
+                    return str(prop.value)
+    raise AssertionError(f"prop {prop_name} de {ref} no hallada en {sheet_path.name}")
+
+
 # --- éxito -------------------------------------------------------------------
 
 
@@ -325,3 +338,156 @@ async def test_add_symbol_rejects_path_outside_project(
     assert result.isError
     text = _text(result)
     assert "PATH_OUTSIDE_PROJECT" in text
+
+
+# --- set_value / set_footprint (D-12.1) --------------------------------------
+
+
+@pytest.mark.unit
+async def test_set_value_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """set_value R1 -> 22k: efecto verificado en disco + confirm ≤50 + snap + audit."""
+    project = _copy_fixture("001_basico", tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("set_value", {"ref": "R1", "value": "22k"})
+    assert not result.isError, _text(result)
+    confirm = _text(result)
+    assert estimate_tokens(confirm) <= 50, f"confirm largo: {confirm!r}"
+    assert confirm.startswith("OK set_value R1")
+    assert "[snap:" in confirm
+    # Efecto real en disco (D-06.3).
+    assert _prop_in(project / "fixture.kicad_sch", "R1", "Value") == "22k"
+
+    audit_file = project / ".kicad-mcp" / "audit.jsonl"
+    entries = [json.loads(line) for line in audit_file.read_text().splitlines()]
+    accepted = [e for e in entries if e["tool"] == "set_value" and "result" in e]
+    assert len(accepted) == 1
+    assert accepted[0]["result"]["snap"] >= 1
+    assert accepted[0]["result"]["old"] == "10k"
+
+
+@pytest.mark.unit
+async def test_set_value_disk_snapshot_has_mtimes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D-08.5 #4: el snapshot post-write es de disco (mtimes no None)."""
+    project = _copy_fixture("001_basico", tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("set_value", {"ref": "C1", "value": "220nF"})
+    assert not result.isError, _text(result)
+
+    import re
+
+    from kicad_mcp.snapshots import get_default_store
+
+    snap_id = int(re.search(r"\[snap:(\d+)\]", _text(result)).group(1))  # type: ignore[union-attr]
+    entry = get_default_store().get(snap_id)
+    assert entry is not None
+    assert entry.mtimes is not None
+    # El value derivado quedó reflejado en el estado normalizado.
+    c1 = next(c for c in entry.state.components if c.ref == "C1")
+    assert c1.value == "220nF"
+
+
+@pytest.mark.unit
+async def test_set_value_rejects_missing_ref(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ref inexistente → COMPONENT_NOT_FOUND con similares."""
+    project = _copy_fixture("001_basico", tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("set_value", {"ref": "R9", "value": "1k"})
+    assert result.isError
+    text = _text(result)
+    assert "COMPONENT_NOT_FOUND" in text
+    # No debe haberse creado backup (validación previa a G1).
+    assert not (project / ".kicad-mcp" / "backups").exists()
+
+
+@pytest.mark.unit
+async def test_set_value_rejects_empty(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Value vacío → INVALID_PARAMS."""
+    project = _copy_fixture("001_basico", tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("set_value", {"ref": "R1", "value": "   "})
+    assert result.isError
+    assert "INVALID_PARAMS" in _text(result)
+
+
+@pytest.mark.unit
+async def test_set_value_rejects_control_chars(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regla 6: value con salto de línea → INVALID_PARAMS antes de tocar disco."""
+    project = _copy_fixture("001_basico", tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("set_value", {"ref": "R1", "value": "10k\ninject"})
+    assert result.isError
+    assert "INVALID_PARAMS" in _text(result)
+    # R1 sigue en 10k (no se tocó disco).
+    assert _prop_in(project / "fixture.kicad_sch", "R1", "Value") == "10k"
+
+
+@pytest.mark.unit
+async def test_set_footprint_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """set_footprint R1 -> lib:name: efecto verificado en disco + confirm ≤50."""
+    project = _copy_fixture("001_basico", tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    fp = "Resistor_SMD:R_0805_2012Metric"
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("set_footprint", {"ref": "R1", "footprint_id": fp})
+    assert not result.isError, _text(result)
+    confirm = _text(result)
+    assert estimate_tokens(confirm) <= 50, f"confirm largo: {confirm!r}"
+    assert confirm.startswith("OK set_footprint R1")
+    assert _prop_in(project / "fixture.kicad_sch", "R1", "Footprint") == fp
+
+
+@pytest.mark.unit
+async def test_set_footprint_rejects_bad_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """footprint_id sin ':' → INVALID_PARAMS (formato lib:name)."""
+    project = _copy_fixture("001_basico", tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("set_footprint", {"ref": "R1", "footprint_id": "R_0805"})
+    assert result.isError
+    text = _text(result)
+    assert "INVALID_PARAMS" in text
+    assert "lib:name" in text
+    # No se tocó disco (Footprint sigue vacío).
+    assert _prop_in(project / "fixture.kicad_sch", "R1", "Footprint") == ""
+
+
+@pytest.mark.unit
+async def test_set_footprint_rejects_missing_ref(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ref inexistente → COMPONENT_NOT_FOUND."""
+    project = _copy_fixture("001_basico", tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("set_footprint", {"ref": "ZZ9", "footprint_id": "Lib:Foot"})
+    assert result.isError
+    assert "COMPONENT_NOT_FOUND" in _text(result)

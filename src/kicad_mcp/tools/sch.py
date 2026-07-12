@@ -27,6 +27,7 @@ la práctica segura.
 
 from __future__ import annotations
 
+import difflib
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -69,6 +70,61 @@ def _validate_ref(ref: str) -> None:
             message=f"Ref {ref!r} no válida.",
             hint=(
                 "Formato: <Letra><[A-Za-z0-9_]…><Dígito>, ≤16 chars (p. ej. U6, R42, RR1, POT1)."
+            ),
+        )
+
+
+# Sanitización de campos de texto que van a un archivo (regla 6). El encoder
+# TOON re-sanitiza ``value`` al LEERLO (encoder.py:_sanitize, §5); esta capa de
+# ESCRITURA rechaza lo que rompería el archivo o el confirm: caracteres de
+# control/saltos de línea y longitudes absurdas. Los caracteres estructurales
+# de TOON (``>|:``) NO se rechazan acá — el ``footprint_id`` legítimamente lleva
+# ``:`` (lib:name), y el encoder los neutraliza al mostrar.
+_MAX_FIELD_LEN = 40
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+# ``lib:name`` — dos segmentos no vacíos de chars válidos de librería KiCad.
+# NO valida existencia en las librerías del sistema (D-12.1: sin acceso; KiCad
+# lo marcará en F8 → File → Update PCB / al asignar footprints).
+_FOOTPRINT_RE = re.compile(r"^[A-Za-z0-9_.\-]+:[A-Za-z0-9_.\-]+$")
+
+
+def _validate_field_text(text: str, field: str) -> None:
+    """Rechaza texto no escribible a un ``.kicad_sch`` (regla 6, borde de escritura)."""
+    if _CONTROL_RE.search(text):
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_PARAMS,
+            message=f"El campo {field} contiene caracteres de control o saltos de línea.",
+            hint="Usá texto plano imprimible (sin \\n, \\t ni control).",
+        )
+    if len(text) > _MAX_FIELD_LEN:
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_PARAMS,
+            message=f"El campo {field} excede {_MAX_FIELD_LEN} chars ({len(text)}).",
+            hint=f"Acortá el {field} a ≤{_MAX_FIELD_LEN} caracteres.",
+        )
+
+
+def _validate_value(value: str) -> None:
+    """Valida ``value`` para ``set_value`` (regla 6 + no vacío)."""
+    if not value.strip():
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_PARAMS,
+            message="El value no puede estar vacío.",
+            hint="Pasá el valor del componente, p. ej. '22k', '100nF', 'STM32F103'.",
+        )
+    _validate_field_text(value, "value")
+
+
+def _validate_footprint_id(footprint_id: str) -> None:
+    """Valida FORMATO ``lib:name`` (regla 6 + D-12.1). NO valida existencia."""
+    _validate_field_text(footprint_id, "footprint_id")
+    if not _FOOTPRINT_RE.match(footprint_id):
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_PARAMS,
+            message=f"footprint_id {footprint_id!r} no tiene formato 'lib:name'.",
+            hint=(
+                "Formato 'Librería:Huella', p. ej. 'Resistor_SMD:R_0805_2012Metric'. "
+                "No se valida existencia en librerías del sistema (KiCad lo marcará al asignar)."
             ),
         )
 
@@ -290,6 +346,104 @@ def _derive_post_state_sch(
     )
 
 
+def _find_symbol_by_ref(sch: Any, ref: str) -> Any:
+    """Localiza el ``(symbol ...)`` instanciado cuya Reference sea ``ref`` (o None)."""
+    for sym in sch.symbol:
+        try:
+            if str(sym.Reference.value) == ref:
+                return sym
+        except AttributeError:
+            continue
+    return None
+
+
+def _get_property(sym: Any, name: str) -> Any:
+    """Devuelve el elemento ``(property "<name>" ...)`` del símbolo, o None.
+
+    kicad-skip expone el atajo ``sym.Value``/``sym.Reference`` pero devuelve
+    ``None`` cuando el valor es vacío (caso típico de ``Footprint`` recién
+    plantillado). Iterar la ``PropertyCollection`` es la vía robusta: cada
+    entrada tiene ``.name`` y ``.value`` fiables sin importar el contenido.
+    """
+    for prop in sym.property:
+        if str(prop.name) == name:
+            return prop
+    return None
+
+
+def _set_symbol_property(sheet_path: Path, ref: str, prop_name: str, new_value: str) -> str:
+    """Escribe ``prop_name`` = ``new_value`` en el símbolo ``ref``. Devuelve el valor viejo.
+
+    Precondición: ``ref`` existe en el proyecto (validado por el llamador con
+    ``_collect_all_refs``). Si el símbolo o la propiedad no aparecen al abrir la
+    hoja es una race con edición externa → ``KICAD_CLI_FAILED`` (loud, no
+    silencioso). El ``sch.write`` sobreescribe la hoja; el G1 backup ya se hizo.
+    """
+    from skip import Schematic
+
+    sch = Schematic(str(sheet_path))
+    sym = _find_symbol_by_ref(sch, ref)
+    if sym is None:
+        raise KicadMcpError(
+            code=ErrorCode.KICAD_CLI_FAILED,
+            message=f"El símbolo {ref} desapareció de {sheet_path.name} antes del write.",
+            hint="Posible edición externa concurrente; re-sincronizá con get_world_context.",
+        )
+    prop = _get_property(sym, prop_name)
+    if prop is None:
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_PARAMS,
+            message=f"El símbolo {ref} no tiene la propiedad {prop_name}.",
+            hint=f"El símbolo debe declarar '{prop_name}' en su definición de librería.",
+        )
+    old_value = str(prop.value)
+    prop.value = new_value
+    sch.write(str(sheet_path))
+    return old_value
+
+
+def _verify_property(sheet_path: Path, ref: str, prop_name: str, expected: str) -> dict[str, Any]:
+    """Re-lee la hoja y confirma que ``prop_name`` quedó en ``expected`` (D-06.3)."""
+    from skip import Schematic
+
+    sch = Schematic(str(sheet_path))
+    sym = _find_symbol_by_ref(sch, ref)
+    total = sum(1 for _ in sch.symbol)
+    if sym is None:
+        raise KicadMcpError(
+            code=ErrorCode.KICAD_CLI_FAILED,
+            message=f"Verificación de efecto: no se encontró {ref} tras write.",
+            hint="El archivo se escribió pero el símbolo no aparece; posible race.",
+        )
+    prop = _get_property(sym, prop_name)
+    live = str(prop.value) if prop is not None else None
+    if live != expected:
+        raise KicadMcpError(
+            code=ErrorCode.KICAD_CLI_FAILED,
+            message=f"Verificación de efecto: {prop_name} leído {live!r} != {expected!r}.",
+            hint="El write persistió otro valor — bug interno.",
+        )
+    return {"total": total, "old_hidden": False, prop_name: live}
+
+
+def _derive_post_state_set_value(
+    pre_state: NormalizedState, ref: str, value: str
+) -> NormalizedState:
+    """Post-estado = pre con el ``value`` del Component ``ref`` reemplazado.
+
+    ``set_value`` no altera conectividad ni posición: sólo el campo ``value``.
+    Derivar localmente evita re-correr el netlist (patrón add_symbol). El
+    ``snap`` se emite 0; el llamador lo sobrescribe con el del store.
+    """
+    components = tuple(
+        Component(ref=c.ref, value=value, lib=c.lib, x=c.x, y=c.y, pins=c.pins)
+        if c.ref == ref
+        else c
+        for c in pre_state.components
+    )
+    return NormalizedState(kind=pre_state.kind, snap=0, components=components)
+
+
 def _verify_effect(
     sheet_path: Path,
     ref: str,
@@ -482,5 +636,160 @@ def register(mcp: FastMCP) -> None:
             tokens_est=estimate_tokens(confirmation),
             snap_id=snap_id,
             extra=extra,
+        )
+        return confirmation
+
+    def _set_property_core(
+        tool_name: str,
+        prop_name: str,
+        audit_key: str,
+        ref: str,
+        new_value: str,
+        base_snap: int | None,
+        derive: Any,
+    ) -> dict[str, Any]:
+        """Núcleo compartido de ``set_value`` / ``set_footprint`` (D-12.1).
+
+        Localiza la hoja del ``ref`` (refs son únicos por proyecto), valida
+        existencia, dispara G1, escribe la propiedad, verifica el efecto
+        (D-06.3) y registra un snapshot de DISCO derivado con mtimes frescos
+        (D-06.2 / D-08.5 #4). Devuelve datos para el confirm + log del tool.
+        """
+        root = _project_root()
+        if base_snap is not None:
+            validate_base_snap(get_default_store(), base_snap, _resolve_root_schematic())
+
+        params_for_audit = {"ref": ref, audit_key: new_value}
+        all_refs = _collect_all_refs(root)
+        if ref not in all_refs:
+            _audit_error(root, tool_name, params_for_audit, ErrorCode.COMPONENT_NOT_FOUND)
+            similars = difflib.get_close_matches(ref, list(all_refs), n=3, cutoff=0.5)
+            hint = "refs similares: " + ", ".join(similars) if similars else "sin sugerencias"
+            raise KicadMcpError(
+                code=ErrorCode.COMPONENT_NOT_FOUND,
+                message=f"Ref {ref!r} no existe en el proyecto.",
+                hint=hint,
+            )
+        sheet_path = all_refs[ref]
+
+        # Pre-estado del proyecto ANTES de mutar (base de la derivación local;
+        # mismo motivo que add_symbol: evita re-correr el netlist).
+        root_sch = _resolve_root_schematic()
+        pre_state = build_state_cached(root_sch, snap=0)[0]
+
+        backup_info = ensure_session_backup(root)  # Gate G1
+        old_value = _set_symbol_property(sheet_path, ref, prop_name, new_value)
+        effect = _verify_property(sheet_path, ref, prop_name, new_value)
+
+        new_state = derive(pre_state)
+        fresh_mtimes = collect_project_mtimes(root_sch)
+        snap_id = get_default_store().register(new_state, fresh_mtimes)
+
+        audit_record(
+            root,
+            tool=tool_name,
+            params={**params_for_audit, "base_snap": base_snap},
+            result={
+                "snap": snap_id,
+                "backup": backup_info.get("backup"),
+                "sheet_total": effect["total"],
+                "old": old_value,
+            },
+        )
+        return {
+            "old_value": old_value,
+            "sheet_path": sheet_path,
+            "snap_id": snap_id,
+            "backup_info": backup_info,
+            "effect": effect,
+        }
+
+    @mcp.tool(
+        name="set_value",
+        description="Cambia el Value de un símbolo existente (p. ej. R1 -> 22k)",
+    )
+    def set_value(ref: str, value: str, base_snap: int | None = None) -> str:
+        with tool_call_timer() as timer:
+            try:
+                _validate_value(value)
+            except KicadMcpError as err:
+                _audit_error(_project_root(), "set_value", {"ref": ref, "value": value}, err.code)
+                raise
+            out = _set_property_core(
+                "set_value",
+                "Value",
+                "value",
+                ref,
+                value,
+                base_snap,
+                lambda pre: _derive_post_state_set_value(pre, ref, value),
+            )
+            sheet_path = out["sheet_path"]
+            snap_id = out["snap_id"]
+            confirmation = (
+                f"OK set_value {ref} {out['old_value']!r}->{value!r}"
+                f" in {sheet_path.name} [snap:{snap_id}]"
+            )
+        log_tool_call(
+            tool_name="set_value",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(confirmation),
+            snap_id=snap_id,
+            extra={
+                "ref": ref,
+                "sheet": sheet_path.name,
+                "base_snap": base_snap,
+                "backup_already_done": out["backup_info"].get("already_done"),
+                "sheet_total": out["effect"]["total"],
+            },
+        )
+        return confirmation
+
+    @mcp.tool(
+        name="set_footprint",
+        description="Asigna el Footprint (lib:name) de un símbolo existente; no valida existencia",
+    )
+    def set_footprint(ref: str, footprint_id: str, base_snap: int | None = None) -> str:
+        with tool_call_timer() as timer:
+            try:
+                _validate_footprint_id(footprint_id)
+            except KicadMcpError as err:
+                _audit_error(
+                    _project_root(),
+                    "set_footprint",
+                    {"ref": ref, "footprint": footprint_id},
+                    err.code,
+                )
+                raise
+            # El Footprint NO vive en NormalizedState (Component no lo modela):
+            # el post-estado es idéntico al pre en términos de estado normalizado,
+            # pero registramos un snapshot de disco fresco para encadenar base_snap
+            # y mantener activa la detección de edición externa (patrón add_track).
+            out = _set_property_core(
+                "set_footprint",
+                "Footprint",
+                "footprint",
+                ref,
+                footprint_id,
+                base_snap,
+                lambda pre: NormalizedState(kind=pre.kind, snap=0, components=pre.components),
+            )
+            sheet_path = out["sheet_path"]
+            snap_id = out["snap_id"]
+            confirmation = (
+                f"OK set_footprint {ref} ->{footprint_id} in {sheet_path.name} [snap:{snap_id}]"
+            )
+        log_tool_call(
+            tool_name="set_footprint",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(confirmation),
+            snap_id=snap_id,
+            extra={
+                "ref": ref,
+                "sheet": sheet_path.name,
+                "base_snap": base_snap,
+                "backup_already_done": out["backup_info"].get("already_done"),
+                "sheet_total": out["effect"]["total"],
+            },
         )
         return confirmation

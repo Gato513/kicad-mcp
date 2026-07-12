@@ -293,6 +293,35 @@ Superficie de mutación complementaria a `pcb`: opera sobre archivos
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
 | `add_symbol` | Clona un símbolo ya presente en una hoja y lo coloca con nueva ref | `sheet`, `lib_id`, `ref`, `x_mm`, `y_mm`, `base_snap?` | confirm | `INVALID_PARAMS`, `PATH_OUTSIDE_PROJECT`, `PROJECT_NOT_FOUND`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `KICAD_CLI_FAILED` |
+| `set_value` | Cambia el `Value` de un símbolo existente (localiza la hoja por ref) | `ref`, `value`, `base_snap?` | confirm | `INVALID_PARAMS`, `COMPONENT_NOT_FOUND`, `PROJECT_NOT_FOUND`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `KICAD_CLI_FAILED` |
+| `set_footprint` | Asigna el `Footprint` (`lib:name`) de un símbolo existente | `ref`, `footprint_id`, `base_snap?` | confirm | `INVALID_PARAMS`, `COMPONENT_NOT_FOUND`, `PROJECT_NOT_FOUND`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `KICAD_CLI_FAILED` |
+
+`set_value` / `set_footprint` — decisiones vinculantes (D-12.1):
+
+1. **Localización por ref:** las refs son únicas por proyecto, así que ambas
+   tools ubican la hoja del símbolo recorriendo todos los `.kicad_sch` del
+   root (no piden `sheet`). Ref inexistente → `COMPONENT_NOT_FOUND` con
+   refs similares por edit-distance.
+2. **`set_footprint` valida FORMATO, no existencia:** exige `lib:name`
+   (`^[A-Za-z0-9_.\-]+:[A-Za-z0-9_.\-]+$`) pero NO comprueba que la huella
+   exista en las librerías del sistema (el MVP no tiene acceso). KiCad marca
+   la huella faltante al asignar/actualizar el PCB. El agente elige nombres
+   válidos; la responsabilidad de existencia es del humano/KiCad.
+3. **Regla 6 (borde de escritura):** `value` y `footprint_id` se rechazan si
+   traen caracteres de control/saltos de línea o exceden 40 chars
+   (`INVALID_PARAMS`) antes de tocar disco. `value` vacío se rechaza. El
+   encoder TOON re-sanitiza `value` al leerlo (§5), así que los caracteres
+   estructurales no se rechazan en escritura (footprint lleva `:` legítimo).
+4. **Snapshot / G1 / audit:** idénticos a `add_symbol` — G1 backup 1ª vez,
+   verificación de efecto re-leyendo la hoja (D-06.3), snapshot de DISCO
+   post-write con mtimes frescos (D-06.2). `set_value` deriva el post-estado
+   reemplazando el `value` del Component; `set_footprint` no altera el
+   `NormalizedState` (el footprint no se modela) pero registra igual un
+   snapshot fresco para encadenar `base_snap`.
+
+Confirmaciones (≤ 50 tokens):
+`OK set_value R1 '10k'->'22k' in fixture.kicad_sch [snap:3]` ·
+`OK set_footprint R1 ->Resistor_SMD:R_0805_2012Metric in fixture.kicad_sch [snap:4]`.
 
 `add_symbol` — decisiones vinculantes (D-08.5):
 
@@ -355,9 +384,17 @@ Parámetro común `base_snap` (sesión 04 T4, aditivo):
 
 ## Nombres reservados (fases futuras — no implementar, no renombrar)
 
-v0.2: `set_value`, `connect_pins`, `place_footprint`,
-`add_zone`, `reload_in_gui` (los ya implementados —`move_footprint`,
-`add_track`, `add_via`, `add_symbol`— se mueven a las secciones `pcb` y `sch`).
+v0.2: `place_footprint`, `add_zone` (los ya implementados —`move_footprint`,
+`add_track`, `add_via`, `add_symbol`, `set_value`, `set_footprint`,
+`connect_pins`, `draw_board_outline`— se mueven a las secciones `pcb` y `sch`).
+
+`reload_in_gui` — **no factible en KiCad 10 (diferido a KiCad 11).** La IPC de
+esquemático (documento + `revert()`) es `versionadded 0.7.0 (KiCad 11)`; el
+objeto `KiCad` de esta versión no expone reload agnóstico del editor y KiCad
+10.0.4 responde `no handler available` a peticiones de documento de tipo
+schematic (spike sesión 12, D-12.4). El hazard "tras mutar el sch con KiCad
+abierto, el humano acepta el aviso de recarga" queda documentado
+(`docs/guia-paleta.md`); no se construye nada.
 v0.3: `get_session_summary`, `checkpoint` (el ya implementado
 `get_context_delta` se mueve a la categoría `world`).
 v0.4: `suggest_positions`, `route_with_freerouting`.

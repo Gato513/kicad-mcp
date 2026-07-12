@@ -46,7 +46,12 @@ encoder construye el mapa net → pines; la entrada no lleva lista de nets.
 
 ```
 documento   := cabecera "\n" seccion_C "\n" seccion_N
-cabecera    := ("SCH"|"PCB") "|v1|" INT "c|" INT "n|snap:" INT
+cabecera    := ("SCH"|"PCB") "|v1|" INT "c|" INT "n" extras "|snap:" INT
+extras      := bbox_tok? outline_tok? area_tok        ; sesión 11, opcionales
+bbox_tok    := "|bbox:" NUM "," NUM ";" NUM "," NUM    ; F-03, solo kind=PCB
+outline_tok := "|outline:" ("none" | DIM)             ; F-03, solo kind=PCB
+area_tok    := ("|area:full" | "|area:r" INT "@" REF)? ; F-01, si hubo foco
+DIM         := NUM "x" NUM "mm"                        ; p. ej. 312.0x106.7mm
 seccion_C   := "[C]" "\n" linea_comp*
 linea_comp  := REF "  " VALUE "  " POS "  " pines "\n"
 POS         := "x" NUM " y" NUM
@@ -70,6 +75,9 @@ Reglas de formato:
   nets ordenadas: nets de poder primero (ver §4), resto alfabético.
 - El campo `lib` de la entrada **no se emite** en la línea de componente
   (recuperable vía `get_component_detail`); el valor sí, siempre.
+- Los tokens `extras` (sesión 11) son **opcionales** y van SIEMPRE entre
+  `{n}n` y `|snap:` — `snap:` permanece el campo terminal de la cabecera.
+  No aparecen en los casos de los golden 001/002 (que quedan byte-idénticos).
 
 ### Ejemplo mínimo normativo (= golden 001)
 

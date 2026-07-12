@@ -426,6 +426,135 @@ def _verify_property(sheet_path: Path, ref: str, prop_name: str, expected: str) 
     return {"total": total, "old_hidden": False, prop_name: live}
 
 
+def _parse_pin_ref(spec: str) -> tuple[str, str]:
+    """``"U1.5"`` → ``("U1", "5")``. Levanta ``INVALID_PARAMS`` si no matchea."""
+    ref, sep, pin = spec.partition(".")
+    if not sep or not ref or not pin:
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_PARAMS,
+            message=f"Formato de pin inválido: {spec!r}.",
+            hint='Usá "REF.PIN", p. ej. "U1.5".',
+        )
+    return ref, pin
+
+
+def _validate_net_name(net_name: str) -> None:
+    """Valida ``net_name`` para ``connect_pins`` (regla 6 + no vacío)."""
+    if not net_name.strip():
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_PARAMS,
+            message="net_name no puede estar vacío.",
+            hint="Elegí un nombre de net significativo, p. ej. 'SDA', 'VCC_3V3'.",
+        )
+    _validate_field_text(net_name, "net_name")
+
+
+def _pin_locations_on_sheet(
+    sheet_path: Path, endpoints: list[tuple[str, str]]
+) -> list[tuple[float, float]]:
+    """Posición ABSOLUTA de cada ``(ref, pin_number)`` en la hoja (spike D-12.2).
+
+    kicad-skip expone ``SymbolPin.location`` = ``AtValue(x, y, rot)`` ya
+    resuelta (origen + offset + rotación) — no calculamos geometría acá. Pin
+    inexistente → ``INVALID_PARAMS`` con los números disponibles del símbolo.
+    """
+    from skip import Schematic
+
+    sch = Schematic(str(sheet_path))
+    locs: list[tuple[float, float]] = []
+    for ref, pin_number in endpoints:
+        sym = _find_symbol_by_ref(sch, ref)
+        if sym is None:
+            raise KicadMcpError(
+                code=ErrorCode.COMPONENT_NOT_FOUND,
+                message=f"El símbolo {ref} no está en {sheet_path.name}.",
+                hint="Verificá el ref con get_world_context.",
+            )
+        found = None
+        available: list[str] = []
+        for pin in sym.pin:
+            num = str(pin.number)
+            available.append(num)
+            if num == pin_number:
+                found = pin
+        if found is None:
+            raise KicadMcpError(
+                code=ErrorCode.INVALID_PARAMS,
+                message=f"El pin {pin_number!r} no existe en {ref}.",
+                hint=f"Pines de {ref}: {', '.join(sorted(set(available))[:12]) or 'sin pines'}.",
+            )
+        at = found.location.value
+        locs.append((float(at[0]), float(at[1])))
+    return locs
+
+
+def _place_labels_on_sheet(
+    sheet_path: Path, net_name: str, locations: list[tuple[float, float]]
+) -> None:
+    """Coloca un label local ``net_name`` en cada posición y escribe la hoja.
+
+    D-12.2: dos labels locales con el mismo nombre en las posiciones de los
+    pines los netean juntos (práctica estándar de KiCad, verificada por
+    netlist en el spike). El G1 backup ya lo hizo el llamador.
+    """
+    from skip import Schematic
+
+    sch = Schematic(str(sheet_path))
+    for x_mm, y_mm in locations:
+        label = sch.label.new()
+        label.value = net_name
+        label.at.value = [x_mm, y_mm, 0]
+    sch.write(str(sheet_path))
+
+
+def _verify_labels(
+    sheet_path: Path, net_name: str, locations: list[tuple[float, float]]
+) -> dict[str, Any]:
+    """Re-lee la hoja y confirma un label ``net_name`` en cada posición (D-06.3)."""
+    from skip import Schematic
+
+    sch = Schematic(str(sheet_path))
+    present = [
+        (float(lbl.at.value[0]), float(lbl.at.value[1]))
+        for lbl in sch.label
+        if str(lbl.value) == net_name
+    ]
+    for x_mm, y_mm in locations:
+        if not any(abs(px - x_mm) < 1e-3 and abs(py - y_mm) < 1e-3 for px, py in present):
+            raise KicadMcpError(
+                code=ErrorCode.KICAD_CLI_FAILED,
+                message=f"Verificación de efecto: falta el label {net_name} en ({x_mm}, {y_mm}).",
+                hint="El write no persistió el label esperado — bug interno.",
+            )
+    return {"labels": len(present)}
+
+
+def _derive_post_state_connect(
+    pre_state: NormalizedState, endpoints: list[tuple[str, str]], net_name: str
+) -> NormalizedState:
+    """Post-estado = pre con la ``net`` de los pines conectados puesta en ``net_name``.
+
+    Derivación local (patrón add_symbol): el label asigna el net a ambos pines.
+    Caveat (spike D-12.2): si un pin ya cargaba un label global/jerárquico, el
+    netlist real conserva ese nombre (prioridad global); el snapshot derivado
+    puede diferir en ese borde. El netlist es la verdad; esto es una vista.
+    """
+    targets = set(endpoints)
+    components: list[Component] = []
+    for c in pre_state.components:
+        if not any((c.ref, pin.p) in targets for pin in c.pins):
+            components.append(c)
+            continue
+        new_pins = tuple(
+            Pin(p=pin.p, name=pin.name, net=net_name) if (c.ref, pin.p) in targets else pin
+            for pin in c.pins
+        )
+        components.append(
+            Component(ref=c.ref, value=c.value, lib=c.lib, x=c.x, y=c.y, pins=new_pins)
+        )
+    return NormalizedState(kind=pre_state.kind, snap=0, components=tuple(components))
+
+
 def _derive_post_state_set_value(
     pre_state: NormalizedState, ref: str, value: str
 ) -> NormalizedState:
@@ -790,6 +919,114 @@ def register(mcp: FastMCP) -> None:
                 "base_snap": base_snap,
                 "backup_already_done": out["backup_info"].get("already_done"),
                 "sheet_total": out["effect"]["total"],
+            },
+        )
+        return confirmation
+
+    @mcp.tool(
+        name="connect_pins",
+        description="Conecta dos pines (REF.PIN) por labels locales del mismo net_name",
+    )
+    def connect_pins(
+        pin_a: str,
+        pin_b: str,
+        net_name: str,
+        base_snap: int | None = None,
+    ) -> str:
+        # D-12.2: nea REF.PIN ↔ REF.PIN colocando labels locales homónimos en
+        # las posiciones absolutas de los pines (spike verificado por netlist).
+        # Labels locales tienen scope de HOJA → ambos pines deben vivir en la
+        # misma hoja. net_name obligatorio (el agente elige nombres con sentido).
+        with tool_call_timer() as timer:
+            root = _project_root()
+            params_for_audit = {"pin_a": pin_a, "pin_b": pin_b, "net_name": net_name}
+            try:
+                _validate_net_name(net_name)
+                ref_a, num_a = _parse_pin_ref(pin_a)
+                ref_b, num_b = _parse_pin_ref(pin_b)
+            except KicadMcpError as err:
+                _audit_error(root, "connect_pins", params_for_audit, err.code)
+                raise
+            if (ref_a, num_a) == (ref_b, num_b):
+                _audit_error(root, "connect_pins", params_for_audit, ErrorCode.INVALID_PARAMS)
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message="pin_a y pin_b son el mismo pin.",
+                    hint="Conectá dos pines distintos.",
+                )
+            if base_snap is not None:
+                validate_base_snap(get_default_store(), base_snap, _resolve_root_schematic())
+
+            all_refs = _collect_all_refs(root)
+            for ref in (ref_a, ref_b):
+                if ref not in all_refs:
+                    _audit_error(
+                        root, "connect_pins", params_for_audit, ErrorCode.COMPONENT_NOT_FOUND
+                    )
+                    similars = difflib.get_close_matches(ref, list(all_refs), n=3, cutoff=0.5)
+                    hint = (
+                        "refs similares: " + ", ".join(similars) if similars else "sin sugerencias"
+                    )
+                    raise KicadMcpError(
+                        code=ErrorCode.COMPONENT_NOT_FOUND,
+                        message=f"Ref {ref!r} no existe en el proyecto.",
+                        hint=hint,
+                    )
+            sheet_a, sheet_b = all_refs[ref_a], all_refs[ref_b]
+            if sheet_a != sheet_b:
+                _audit_error(root, "connect_pins", params_for_audit, ErrorCode.INVALID_PARAMS)
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message=(
+                        f"{ref_a} y {ref_b} están en hojas distintas "
+                        f"({sheet_a.name}, {sheet_b.name})."
+                    ),
+                    hint=(
+                        "connect_pins usa labels LOCALES (scope de hoja); ambos pines deben "
+                        "estar en la misma hoja. Labels globales/jerárquicos: fuera de scope."
+                    ),
+                )
+            sheet_path = sheet_a
+            endpoints = [(ref_a, num_a), (ref_b, num_b)]
+            # Validar pines (existencia + posición) ANTES del G1 — barato y
+            # trivialmente falseable (typo del agente), no ensuciamos backups.
+            locations = _pin_locations_on_sheet(sheet_path, endpoints)
+
+            root_sch = _resolve_root_schematic()
+            pre_state = build_state_cached(root_sch, snap=0)[0]
+
+            backup_info = ensure_session_backup(root)  # Gate G1
+            _place_labels_on_sheet(sheet_path, net_name, locations)
+            effect = _verify_labels(sheet_path, net_name, locations)
+
+            new_state = _derive_post_state_connect(pre_state, endpoints, net_name)
+            fresh_mtimes = collect_project_mtimes(root_sch)
+            snap_id = get_default_store().register(new_state, fresh_mtimes)
+
+            audit_record(
+                root,
+                tool="connect_pins",
+                params={**params_for_audit, "base_snap": base_snap},
+                result={
+                    "snap": snap_id,
+                    "backup": backup_info.get("backup"),
+                    "labels": effect["labels"],
+                },
+            )
+            confirmation = (
+                f"OK connect_pins {pin_a}<->{pin_b} net={net_name}"
+                f" in {sheet_path.name} [snap:{snap_id}]"
+            )
+        log_tool_call(
+            tool_name="connect_pins",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(confirmation),
+            snap_id=snap_id,
+            extra={
+                "net_name": net_name,
+                "sheet": sheet_path.name,
+                "base_snap": base_snap,
+                "backup_already_done": backup_info.get("already_done"),
             },
         )
         return confirmation

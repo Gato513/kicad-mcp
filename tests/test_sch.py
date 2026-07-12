@@ -21,7 +21,9 @@ IPC — la superficie es 100 % ``.kicad_sch`` sobre disco (D-08.5 #3).
 from __future__ import annotations
 
 import json
+import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +87,49 @@ def _prop_in(sheet_path: Path, ref: str, prop_name: str) -> str:
                 if str(prop.name) == prop_name:
                     return str(prop.value)
     raise AssertionError(f"prop {prop_name} de {ref} no hallada en {sheet_path.name}")
+
+
+def _strip_global_labels(sheet_path: Path) -> None:
+    """Borra todos los global_labels de la hoja (deja pines flotantes).
+
+    Necesario para el golden de ``connect_pins``: 001_basico ancla casi
+    todos los pines a global labels; sin quitarlos, el net resultante
+    heredaría el nombre global (prioridad) en vez del pedido.
+    """
+    from skip import Schematic
+
+    sch = Schematic(str(sheet_path))
+    for gl in list(sch.global_label):
+        gl.delete()
+    sch.write(str(sheet_path))
+
+
+def _netlist_nodes_by_net(sheet_path: Path, tmp_path: Path) -> dict[str, list[tuple[str, str]]]:
+    """Exporta netlist (kicadxml) y devuelve ``{net_name: [(ref, pin), ...]}``."""
+    out = tmp_path / "verify.net"
+    r = subprocess.run(
+        [
+            "kicad-cli",
+            "sch",
+            "export",
+            "netlist",
+            "--format",
+            "kicadxml",
+            "-o",
+            str(out),
+            str(sheet_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    text = out.read_text()
+    result: dict[str, list[tuple[str, str]]] = {}
+    for netm in re.finditer(r'<net code="[^"]*" name="([^"]*)"[^>]*>(.*?)</net>', text, re.S):
+        name = netm.group(1)
+        nodes = re.findall(r'<node ref="([^"]+)" pin="([^"]+)"', netm.group(2))
+        result[name] = nodes
+    return result
 
 
 # --- éxito -------------------------------------------------------------------
@@ -491,3 +536,158 @@ async def test_set_footprint_rejects_missing_ref(
         result = await client.call_tool("set_footprint", {"ref": "ZZ9", "footprint_id": "Lib:Foot"})
     assert result.isError
     assert "COMPONENT_NOT_FOUND" in _text(result)
+
+
+# --- connect_pins (D-12.2) ---------------------------------------------------
+
+
+@pytest.mark.unit
+async def test_connect_pins_golden_netlist(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """GOLDEN (D-12.2): dos pines → connect_pins → netlist → misma net con el nombre pedido."""
+    project = _copy_fixture("001_basico", tmp_path)
+    sheet = project / "fixture.kicad_sch"
+    _strip_global_labels(sheet)  # deja R1.2 y R2.2 flotantes
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "connect_pins",
+            {"pin_a": "R1.2", "pin_b": "R2.2", "net_name": "I2C_SDA"},
+        )
+    assert not result.isError, _text(result)
+    confirm = _text(result)
+    assert estimate_tokens(confirm) <= 50, f"confirm largo: {confirm!r}"
+    assert confirm.startswith("OK connect_pins R1.2<->R2.2 net=I2C_SDA")
+
+    # Prueba de oro: el netlist netea ambos pines en la net con el nombre pedido.
+    nets = _netlist_nodes_by_net(sheet, tmp_path)
+    # Los labels locales llevan prefijo de sheet-path ('/').
+    match = [n for n, nodes in nets.items() if n.endswith("I2C_SDA")]
+    assert match, f"net I2C_SDA ausente; nets: {list(nets)}"
+    nodes = nets[match[0]]
+    assert ("R1", "2") in nodes and ("R2", "2") in nodes, nodes
+
+
+@pytest.mark.unit
+async def test_connect_pins_snapshot_and_audit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """El snapshot de disco lleva mtimes y refleja el net derivado; audit registrado."""
+    project = _copy_fixture("001_basico", tmp_path)
+    _strip_global_labels(project / "fixture.kicad_sch")
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "connect_pins",
+            {"pin_a": "R1.2", "pin_b": "R2.2", "net_name": "I2C_SDA"},
+        )
+    assert not result.isError, _text(result)
+
+    from kicad_mcp.snapshots import get_default_store
+
+    snap_id = int(re.search(r"\[snap:(\d+)\]", _text(result)).group(1))  # type: ignore[union-attr]
+    entry = get_default_store().get(snap_id)
+    assert entry is not None
+    assert entry.mtimes is not None
+    r1 = next(c for c in entry.state.components if c.ref == "R1")
+    assert any(p.net == "I2C_SDA" for p in r1.pins), r1.pins
+
+    audit_file = project / ".kicad-mcp" / "audit.jsonl"
+    entries = [json.loads(line) for line in audit_file.read_text().splitlines()]
+    accepted = [e for e in entries if e["tool"] == "connect_pins" and "result" in e]
+    assert len(accepted) == 1
+    assert accepted[0]["result"]["labels"] >= 2
+
+
+@pytest.mark.unit
+async def test_connect_pins_rejects_missing_ref(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ref inexistente → COMPONENT_NOT_FOUND, sin backup."""
+    project = _copy_fixture("001_basico", tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "connect_pins", {"pin_a": "R1.2", "pin_b": "R9.1", "net_name": "N1"}
+        )
+    assert result.isError
+    assert "COMPONENT_NOT_FOUND" in _text(result)
+    assert not (project / ".kicad-mcp" / "backups").exists()
+
+
+@pytest.mark.unit
+async def test_connect_pins_rejects_same_pin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """El mismo pin dos veces → INVALID_PARAMS."""
+    project = _copy_fixture("001_basico", tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "connect_pins", {"pin_a": "R1.2", "pin_b": "R1.2", "net_name": "N1"}
+        )
+    assert result.isError
+    assert "INVALID_PARAMS" in _text(result)
+
+
+@pytest.mark.unit
+async def test_connect_pins_rejects_empty_net(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """net_name vacío → INVALID_PARAMS."""
+    project = _copy_fixture("001_basico", tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "connect_pins", {"pin_a": "R1.2", "pin_b": "R2.2", "net_name": "  "}
+        )
+    assert result.isError
+    assert "INVALID_PARAMS" in _text(result)
+
+
+@pytest.mark.unit
+async def test_connect_pins_rejects_missing_pin_number(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Número de pin inexistente en el símbolo → INVALID_PARAMS con pines disponibles."""
+    project = _copy_fixture("001_basico", tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "connect_pins", {"pin_a": "R1.9", "pin_b": "R2.2", "net_name": "N1"}
+        )
+    assert result.isError
+    text = _text(result)
+    assert "INVALID_PARAMS" in text
+    assert "Pines de R1" in text
+
+
+@pytest.mark.unit
+async def test_connect_pins_rejects_cross_sheet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """004 multi-hoja: refs en hojas distintas → INVALID_PARAMS (labels locales)."""
+    project = _copy_fixture("004_real", tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    # U11 vive en bus_pci; U20 en modul (hojas distintas).
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "connect_pins", {"pin_a": "U11.1", "pin_b": "U20.1", "net_name": "X"}
+        )
+    assert result.isError
+    text = _text(result)
+    assert "INVALID_PARAMS" in text
+    assert "hojas distintas" in text

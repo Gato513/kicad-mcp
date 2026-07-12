@@ -295,6 +295,31 @@ Superficie de mutación complementaria a `pcb`: opera sobre archivos
 | `add_symbol` | Clona un símbolo ya presente en una hoja y lo coloca con nueva ref | `sheet`, `lib_id`, `ref`, `x_mm`, `y_mm`, `base_snap?` | confirm | `INVALID_PARAMS`, `PATH_OUTSIDE_PROJECT`, `PROJECT_NOT_FOUND`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `KICAD_CLI_FAILED` |
 | `set_value` | Cambia el `Value` de un símbolo existente (localiza la hoja por ref) | `ref`, `value`, `base_snap?` | confirm | `INVALID_PARAMS`, `COMPONENT_NOT_FOUND`, `PROJECT_NOT_FOUND`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `KICAD_CLI_FAILED` |
 | `set_footprint` | Asigna el `Footprint` (`lib:name`) de un símbolo existente | `ref`, `footprint_id`, `base_snap?` | confirm | `INVALID_PARAMS`, `COMPONENT_NOT_FOUND`, `PROJECT_NOT_FOUND`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `KICAD_CLI_FAILED` |
+| `connect_pins` | Conecta dos pines (`REF.PIN`) por labels locales homónimos | `pin_a`, `pin_b`, `net_name`, `base_snap?` | confirm | `INVALID_PARAMS`, `COMPONENT_NOT_FOUND`, `PROJECT_NOT_FOUND`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `KICAD_CLI_FAILED` |
+
+`connect_pins` — decisiones vinculantes (D-12.2):
+
+1. **Semántica:** coloca un label LOCAL con nombre `net_name` en la posición
+   absoluta de cada pin (`SymbolPin.location` de kicad-skip ya resuelve
+   origen+offset+rotación). Dos labels locales homónimos netean los pines —
+   práctica estándar de KiCad, verificada por netlist en el spike sesión 12.
+2. **Scope de hoja:** los labels locales conectan sólo dentro de una hoja →
+   `pin_a` y `pin_b` deben vivir en la MISMA hoja. Refs en hojas distintas →
+   `INVALID_PARAMS` (labels globales/jerárquicos quedan fuera de scope).
+3. **`net_name` obligatorio:** el agente LLM elige nombres significativos;
+   autogenerar invita a basura. Vacío / mismo pin dos veces → `INVALID_PARAMS`.
+   Pin inexistente en el símbolo → `INVALID_PARAMS` con los números disponibles.
+4. **Caveat de prioridad:** si un pin ya carga un label global/jerárquico, el
+   netlist real conserva ese nombre (prioridad global) y `connect_pins` sólo
+   mergea los nets; sobre pines flotantes, el net resultante lleva `net_name`
+   (con prefijo de sheet-path `/`). El snapshot derivado marca `net_name` en
+   ambos pines — es una vista; el netlist es la verdad.
+5. **Snapshot / G1 / audit / verificación:** idénticos a `add_symbol`. La
+   verificación de efecto (D-06.3) re-lee la hoja y confirma un label
+   `net_name` en cada posición.
+
+Confirmación (≤ 50 tokens):
+`OK connect_pins R1.2<->R2.2 net=I2C_SDA in fixture.kicad_sch [snap:5]`.
 
 `set_value` / `set_footprint` — decisiones vinculantes (D-12.1):
 

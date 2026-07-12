@@ -79,6 +79,18 @@ Notas de `get_world_context` (parámetro `kind`, sesión 09 D-09.1):
   pedir `get_context_delta` inmediatamente con ese `snap_id` como `base_snap`.
 - `focus_ref`/`radius_mm`/`max_tokens` aplican igual en ambos kinds: la
   cascada de degradación §4 es agnóstica del kind.
+- **`focus_ref` sin `radius_mm` NO recorta (sesión 11, F-01).** El recorte por
+  área es una palanca de degradación §4: sólo entra cuando el estado no cabe en
+  `max_tokens` Y hay `focus_ref` **y** `radius_mm`. Pasar `focus_ref` solo (sin
+  `radius_mm`) no recorta nada por sí mismo. Para que el agente sepa qué recibió,
+  la cabecera lleva un indicador de área cuando se pidió foco: `area:full` si NO
+  hubo recorte, `area:rN@ref` si sí. Sin `focus_ref` no hay token de área.
+- **Cabecera pcb con geometría de board (sesión 11, F-03).** En `kind="pcb"` la
+  cabecera incluye `bbox:minX,minY;maxX,maxY` (bbox del board) y
+  `outline:none` | `outline:WxHmm` (contorno Edge.Cuts si existe; con contorno
+  el bbox es el de Edge.Cuts, sin contorno es la envolvente tight de footprints).
+  Los tokens opcionales van SIEMPRE **antes** de `snap:` (que permanece último):
+  `PCB|v1|189c|588n|bbox:53.6,56.5;365.6,163.2|outline:312.0x106.7mm|area:full|snap:5`.
 - Errores propios de `kind="pcb"`:
   - KiCad cerrado → `KICAD_NOT_RUNNING` (fast-fail del bridge, sin esperar
     el timeout de 2 s).
@@ -150,6 +162,11 @@ items: [{ref?|net?|pos?}]}` — posiciones en **mm**.
 
 ## Categoría `export`
 
+**Rutas absolutas en la respuesta (sesión 11, F-02).** TODAS las tools de
+export devuelven la ruta ABSOLUTA final en `output_path` / `output_dir` (no el
+basename relativo). El agente la lee directo sin un `ls`/`find` para ubicarla
+(dogfooding F-02). Aplica también al confirm de `save_board`.
+
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
 | `export_manufacturing` | Gerbers + drill a directorio del proyecto. Gate G3 | `output_dir?=fab/` | none | `EXPORT_BLOCKED_BY_DRC`, `KICAD_CLI_FAILED`, `PATH_OUTSIDE_PROJECT`, `PROJECT_NOT_FOUND` |
@@ -179,8 +196,12 @@ audit line JSONL por cada mutación aceptada o rechazada.
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
 | `move_footprint` | Mueve un footprint del PCB a (x_mm, y_mm) | `ref`, `x_mm`, `y_mm`, `base_snap?` | confirm | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
-| `add_track` | Track lineal entre dos puntos, en un net y layer | `net`, `start_x_mm`, `start_y_mm`, `end_x_mm`, `end_y_mm`, `width_mm?=0.25`, `layer?="F.Cu"`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
+| `add_track` | Track lineal entre dos puntos **o** entre dos pads (`REF.PAD`) | `net`, `start_x_mm?`, `start_y_mm?`, `end_x_mm?`, `end_y_mm?`, `from_pad?`, `to_pad?`, `width_mm?=0.25`, `layer?="F.Cu"`, `base_snap?` | confirm | `NET_NOT_FOUND`, `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
 | `add_via` | Via pasante en (x_mm, y_mm) asignada a un net | `x_mm`, `y_mm`, `net`, `size_mm?=0.8`, `drill_mm?=0.4`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
+| `delete_track` | Borra la track/arco de un net más cercana a un punto | `net`, `near_x_mm`, `near_y_mm`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
+| `delete_via` | Borra la via de un net más cercana a (x_mm, y_mm) | `net`, `x_mm`, `y_mm`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
+| `save_board` | Persiste el board vivo del PCB Editor a disco | `base_snap?` | confirm | `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `KICAD_CLI_FAILED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
+| `get_component_detail` | Detalle de un footprint: posición, rotación, bbox/courtyard y pads absolutos | `ref`, `kind?="pcb"` | detail | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 
 Respuestas de éxito son confirmaciones cortas (≤ 50 tokens, ADR-0004),
 p. ej. `OK move_footprint R5 -> (102.5, 44.0) [snap:12]`.
@@ -218,6 +239,51 @@ idéntico al pre y se DERIVA del snapshot leído (cero pasadas post, sin
 verificación puntual por KIID). G1 + audit + confirm ≤50 tokens con
 `snap_id`; sin retry en la escritura (D-07.1). Confirm:
 `OK add_via GND @(150.0,80.0) d0.80/0.40 [snap:N]`.
+
+**`save_board` (sesión 11, D-11.1).** Persiste el board vivo (mutado por IPC)
+al `.kicad_pcb` de disco vía `Board.save()` (comando IPC `SaveDocument`).
+Cierra el split-brain live/disco (dogfooding F-05): tras el save,
+`export_render` / `run_drc` / `export_manufacturing` —que leen **disco** vía
+kicad-cli— reflejan exactamente lo que el agente mutó. A diferencia de las
+mutaciones IPC (que registran snapshots **vivos**, `mtimes=None`, ADR-0007),
+`save_board` registra un snapshot de **disco** con `mtimes` frescos: disco y
+vivo convergen y la cadena de snapshots lo refleja. G1 aplica. Sin retry en la
+escritura (busy → se propaga). Confirm con ruta ABSOLUTA:
+`OK save_board video.kicad_pcb -> /ruta/abs/video.kicad_pcb [snap:N]`.
+
+**`delete_track` / `delete_via` (sesión 11, D-11.2, ADR-0010).** Borrado
+dirigido de cobre **sin Gate G2** (el cobre es re-agregable en un call y está
+protegido por G1+git; ver ADR-0010 para la asimetría con footprints). El
+target se identifica por **coincidencia geométrica + net**: `delete_track`
+borra la track/arco de ese net cuyo segmento pasa más cerca de
+`(near_x_mm, near_y_mm)`; `delete_via` la via de ese net más cercana a
+`(x_mm, y_mm)`. Tolerancia 0.5 mm. Ante **ambigüedad** (2+ candidatos dentro
+de tolerancia) → `INVALID_PARAMS` con los candidatos en `data.candidates`
+(posiciones/endpoints) para refinar — **nunca** se borra "el más cercano" a
+ciegas. Nada dentro de tolerancia → `INVALID_PARAMS`. El borrado usa
+`remove_items` sobre el KIID resuelto. Post-estado derivado del pre (el cobre
+no vive en `NormalizedState`, patrón `add_track`); confirm ≤50 tok con snap.
+Confirm: `OK delete_track GND @(150.0,80.0) [snap:N]`.
+
+**`add_track` anclado a pads (sesión 11, D-11.4).** Parámetros alternativos
+`from_pad` / `to_pad` con formato `"REF.PAD"` (p. ej. `"U1.8"`), **mutuamente
+excluyentes** con las coordenadas crudas (`INVALID_PARAMS` si se mezclan, o si
+falta uno de los dos pads). La resolución pad→coordenada absoluta usa la misma
+lógica de `get_component_detail` (los pads ya vienen absolutos/rotados de
+kipy). `REF` inexistente → `COMPONENT_NOT_FOUND`; `PAD` inexistente en ese
+footprint → `INVALID_PARAMS` con los pads disponibles en el hint.
+
+**`get_component_detail` (sesión 11, D-11.3).** Detalle geométrico de un
+footprint **bajo demanda** (sale de reservados; ver más abajo). Devuelve, en
+TOON compacto: posición y rotación del footprint, bbox (courtyard si el
+footprint lo define, si no la envolvente de pads; `src:courtyard|pads`), y la
+lista de pads con número, net, **posición ABSOLUTA** (ya rotada por kipy —
+elimina la cuenta a mano del dogfooding F-04), tamaño y capa. Fuente: el board
+vivo. `kind="pcb"` es lo soportado; `kind="sch"` → `INVALID_PARAMS` con hint
+honesto (futuro). Presupuesto: un IC de ~30 pads ≈ ≤~350 tok; un conector de
+75 pads (U19) ≈ ~900 tok; una R de 2 pads ≈ ~50 tok. Formato:
+`DETAIL|U19|pcb|at:234.3,64.1|rot:0|bbox:115.9x8.1|box:...|src:courtyard`
+seguido de `[PADS] N` y una línea `num net x,y WxH capa` por pad.
 
 ## Categoría `sch` (v0.2 — mutaciones de esquemático, sesión 08)
 
@@ -297,11 +363,11 @@ v0.3: `get_session_summary`, `checkpoint` (el ya implementado
 v0.4: `suggest_positions`, `route_with_freerouting`.
 
 **Consultas de detalle (D-09.4 / D-R7 — reservadas, no implementadas):**
-`get_component_detail`, `get_net_detail`, `list_unconnected`. Estaban en las
-tablas principales de `world` sin código en `src/` (deuda de contrato: el
-catálogo lo consume otro LLM en runtime, F1/F3, y un agente que lo lea
-intentaría llamarlas). Se implementan **sólo** si el dogfooding demuestra que
-el agente las necesita (el `NormalizedState` ya tiene los datos, son baratas).
+`get_net_detail`, `list_unconnected`. Se implementan **sólo** si el dogfooding
+demuestra que el agente las necesita. `get_component_detail` SALIÓ de reservados
+en la sesión 11 (D-11.3, D-R9): el dogfooding demostró la necesidad (F-04/F-06/
+F-07 exigían parsear el `.kicad_pcb` crudo para obtener pads absolutos); ahora
+vive en la categoría `pcb`.
 
 Reservarlos ahora evita que el agente invente nombres divergentes en prompts,
 docs o tests intermedios.

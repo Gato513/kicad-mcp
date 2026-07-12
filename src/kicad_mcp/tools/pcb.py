@@ -16,18 +16,31 @@ pueden pasar un fake vía ``register(mcp, ipc_bridge=fake)``.
 from __future__ import annotations
 
 import difflib
+import math
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..audit.logger import record as audit_record
-from ..bridge.ipc import BoardHandle, FootprintData, IpcBridge, Mm
+from ..bridge.ipc import (
+    BoardHandle,
+    ComponentDetail,
+    CopperItem,
+    FootprintData,
+    IpcBridge,
+    Mm,
+)
 from ..bridge.state_builder import build_state_from_board, build_state_from_snapshot
 from ..errors import ErrorCode, KicadMcpError
 from ..gates.g1 import ensure_session_backup
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
-from ..snapshots import get_default_store, validate_base_snap
-from ..tools.world import _resolve_root_schematic
+from ..snapshots import collect_project_mtimes, get_default_store, validate_base_snap
+from ..tools.world import _resolve_root_pcb, _resolve_root_schematic
+
+# Tolerancia por defecto del matching geométrico del borrado dirigido (D-11.2):
+# la track/via cuyo segmento pasa a ≤ este radio del punto es candidata. 0.5 mm
+# = ~20 mil, holgado frente al grid de 1.27 mm pero fino para no barrer vecinas.
+_DELETE_TOLERANCE_MM: float = 0.5
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -187,6 +200,96 @@ def _check_base_snap(base_snap: int) -> None:
     validate_base_snap(get_default_store(), base_snap, schematic)
 
 
+def _dist_point_segment(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> float:
+    """Distancia euclídea del punto ``(px,py)`` al segmento ``(ax,ay)-(bx,by)``."""
+    dx = bx - ax
+    dy = by - ay
+    seg_len_sq = dx * dx + dy * dy
+    if seg_len_sq == 0.0:
+        return math.hypot(px - ax, py - ay)
+    t = ((px - ax) * dx + (py - ay) * dy) / seg_len_sq
+    t = max(0.0, min(1.0, t))
+    proj_x = ax + t * dx
+    proj_y = ay + t * dy
+    return math.hypot(px - proj_x, py - proj_y)
+
+
+def _copper_distance_mm(item: CopperItem, x: float, y: float) -> float:
+    """Distancia del punto ``(x,y)`` a un ``CopperItem`` (mm).
+
+    - via: distancia al centro.
+    - track: distancia al segmento start→end.
+    - arc: distancia a la polilínea start→mid→end (aproximación del arco).
+    """
+    if item.kind == "via" or item.end_x_mm is None or item.end_y_mm is None:
+        return math.hypot(x - float(item.start_x_mm), y - float(item.start_y_mm))
+    sx, sy = float(item.start_x_mm), float(item.start_y_mm)
+    ex, ey = float(item.end_x_mm), float(item.end_y_mm)
+    if item.kind == "arc" and item.mid_x_mm is not None and item.mid_y_mm is not None:
+        mx, my = float(item.mid_x_mm), float(item.mid_y_mm)
+        return min(
+            _dist_point_segment(x, y, sx, sy, mx, my),
+            _dist_point_segment(x, y, mx, my, ex, ey),
+        )
+    return _dist_point_segment(x, y, sx, sy, ex, ey)
+
+
+def _match_copper(
+    items: tuple[CopperItem, ...],
+    x: float,
+    y: float,
+    *,
+    kinds: tuple[str, ...],
+    tolerance_mm: float,
+) -> tuple[CopperItem | None, list[CopperItem]]:
+    """Devuelve ``(target, candidatos)`` dentro de la tolerancia (D-11.2).
+
+    ``target`` es el ítem único dentro de tolerancia; si hay 2+ dentro de
+    tolerancia, ``target`` es ``None`` y ``candidatos`` los lista (para el
+    ``INVALID_PARAMS`` que pide refinar). Si ninguno cae dentro, ambos vacíos.
+    NUNCA elige "el más cercano" en ambigüedad — es una decisión explícita del
+    diseño (borrar el ítem equivocado es irreversible desde la sesión).
+    """
+    within = [
+        it for it in items if it.kind in kinds and _copper_distance_mm(it, x, y) <= tolerance_mm
+    ]
+    if len(within) == 1:
+        return within[0], within
+    return None, within
+
+
+def _parse_pad_ref(spec: str) -> tuple[str, str]:
+    """``"U1.8"`` → ``("U1", "8")``. Levanta ``INVALID_PARAMS`` si no matchea."""
+    ref, sep, pad = spec.partition(".")
+    if not sep or not ref or not pad:
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_PARAMS,
+            message=f"Formato de pad inválido: {spec!r}.",
+            hint='Usá "REF.PAD", p. ej. "U1.8".',
+        )
+    return ref, pad
+
+
+def _resolve_pad_coord(bridge: IpcBridge, board: BoardHandle, spec: str) -> tuple[float, float]:
+    """Resuelve ``"REF.PAD"`` a la coordenada ABSOLUTA del pad (D-11.4).
+
+    Reusa ``get_component_detail`` (D-11.3): los pads ya vienen con posición
+    absoluta rotada. ``COMPONENT_NOT_FOUND`` si el ref no está; ``INVALID_PARAMS``
+    si el pad no está en ese footprint (con los números disponibles en el hint).
+    """
+    ref, pad_number = _parse_pad_ref(spec)
+    detail = bridge.get_component_detail(board, ref)  # COMPONENT_NOT_FOUND si falta
+    for pad in detail.pads:
+        if pad.number == pad_number:
+            return float(pad.x_mm), float(pad.y_mm)
+    available = ", ".join(sorted({p.number for p in detail.pads if p.number})[:12])
+    raise KicadMcpError(
+        code=ErrorCode.INVALID_PARAMS,
+        message=f"El pad {pad_number!r} no existe en {ref}.",
+        hint=f"Pads de {ref}: {available or 'sin pads numerados'}.",
+    )
+
+
 def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
     """Registra las tools de mutación en la instancia FastMCP."""
 
@@ -302,14 +405,16 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
 
     @mcp.tool(
         name="add_track",
-        description="Agrega un track lineal entre dos puntos del PCB",
+        description="Agrega un track lineal entre dos puntos, o entre dos pads (REF.PAD)",
     )
     def add_track(
         net: str,
-        start_x_mm: float,
-        start_y_mm: float,
-        end_x_mm: float,
-        end_y_mm: float,
+        start_x_mm: float | None = None,
+        start_y_mm: float | None = None,
+        end_x_mm: float | None = None,
+        end_y_mm: float | None = None,
+        from_pad: str | None = None,
+        to_pad: str | None = None,
         width_mm: float = 0.25,
         layer: str = "F.Cu",
         base_snap: int | None = None,
@@ -319,6 +424,36 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             if base_snap is not None:
                 _check_base_snap(base_snap)
             board = _resolve_board(bridge)
+
+            # D-11.4: dos formas mutuamente excluyentes de dar los endpoints —
+            # coordenadas crudas O anclaje a pads ("REF.PAD"). Mezclar es un
+            # error de uso; resolvemos el modo ANTES de validar coords/net.
+            uses_pads = from_pad is not None or to_pad is not None
+            uses_coords = any(c is not None for c in (start_x_mm, start_y_mm, end_x_mm, end_y_mm))
+            if uses_pads and uses_coords:
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message="No se pueden mezclar coordenadas crudas y anclaje a pads.",
+                    hint="Usá (start_x_mm..end_y_mm) O (from_pad, to_pad), no ambos.",
+                )
+            if uses_pads:
+                if from_pad is None or to_pad is None:
+                    raise KicadMcpError(
+                        code=ErrorCode.INVALID_PARAMS,
+                        message="El anclaje a pads requiere from_pad Y to_pad.",
+                        hint='Ambos con formato "REF.PAD", p. ej. from_pad="U1.8".',
+                    )
+                start_x_mm, start_y_mm = _resolve_pad_coord(bridge, board, from_pad)
+                end_x_mm, end_y_mm = _resolve_pad_coord(bridge, board, to_pad)
+            elif None in (start_x_mm, start_y_mm, end_x_mm, end_y_mm):
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message="Faltan endpoints del track.",
+                    hint="Pasá start_x_mm/start_y_mm/end_x_mm/end_y_mm o from_pad/to_pad.",
+                )
+            # A partir de acá los cuatro son floats resueltos (mypy: narrow).
+            assert start_x_mm is not None and start_y_mm is not None
+            assert end_x_mm is not None and end_y_mm is not None
 
             # D-08.1: bbox + snapshot pre en una sola pasada. list_net_names
             # sigue aparte (es una pasada sobre get_nets, no get_footprints).
@@ -526,6 +661,268 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             extra=add_via_extra,
         )
         return confirmation
+
+    @mcp.tool(
+        name="save_board",
+        description="Persiste el board vivo del PCB Editor a disco",
+    )
+    def save_board(base_snap: int | None = None) -> str:
+        # D-11.1: baja el estado vivo (mutado por IPC) al .kicad_pcb de disco.
+        # Tras el save, disco y vivo convergen: registramos un snapshot NUEVO
+        # de DISCO con mtimes frescos (patrón sch de D-08.5, NO mtimes=None) y
+        # ecoamos su snap_id. G1 aplica (backup 1ª vez por sesión). Sin retry
+        # en la escritura (D-07.1). busy → se propaga tal cual.
+        with tool_call_timer() as timer:
+            root = _project_root()
+            if base_snap is not None:
+                _check_base_snap(base_snap)
+            board = _resolve_board(bridge)
+            backup_info = ensure_session_backup(root)  # Gate G1
+            bridge.save_board(board)
+            # Snapshot de disco: el estado vivo ya ES el de disco tras el save.
+            new_state = build_state_from_board(bridge, board)
+            pcb_path = _resolve_root_pcb()
+            mtimes = collect_project_mtimes(_resolve_root_schematic_or_pcb())
+            snap_id = get_default_store().register(new_state, mtimes)
+            audit_record(
+                root,
+                tool="save_board",
+                params={"base_snap": base_snap},
+                result={
+                    "snap": snap_id,
+                    "backup": backup_info.get("backup"),
+                    "path": str(pcb_path),
+                },
+            )
+            confirmation = f"OK save_board {pcb_path.name} -> {pcb_path} [snap:{snap_id}]"
+        log_tool_call(
+            tool_name="save_board",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(confirmation),
+            snap_id=snap_id,
+            extra={"base_snap": base_snap, "path": str(pcb_path)},
+        )
+        return confirmation
+
+    def _delete_copper(
+        *,
+        tool_name: str,
+        net: str,
+        x_mm: float,
+        y_mm: float,
+        kinds: tuple[str, ...],
+        base_snap: int | None,
+        timer: dict[str, float],
+    ) -> str:
+        """Núcleo compartido de delete_track / delete_via (D-11.2).
+
+        Lee el cobre del net (get_items_by_net), hace el matching geométrico
+        puro, decide target/ambigüedad/nada, borra por KIID y registra un
+        snapshot derivado del pre-estado (el borrado no altera el
+        NormalizedState de footprints, patrón add_track/add_via).
+        """
+        root = _project_root()
+        err_params = {"net": net, "pos": [x_mm, y_mm]}
+        if base_snap is not None:
+            _check_base_snap(base_snap)
+        board = _resolve_board(bridge)
+        # Validación de net + lectura del cobre en una llamada (NET_NOT_FOUND
+        # con similares lo levanta el bridge; lo re-enriquecemos acá para el
+        # hint de similares que el bridge no computa).
+        nets = bridge.list_net_names(board)
+        if net not in nets:
+            similars = _similars(net, nets)
+            hint = "nets similares: " + ", ".join(similars) if similars else "sin sugerencias"
+            _audit_error(root, tool_name, err_params, ErrorCode.NET_NOT_FOUND)
+            raise KicadMcpError(
+                code=ErrorCode.NET_NOT_FOUND,
+                message=f"Net {net} no existe en el board.",
+                hint=hint,
+            )
+        items = bridge.list_net_copper(board, net)
+        target, candidates = _match_copper(
+            items, x_mm, y_mm, kinds=kinds, tolerance_mm=_DELETE_TOLERANCE_MM
+        )
+        if target is None and not candidates:
+            _audit_error(root, tool_name, err_params, ErrorCode.INVALID_PARAMS)
+            raise KicadMcpError(
+                code=ErrorCode.INVALID_PARAMS,
+                message=(
+                    f"Ningún {kinds[0]} del net {net} pasa a ≤{_DELETE_TOLERANCE_MM} mm "
+                    f"de ({x_mm}, {y_mm})."
+                ),
+                hint="Ajustá el punto (usá get_component_detail o get_world_context) o el net.",
+            )
+        if target is None:
+            # Ambigüedad: 2+ candidatos. NUNCA borramos "el más cercano".
+            cand_data = [_copper_candidate_dict(it) for it in candidates]
+            _audit_error(root, tool_name, err_params, ErrorCode.INVALID_PARAMS)
+            raise KicadMcpError(
+                code=ErrorCode.INVALID_PARAMS,
+                message=(
+                    f"{len(candidates)} candidatos del net {net} dentro de "
+                    f"{_DELETE_TOLERANCE_MM} mm de ({x_mm}, {y_mm}); refiná el punto."
+                ),
+                hint="Elegí un punto más cercano al segmento/via objetivo (ver data.candidates).",
+                data={"candidates": cand_data},
+            )
+        # Snapshot pre para derivar el post (el cobre no vive en NormalizedState).
+        ctx = bridge.read_board_context(board)
+        backup_info = ensure_session_backup(root)  # Gate G1
+        removed = bridge.remove_by_kiid(board, target.kiid)
+        if not removed:
+            _audit_error(root, tool_name, err_params, ErrorCode.INVALID_PARAMS)
+            raise KicadMcpError(
+                code=ErrorCode.INVALID_PARAMS,
+                message="El ítem objetivo ya no está en el board (borrado concurrente).",
+                hint="Re-sincronizá con get_world_context(kind='pcb') y reintentá.",
+            )
+        new_state = build_state_from_snapshot(ctx.footprints)
+        snap_id = get_default_store().register(new_state, mtimes=None)
+        audit_record(
+            root,
+            tool=tool_name,
+            params={"net": net, "pos": [x_mm, y_mm], "base_snap": base_snap},
+            result={"snap": snap_id, "backup": backup_info.get("backup"), "kiid": target.kiid},
+        )
+        confirmation = f"OK {tool_name} {net} @({x_mm:.1f},{y_mm:.1f}) [snap:{snap_id}]"
+        log_tool_call(
+            tool_name=tool_name,
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(confirmation),
+            snap_id=snap_id,
+            extra={"net": net, "base_snap": base_snap},
+        )
+        return confirmation
+
+    @mcp.tool(
+        name="delete_track",
+        description="Borra la track de un net más cercana a (near_x_mm, near_y_mm)",
+    )
+    def delete_track(
+        net: str,
+        near_x_mm: float,
+        near_y_mm: float,
+        base_snap: int | None = None,
+    ) -> str:
+        with tool_call_timer() as timer:
+            return _delete_copper(
+                tool_name="delete_track",
+                net=net,
+                x_mm=near_x_mm,
+                y_mm=near_y_mm,
+                kinds=("track", "arc"),
+                base_snap=base_snap,
+                timer=timer,
+            )
+
+    @mcp.tool(
+        name="delete_via",
+        description="Borra la via de un net más cercana a (x_mm, y_mm)",
+    )
+    def delete_via(
+        net: str,
+        x_mm: float,
+        y_mm: float,
+        base_snap: int | None = None,
+    ) -> str:
+        with tool_call_timer() as timer:
+            return _delete_copper(
+                tool_name="delete_via",
+                net=net,
+                x_mm=x_mm,
+                y_mm=y_mm,
+                kinds=("via",),
+                base_snap=base_snap,
+                timer=timer,
+            )
+
+    @mcp.tool(
+        name="get_component_detail",
+        description="Detalle de un footprint: posición, rotación, bbox/courtyard y pads absolutos",
+    )
+    def get_component_detail(ref: str, kind: str = "pcb") -> str:
+        # D-11.3: detalle geométrico bajo demanda. Fuente: board vivo (los
+        # pads ya viajan absolutos/rotados en kipy). kind="sch" queda para
+        # el futuro (INVALID_PARAMS honesto). Salida TOON compacta.
+        with tool_call_timer() as timer:
+            if kind != "pcb":
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message=f"kind={kind!r} no soportado todavía.",
+                    hint="Sólo kind='pcb' por ahora; el detalle de esquemático es futuro.",
+                )
+            board = _resolve_board(bridge)
+            detail = bridge.get_component_detail(board, ref)
+            out = _encode_component_detail(detail)
+        log_tool_call(
+            tool_name="get_component_detail",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(out),
+            extra={"ref": ref, "kind": kind, "n_pads": len(detail.pads)},
+        )
+        return out
+
+
+def _resolve_root_schematic_or_pcb() -> Path:
+    """``.kicad_sch`` raíz si existe; si no, el ``.kicad_pcb`` (proyecto pcb-only).
+
+    ``collect_project_mtimes`` toma el ``.kicad_sch`` y su ``.kicad_pcb``
+    homónimo; para un proyecto pcb-only ancla en el pcb (fixture 005).
+    """
+    try:
+        return _resolve_root_schematic()
+    except KicadMcpError:
+        return _resolve_root_pcb()
+
+
+def _copper_candidate_dict(item: CopperItem) -> dict[str, Any]:
+    """Representación compacta de un candidato ambiguo para ``data.candidates``."""
+    d: dict[str, Any] = {"kind": item.kind, "net": item.net_name}
+    if item.kind == "via":
+        d["pos"] = [round(float(item.start_x_mm), 3), round(float(item.start_y_mm), 3)]
+    else:
+        d["start"] = [round(float(item.start_x_mm), 3), round(float(item.start_y_mm), 3)]
+        if item.end_x_mm is not None and item.end_y_mm is not None:
+            d["end"] = [round(float(item.end_x_mm), 3), round(float(item.end_y_mm), 3)]
+        d["layer"] = item.layer
+    return d
+
+
+def _encode_component_detail(detail: ComponentDetail) -> str:
+    """Serializa ``ComponentDetail`` a TOON compacto (D-11.3, ≤~300 tok / 30 pads).
+
+    Formato (una línea de cabecera + una por pad):
+
+        DETAIL|U19|pcb|at:234.3,64.1|rot:0|bbox:115.9x8.1|box:176.4,59.4;292.3,67.5|src:courtyard
+        [PADS] 75
+        1 GND 281.9,65.4 1.14x1.14 *.Cu
+        ...
+
+    La capa se abrevia a la del pad tal cual (``F.Cu``/``B.Cu``/``*.Cu``).
+    Posiciones en mm con 1 decimal (grid de KiCad ≥ 0.05 mm; 1 decimal basta
+    para ubicar y es barato en tokens).
+    """
+    w = float(detail.bbox_max_x) - float(detail.bbox_min_x)
+    h = float(detail.bbox_max_y) - float(detail.bbox_min_y)
+    rot_f = float(detail.rotation_deg)
+    rot: int | float = int(rot_f) if rot_f.is_integer() else rot_f
+    header = (
+        f"DETAIL|{detail.ref}|pcb|at:{float(detail.x_mm):.1f},{float(detail.y_mm):.1f}"
+        f"|rot:{rot}|bbox:{w:.1f}x{h:.1f}"
+        f"|box:{float(detail.bbox_min_x):.1f},{float(detail.bbox_min_y):.1f};"
+        f"{float(detail.bbox_max_x):.1f},{float(detail.bbox_max_y):.1f}"
+        f"|src:{detail.bbox_source}"
+    )
+    lines = [header, f"[PADS] {len(detail.pads)}"]
+    for p in detail.pads:
+        num = p.number or "-"
+        net = p.net_name or "-"
+        lines.append(
+            f"{num} {net} {float(p.x_mm):.1f},{float(p.y_mm):.1f} "
+            f"{float(p.w_mm):.2f}x{float(p.h_mm):.2f} {p.layer}"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _track_params(

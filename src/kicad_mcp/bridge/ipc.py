@@ -131,6 +131,76 @@ class FootprintData:
 
 
 @dataclass(frozen=True)
+class PadDetail:
+    """Pad de un footprint con geometría ABSOLUTA (sesión 11, D-11.3).
+
+    kipy almacena los hijos del footprint con posiciones absolutas ya
+    rotadas (``FootprintInstance.position`` setter: "KiCad footprint children
+    are stored with absolute positions"). Es decir, ``x_mm``/``y_mm`` son la
+    posición del pad en coordenadas de board — la cuenta "origen + offset
+    rotado" que el agente del dogfooding hizo a mano ya viene resuelta por
+    kipy. No rotamos nada acá; sólo leemos.
+    """
+
+    number: str
+    net_name: str | None
+    x_mm: Mm
+    y_mm: Mm
+    w_mm: Mm
+    h_mm: Mm
+    layer: str  # "F.Cu" | "B.Cu" | "*.Cu" (through-hole)
+
+
+@dataclass(frozen=True)
+class ComponentDetail:
+    """Detalle geométrico de un footprint del board vivo (D-11.3).
+
+    ``bbox_*`` es el courtyard cuando el footprint lo define (layers
+    ``F.CrtYd``/``B.CrtYd``); si no hay courtyard, cae a la envolvente de los
+    pads. ``bbox_source`` distingue ambos casos para que el agente sepa qué
+    recibió.
+    """
+
+    ref: str
+    value: str
+    x_mm: Mm
+    y_mm: Mm
+    rotation_deg: float
+    bbox_min_x: Mm
+    bbox_min_y: Mm
+    bbox_max_x: Mm
+    bbox_max_y: Mm
+    bbox_source: str  # "courtyard" | "pads"
+    pads: tuple[PadDetail, ...]
+
+
+@dataclass(frozen=True)
+class CopperItem:
+    """Ítem de cobre (track / arc / via) de un net, con KIID (D-11.2).
+
+    Superficie primitiva para el matching geométrico del borrado dirigido:
+    el tool calcula la distancia punto→segmento (track/arc) o punto→centro
+    (via) en unidades mm y decide el target o la ambigüedad. El bridge sólo
+    lee y expone KIIDs — jamás tipos de kipy (regla 5).
+
+    Para ``kind="via"`` los campos ``end_*`` y ``mid_*`` son ``None``.
+    Para ``kind="arc"`` ``mid_*`` trae el punto medio (polilínea
+    start→mid→end); para ``kind="track"`` es ``None``.
+    """
+
+    kind: str  # "track" | "arc" | "via"
+    kiid: str
+    net_name: str
+    layer: str | None
+    start_x_mm: Mm
+    start_y_mm: Mm
+    end_x_mm: Mm | None
+    end_y_mm: Mm | None
+    mid_x_mm: Mm | None
+    mid_y_mm: Mm | None
+
+
+@dataclass(frozen=True)
 class BoardContext:
     """Estado del board consolidado en UNA sola pasada ``get_footprints()``.
 
@@ -188,6 +258,109 @@ def _footprint_to_data(fp: Any, *, capture_kiid: bool) -> FootprintData:
         y_mm=y,
         pads=tuple(pads),
         kiid=kiid,
+    )
+
+
+def _layer_int_to_str(layer_value: int) -> str:
+    """``BoardLayer`` enum int → nombre canónico de KiCad (``F.Cu``, ``B.Cu``…).
+
+    Inverso exacto del mapeo que usa ``add_track`` (``BL_{layer/'.'->'_'}``):
+    kipy nombra el enum ``BL_F_Cu``; quitamos el prefijo ``BL_`` y volvemos
+    los ``_`` a ``.``. Importa perezoso para no forzar kipy a nivel módulo.
+    """
+    from kipy.proto.board.board_types_pb2 import BoardLayer
+
+    name = str(BoardLayer.Name(layer_value))  # p. ej. "BL_F_Cu"
+    return name.removeprefix("BL_").replace("_", ".")
+
+
+def _pad_layer_str(pad: Any) -> str:
+    """Capa de un pad: ``*.Cu`` para pasantes; la capa de cobre para SMD."""
+    from kipy.proto.board.board_types_pb2 import PadType
+
+    if pad.pad_type in (PadType.PT_PTH, PadType.PT_NPTH):
+        return "*.Cu"
+    copper = pad.padstack.copper_layers
+    if copper:
+        return _layer_int_to_str(copper[0].layer)
+    return "*.Cu"
+
+
+def _pad_to_detail(pad: Any) -> PadDetail:
+    """Convierte un ``kipy.Pad`` (leído del board) en ``PadDetail`` absoluto."""
+    pos = pad.position
+    copper = pad.padstack.copper_layers
+    if copper:
+        size = copper[0].size
+        w = nm_to_mm(Nm(int(size.x)))
+        h = nm_to_mm(Nm(int(size.y)))
+    else:
+        w = Mm(0.0)
+        h = Mm(0.0)
+    net = pad.net
+    net_name = str(net.name) if net is not None and net.name else None
+    return PadDetail(
+        number=str(pad.number),
+        net_name=net_name,
+        x_mm=nm_to_mm(Nm(int(pos.x))),
+        y_mm=nm_to_mm(Nm(int(pos.y))),
+        w_mm=w,
+        h_mm=h,
+        layer=_pad_layer_str(pad),
+    )
+
+
+def _footprint_bbox_mm(fp: Any) -> tuple[BBoxMm, str]:
+    """Bbox absoluto del footprint: courtyard si existe, si no envolvente de pads.
+
+    Devuelve ``(bbox, source)`` con ``source`` ∈ {"courtyard", "pads"}. El
+    courtyard sale de los shapes en ``F.CrtYd``/``B.CrtYd`` (concretizados por
+    ``definition.shapes``); su ``bounding_box()`` ya está en coordenadas
+    absolutas. Sin courtyard, se usa la unión de extents de pad (lado mayor
+    como radio para ser conservador ante rotación).
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+    for shape in fp.definition.shapes:
+        if _layer_int_to_str(getattr(shape, "layer", 0)) in ("F.CrtYd", "B.CrtYd"):
+            bb = shape.bounding_box()
+            xs.extend([float(bb.pos.x), float(bb.pos.x + bb.size.x)])
+            ys.extend([float(bb.pos.y), float(bb.pos.y + bb.size.y)])
+    if xs and ys:
+        return (
+            BBoxMm(
+                nm_to_mm(Nm(int(min(xs)))),
+                nm_to_mm(Nm(int(min(ys)))),
+                nm_to_mm(Nm(int(max(xs)))),
+                nm_to_mm(Nm(int(max(ys)))),
+            ),
+            "courtyard",
+        )
+    for pad in fp.definition.pads:
+        copper = pad.padstack.copper_layers
+        half = max(float(copper[0].size.x), float(copper[0].size.y)) / 2 if copper else 0.0
+        pos = pad.position
+        xs.extend([float(pos.x) - half, float(pos.x) + half])
+        ys.extend([float(pos.y) - half, float(pos.y) + half])
+    if not xs:
+        pos = fp.position
+        return (
+            BBoxMm(
+                nm_to_mm(Nm(int(pos.x))),
+                nm_to_mm(Nm(int(pos.y))),
+                nm_to_mm(Nm(int(pos.x))),
+                nm_to_mm(Nm(int(pos.y))),
+            ),
+            "pads",
+        )
+    return (
+        BBoxMm(
+            nm_to_mm(Nm(int(min(xs)))),
+            nm_to_mm(Nm(int(min(ys)))),
+            nm_to_mm(Nm(int(max(xs)))),
+            nm_to_mm(Nm(int(max(ys)))),
+        ),
+        "pads",
     )
 
 
@@ -392,6 +565,14 @@ _IDEMPOTENT_OPS: frozenset[str] = frozenset(
         # KiCad (get_items_by_id), no itera el board del lado del bridge.
         # Es una lectura pura del estado post-mutación — retry-elegible.
         "verify_footprint_by_kiid",
+        # Sesión 11 (D-11.2/D-11.3/D-11.4): lecturas puras del board vivo.
+        # ``get_component_detail`` alimenta el detalle y la resolución
+        # REF.PAD; ``list_net_copper`` alimenta el matching geométrico del
+        # borrado dirigido (get_items_by_net, filtrado del lado de KiCad).
+        "get_component_detail",
+        "list_net_copper",
+        # F-03: bbox del board + contorno Edge.Cuts para la cabecera TOON pcb.
+        "board_outline",
     }
 )
 
@@ -802,7 +983,214 @@ class IpcBridge:
 
             return self._run_supervised_read("get_footprint_position", _do)
 
+    def get_component_detail(self, board: BoardHandle, ref: str) -> ComponentDetail:
+        """Detalle geométrico del footprint ``ref`` del board vivo (D-11.3).
+
+        Una pasada ``get_footprints()`` para localizar el ref; de él se leen
+        origen, rotación, bbox (courtyard o pads) y la lista de pads con
+        posición ABSOLUTA (ya rotada por kipy), tamaño, capa y net. Levanta
+        ``COMPONENT_NOT_FOUND`` si el ref no está en el board.
+        """
+        with self._lock:
+            self._detect_restart()
+
+            def _do() -> ComponentDetail:
+                target: Any = None
+                for fp in board.raw.get_footprints():
+                    if str(fp.reference_field.text.value) == ref:
+                        target = fp
+                        break
+                if target is None:
+                    raise KicadMcpError(
+                        code=ErrorCode.COMPONENT_NOT_FOUND,
+                        message=f"Footprint {ref} no está en el board.",
+                        hint="Verificá el ref con get_world_context(kind='pcb').",
+                    )
+                pos = target.position
+                bbox, source = _footprint_bbox_mm(target)
+                pads = tuple(_pad_to_detail(pad) for pad in target.definition.pads)
+                return ComponentDetail(
+                    ref=ref,
+                    value=str(target.value_field.text.value),
+                    x_mm=nm_to_mm(Nm(int(pos.x))),
+                    y_mm=nm_to_mm(Nm(int(pos.y))),
+                    rotation_deg=float(target.orientation.degrees),
+                    bbox_min_x=bbox.min_x,
+                    bbox_min_y=bbox.min_y,
+                    bbox_max_x=bbox.max_x,
+                    bbox_max_y=bbox.max_y,
+                    bbox_source=source,
+                    pads=pads,
+                )
+
+            return self._run_supervised_read("get_component_detail", _do)
+
+    def list_net_copper(self, board: BoardHandle, net: str) -> tuple[CopperItem, ...]:
+        """Tracks/arcs/vias del ``net`` con KIID y geometría (D-11.2).
+
+        Usa ``get_items_by_net`` (KiCad 10.0.1+, filtrado del lado de KiCad):
+        ~10x más barato que iterar los miles de tracks del board. Devuelve
+        primitivos ``CopperItem``; el matching geométrico y la decisión de
+        ambigüedad viven en el tool (lógica pura, testeable con fakes).
+
+        Levanta ``NET_NOT_FOUND`` si el net no existe.
+        """
+        from kipy.proto.common.types import KiCadObjectType as OT
+
+        with self._lock:
+            self._detect_restart()
+
+            def _do() -> tuple[CopperItem, ...]:
+                raw_board = board.raw
+                net_obj = next((n for n in raw_board.get_nets() if str(n.name) == net), None)
+                if net_obj is None:
+                    raise KicadMcpError(
+                        code=ErrorCode.NET_NOT_FOUND,
+                        message=f"Net {net} no existe en el board.",
+                        hint="Verificá el net con get_world_context(kind='pcb').",
+                    )
+                items = raw_board.get_items_by_net(
+                    net_obj, [OT.KOT_PCB_TRACE, OT.KOT_PCB_ARC, OT.KOT_PCB_VIA]
+                )
+                out: list[CopperItem] = []
+                for it in items:
+                    tname = type(it).__name__
+                    if tname == "Via":
+                        p = it.position
+                        out.append(
+                            CopperItem(
+                                kind="via",
+                                kiid=str(it.id.value),
+                                net_name=net,
+                                layer=None,
+                                start_x_mm=nm_to_mm(Nm(int(p.x))),
+                                start_y_mm=nm_to_mm(Nm(int(p.y))),
+                                end_x_mm=None,
+                                end_y_mm=None,
+                                mid_x_mm=None,
+                                mid_y_mm=None,
+                            )
+                        )
+                    elif tname in ("Track", "ArcTrack"):
+                        s = it.start
+                        e = it.end
+                        is_arc = tname == "ArcTrack"
+                        mid = it.mid if is_arc else None
+                        out.append(
+                            CopperItem(
+                                kind="arc" if is_arc else "track",
+                                kiid=str(it.id.value),
+                                net_name=net,
+                                layer=_layer_int_to_str(it.layer),
+                                start_x_mm=nm_to_mm(Nm(int(s.x))),
+                                start_y_mm=nm_to_mm(Nm(int(s.y))),
+                                end_x_mm=nm_to_mm(Nm(int(e.x))),
+                                end_y_mm=nm_to_mm(Nm(int(e.y))),
+                                mid_x_mm=nm_to_mm(Nm(int(mid.x))) if mid is not None else None,
+                                mid_y_mm=nm_to_mm(Nm(int(mid.y))) if mid is not None else None,
+                            )
+                        )
+                return tuple(out)
+
+            return self._run_supervised_read("list_net_copper", _do)
+
+    def board_outline(self, board: BoardHandle) -> tuple[BBoxMm, str]:
+        """Bbox del board y estado del contorno Edge.Cuts (F-03).
+
+        Devuelve ``(bbox, outline)`` donde ``outline`` es ``"none"`` (sin
+        Edge.Cuts) o ``"WxHmm"`` (dimensiones del contorno). Con contorno, el
+        bbox es el de las líneas Edge.Cuts (dimensión real de fabricación);
+        sin contorno, cae a la envolvente TIGHT del enjambre de footprints
+        (sin el margen de validación de ``board_bbox_mm``) para que el agente
+        vea el área ocupada por la colocación.
+        """
+        from kipy.proto.board.board_types_pb2 import BoardLayer
+
+        with self._lock:
+            self._detect_restart()
+
+            def _do() -> tuple[BBoxMm, str]:
+                raw_board = board.raw
+                xs: list[float] = []
+                ys: list[float] = []
+                for shape in raw_board.get_shapes():
+                    if getattr(shape, "layer", None) == BoardLayer.BL_Edge_Cuts:
+                        bb = shape.bounding_box()
+                        xs.extend([float(bb.pos.x), float(bb.pos.x + bb.size.x)])
+                        ys.extend([float(bb.pos.y), float(bb.pos.y + bb.size.y)])
+                if xs and ys:
+                    min_x, min_y, max_x, max_y = min(xs), min(ys), max(xs), max(ys)
+                    w_mm = (max_x - min_x) / 1_000_000
+                    h_mm = (max_y - min_y) / 1_000_000
+                    return (
+                        BBoxMm(
+                            nm_to_mm(Nm(int(min_x))),
+                            nm_to_mm(Nm(int(min_y))),
+                            nm_to_mm(Nm(int(max_x))),
+                            nm_to_mm(Nm(int(max_y))),
+                        ),
+                        f"{w_mm:.1f}x{h_mm:.1f}mm",
+                    )
+                # Sin Edge.Cuts: envolvente tight de footprints (sin margen).
+                fxs: list[float] = []
+                fys: list[float] = []
+                for fp in raw_board.get_footprints():
+                    pos = fp.position
+                    fxs.append(float(pos.x))
+                    fys.append(float(pos.y))
+                if not fxs:
+                    return (BBoxMm(Mm(0.0), Mm(0.0), Mm(0.0), Mm(0.0)), "none")
+                return (
+                    BBoxMm(
+                        nm_to_mm(Nm(int(min(fxs)))),
+                        nm_to_mm(Nm(int(min(fys)))),
+                        nm_to_mm(Nm(int(max(fxs)))),
+                        nm_to_mm(Nm(int(max(fys)))),
+                    ),
+                    "none",
+                )
+
+            return self._run_supervised_read("board_outline", _do)
+
     # -- mutaciones -----------------------------------------------------------
+
+    def save_board(self, board: BoardHandle) -> None:
+        """Persiste el board vivo a disco vía IPC (D-11.1).
+
+        kipy expone el save del documento como ``Board.save()``
+        (``kipy/board.py:285-288``): envía el comando ``SaveDocument`` sobre
+        el mismo socket IPC. Es una ESCRITURA: se supervisa directo (sin
+        retry, D-07.1) — un ``AS_BUSY`` se propaga tal cual. Cierra el
+        split-brain live/disco (F-05): tras el save, render/DRC/export vía
+        kicad-cli leen exactamente lo que el agente mutó.
+        """
+        with self._lock:
+            self._detect_restart()
+            with self._supervise("save_board"):
+                board.raw.save()
+
+    def remove_by_kiid(self, board: BoardHandle, kiid: str) -> bool:
+        """Borra el ítem de board identificado por ``kiid`` (D-11.2).
+
+        Localiza el ítem con ``get_items_by_id`` y lo borra con
+        ``remove_items`` (el mismo camino validado en los teardowns de los
+        tests integration_gui de sesión 09). Devuelve ``True`` si borró algo,
+        ``False`` si el KIID ya no estaba (borrado concurrente). ESCRITURA:
+        supervisada directa, sin retry.
+        """
+        from kipy.proto.common.types.base_types_pb2 import KIID as _KIID_proto
+
+        with self._lock:
+            self._detect_restart()
+            with self._supervise("remove_by_kiid"):
+                raw_board = board.raw
+                kiid_proto = _KIID_proto()
+                kiid_proto.value = kiid
+                items = raw_board.get_items_by_id([kiid_proto])
+                if not items:
+                    return False
+                raw_board.remove_items(items[0])
+                return True
 
     def move_footprint(
         self,

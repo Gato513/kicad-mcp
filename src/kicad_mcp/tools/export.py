@@ -99,7 +99,7 @@ def register(mcp: FastMCP) -> None:
                 ],
                 action="BOM",
             )
-            payload = {"output_path": out.name, "bytes": out.stat().st_size}
+            payload = {"output_path": str(out), "bytes": out.stat().st_size}
         log_tool_call(
             tool_name="export_bom",
             latency_ms=timer["latency_ms"],
@@ -125,7 +125,7 @@ def register(mcp: FastMCP) -> None:
                 ],
                 action="netlist",
             )
-            payload = {"output_path": out.name, "bytes": out.stat().st_size}
+            payload = {"output_path": str(out), "bytes": out.stat().st_size}
         log_tool_call(
             tool_name="export_netlist",
             latency_ms=timer["latency_ms"],
@@ -186,7 +186,7 @@ def register(mcp: FastMCP) -> None:
                     ["kicad-cli", "pcb", "render", "--side", "top", "-o", str(out), str(pcb)],
                     action="pcb PNG",
                 )
-            payload = {"kind": kind, "output_path": out.name, "bytes": out.stat().st_size}
+            payload = {"kind": kind, "output_path": str(out), "bytes": out.stat().st_size}
         log_tool_call(
             tool_name="export_render",
             latency_ms=timer["latency_ms"],
@@ -216,7 +216,7 @@ def register(mcp: FastMCP) -> None:
                 action="drill",
             )
             files = sorted(p.name for p in fab_dir.iterdir() if p.is_file())
-            payload = {"output_dir": fab_dir.name, "files": files, "count": len(files)}
+            payload = {"output_dir": str(fab_dir), "files": files, "count": len(files)}
         log_tool_call(
             tool_name="export_manufacturing",
             latency_ms=timer["latency_ms"],

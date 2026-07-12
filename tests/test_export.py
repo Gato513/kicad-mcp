@@ -210,7 +210,7 @@ async def test_export_manufacturing_runs_when_drc_clean(
     payload = _parse(result)
     assert not result.isError, payload
     assert calls == ["gerbers", "drill"]
-    assert payload["output_dir"] == "fab"
+    assert payload["output_dir"] == str(project / "fab")  # F-02: ruta absoluta
     assert payload["count"] == 4
     assert "F_Cu.gbr" in payload["files"]
     assert "drill_PTH.drl" in payload["files"]
@@ -238,7 +238,7 @@ async def test_export_manufacturing_happy_path_against_clean_fixture(
         result = await client.call_tool("export_manufacturing", {})
     payload = _parse(result)
     assert not result.isError, payload
-    assert payload["output_dir"] == "fab"
+    assert payload["output_dir"] == str(project / "fab")  # F-02: ruta absoluta
     assert payload["count"] > 0, "el happy-path debe generar al menos un archivo"
     files: list[str] = payload["files"]
     # Al menos un gerber y un drill deben aparecer.

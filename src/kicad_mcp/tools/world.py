@@ -197,6 +197,8 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             )
         with tool_call_timer() as timer:
             cache_hit = False
+            board_bbox: tuple[float, float, float, float] | None = None
+            outline: str | None = None
             if kind == "pcb":
                 # Board vivo: KiCad cerrado → KICAD_NOT_RUNNING (fast-fail del
                 # bridge); PCB Editor cerrado → KICAD_CLI_FAILED con
@@ -211,6 +213,14 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 ctx = bridge.read_board_context(board)
                 state_raw = build_state_from_snapshot(ctx.footprints)
                 snap_id = get_default_store().register(state_raw, mtimes=None)
+                # F-03: bbox del board + contorno Edge.Cuts en la cabecera pcb.
+                bbox, outline = bridge.board_outline(board)
+                board_bbox = (
+                    float(bbox.min_x),
+                    float(bbox.min_y),
+                    float(bbox.max_x),
+                    float(bbox.max_y),
+                )
             else:
                 schematic = _resolve_root_schematic()
                 # Registro en el store: reconstruimos con snap=0 (placeholder) y
@@ -224,6 +234,8 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 max_tokens=max_tokens,
                 focus_ref=focus_ref,
                 radius_mm=radius_mm,
+                board_bbox=board_bbox,
+                outline=outline,
             )
         log_tool_call(
             tool_name="get_world_context",

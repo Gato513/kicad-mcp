@@ -133,3 +133,72 @@ def test_encoder_header_matches_fixture_counts() -> None:
     expected_c = gt["counts"]["components"]
     expected_n = gt["counts"]["nets"]
     assert header == f"SCH|v1|{expected_c}c|{expected_n}n|snap:1", f"header inesperado: {header!r}"
+
+
+# --- Sesión 11: cabecera enriquecida (F-01 área, F-03 bbox/outline pcb) -------
+
+
+def _pcb_state(*refs_pos: tuple[str, float, float]) -> NormalizedState:
+    comps = tuple(
+        Component(ref=r, value="V", x=x, y=y, pins=(Pin(p="1", net="GND"),))
+        for (r, x, y) in refs_pos
+    )
+    return NormalizedState(kind="pcb", snap=3, components=comps)
+
+
+@pytest.mark.unit
+def test_header_area_full_when_focus_requested_but_not_cropped() -> None:
+    """F-01: focus sin recorte ⇒ ``area:full`` en la cabecera; snap sigue último."""
+    state = _pcb_state(("U1", 0.0, 0.0), ("R1", 1.0, 1.0))
+    out = encode(state, max_tokens=100000, focus_ref="U1")  # sin radius: no recorta
+    header = out.splitlines()[0]
+    assert "|area:full|snap:3" in header, header
+    assert header.endswith("snap:3")
+
+
+@pytest.mark.unit
+def test_header_area_local_when_cropped() -> None:
+    """F-01: focus+radius que recorta ⇒ ``area:rN@ref``.
+
+    Un cluster lejano grande hace que sólo el nivel de foco (que resume lo
+    de fuera del radio) quepa en el budget — ahí sí hay recorte.
+    """
+    specs = [("U1", 0.0, 0.0)]
+    specs += [(f"C{i}", 400.0 + i, 400.0 + i) for i in range(1, 40)]
+    state = _pcb_state(*specs)
+    out = encode(state, max_tokens=260, focus_ref="U1", radius_mm=10.0)
+    header = out.splitlines()[0]
+    assert "area:r10@U1" in header, header
+    assert "[FUERA_DE_AREA]" in out
+    assert header.endswith("snap:3")
+
+
+@pytest.mark.unit
+def test_header_no_area_token_without_focus() -> None:
+    """Sin foco pedido no hay token de área (invariante que preserva goldens)."""
+    state = _pcb_state(("U1", 0.0, 0.0))
+    header = encode(state, max_tokens=100000).splitlines()[0]
+    assert "area:" not in header
+
+
+@pytest.mark.unit
+def test_header_pcb_bbox_and_outline() -> None:
+    """F-03: bbox del board + outline en la cabecera pcb, antes de snap."""
+    state = _pcb_state(("U1", 0.0, 0.0))
+    out = encode(
+        state,
+        max_tokens=100000,
+        board_bbox=(53.6, 56.5, 365.6, 163.2),
+        outline="312.0x106.7mm",
+    )
+    header = out.splitlines()[0]
+    assert "bbox:53.6,56.5;365.6,163.2" in header
+    assert "outline:312.0x106.7mm" in header
+    assert header.endswith("snap:3")  # snap SIEMPRE último
+
+
+@pytest.mark.unit
+def test_header_outline_none() -> None:
+    state = _pcb_state(("U1", 0.0, 0.0))
+    header = encode(state, max_tokens=100000, outline="none").splitlines()[0]
+    assert "outline:none" in header

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Final
 
 from ..errors import ErrorCode, KicadMcpError
@@ -71,6 +71,17 @@ class _Options:
     radius_mm: float | None = None
     omit_pos: bool = False
     degrade_labels: tuple[str, ...] = field(default_factory=tuple)
+    # Sesión 11 (F-01): ref que el llamador pidió enfocar, con o sin radius.
+    # Habilita el indicador ``area:`` de la cabecera (``area:full`` cuando NO
+    # hubo recorte; ``area:rN@ref`` cuando sí). Distinto de ``focus_ref``, que
+    # solo se setea cuando el recorte está ACTIVO (radius presente). Sin foco
+    # pedido no se emite token (preserva goldens 001/002, byte a byte).
+    focus_requested: str | None = None
+    # Sesión 11 (F-03): geometría de board para la cabecera de ``kind="pcb"``.
+    # ``pcb_bbox`` = (min_x, min_y, max_x, max_y) en mm; ``pcb_outline`` =
+    # ``"none"`` | ``"WxHmm"``. Solo el path pcb de get_world_context los pasa.
+    pcb_bbox: tuple[float, float, float, float] | None = None
+    pcb_outline: str | None = None
 
 
 def _sanitize(raw: str) -> tuple[str, bool]:
@@ -246,7 +257,22 @@ def _encode_impl(state: NormalizedState, opts: _Options) -> str:
     ]
 
     kind = state.kind.upper()
-    header = f"{kind}|v1|{total_components}c|{len(nets)}n|snap:{state.snap}"
+    # Tokens opcionales entre ``{n}n`` y ``snap:`` (sesión 11). ``snap:`` SIEMPRE
+    # va último: el agente y varios tests extraen el snap con ``split("snap:")``
+    # / ``rsplit(":",1)`` asumiendo que es el campo terminal.
+    extras: list[str] = []
+    if opts.pcb_bbox is not None:  # F-03: bbox del board (kind="pcb")
+        min_x, min_y, max_x, max_y = opts.pcb_bbox
+        extras.append(f"bbox:{min_x:.1f},{min_y:.1f};{max_x:.1f},{max_y:.1f}")
+    if opts.pcb_outline is not None:  # F-03: contorno Edge.Cuts
+        extras.append(f"outline:{opts.pcb_outline}")
+    if opts.focus_requested is not None:  # F-01: qué área recibió el agente
+        if far_components:
+            extras.append(f"area:r{int(opts.radius_mm or 0)}@{opts.focus_requested}")
+        else:
+            extras.append("area:full")
+    extras_str = ("|" + "|".join(extras)) if extras else ""
+    header = f"{kind}|v1|{total_components}c|{len(nets)}n{extras_str}|snap:{state.snap}"
 
     lines: list[str] = [header, "[C]", *comp_lines, "[N]", *net_lines]
     if warnings:
@@ -289,12 +315,19 @@ def encode(
     max_tokens: int = 800,
     focus_ref: str | None = None,
     radius_mm: float | None = None,
+    board_bbox: tuple[float, float, float, float] | None = None,
+    outline: str | None = None,
 ) -> str:
     """Encoder con presupuesto de tokens y área local (spec §4).
 
     Aplica los tres niveles de degradación en orden aditivo hasta caber en
     ``max_tokens``; si ni siquiera con todo aplicado cabe, lanza
     ``CONTEXT_BUDGET_IMPOSSIBLE`` con hint del presupuesto mínimo calculado.
+
+    ``board_bbox``/``outline`` (sesión 11, F-03): geometría de board que el
+    path ``kind="pcb"`` de ``get_world_context`` inyecta en la cabecera. El
+    indicador de área (F-01) sale de ``focus_ref``: si se pidió foco, la
+    cabecera dice ``area:full`` (sin recorte) o ``area:rN@ref`` (con recorte).
     """
     can_focus = focus_ref is not None and radius_mm is not None
 
@@ -319,6 +352,18 @@ def encode(
             degrade_labels=tuple(last_labels),
         )
     )
+
+    # Los tokens de cabecera (F-01 area / F-03 pcb bbox+outline) son constantes
+    # a través de la cascada de degradación: se inyectan en cada nivel por igual.
+    sequence = [
+        replace(
+            o,
+            focus_requested=focus_ref,
+            pcb_bbox=board_bbox,
+            pcb_outline=outline,
+        )
+        for o in sequence
+    ]
 
     found = _try_options_sequence(state, sequence, max_tokens)
     if found is not None:

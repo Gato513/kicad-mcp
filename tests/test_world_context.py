@@ -129,8 +129,12 @@ async def test_world_context_with_focus_hides_far_components(
     mcp = create_server()
     async with create_connected_server_and_client_session(mcp._mcp_server) as client:
         result = await client.call_tool(
+            # 540 (no 500): la cabecera ahora lleva el token de área
+            # (F-01, ``|area:r15@J1``, ~4 tok); con 500 la degradación caía un
+            # nivel más (omit_pos) y J1 perdía su POS. El nivel objetivo del
+            # test (foco con POS) sigue siendo el mismo con este budget.
             "get_world_context",
-            {"max_tokens": 500, "focus_ref": "J1", "radius_mm": 15.0},
+            {"max_tokens": 540, "focus_ref": "J1", "radius_mm": 15.0},
         )
     toon = _toon(result)
     assert "[FUERA_DE_AREA]" in toon, "el bloque de resumen debería aparecer con focus+radius"
@@ -205,6 +209,13 @@ class _FakePcbBridge(IpcBridge):
             bbox=bbox,
             footprints=self._footprints,
         )
+
+    def board_outline(self, board: BoardHandle) -> tuple[BBoxMm, str]:  # type: ignore[override]
+        # F-03: sin Edge.Cuts en el fake ⇒ envolvente tight de footprints y
+        # outline="none" (mismo contrato que el bridge real cuando no hay borde).
+        xs = [float(fp.x_mm) for fp in self._footprints] or [0.0]
+        ys = [float(fp.y_mm) for fp in self._footprints] or [0.0]
+        return (BBoxMm(Mm(min(xs)), Mm(min(ys)), Mm(max(xs)), Mm(max(ys))), "none")
 
 
 def _pcb_server(bridge: IpcBridge) -> FastMCP:
@@ -291,8 +302,12 @@ async def test_world_context_pcb_focus_radius_hides_far_footprints() -> None:
     mcp = _pcb_server(bridge)
     async with create_connected_server_and_client_session(mcp._mcp_server) as client:
         result = await client.call_tool(
+            # 300 (no 260): la cabecera pcb ahora lleva bbox+outline (F-03,
+            # ~14 tok fijos); el nivel de foco sigue siendo el que cabe y el
+            # cluster lejano sigue yendo al resumen. La INTENCIÓN del test
+            # (esconder footprints lejanos por degradación) es idéntica.
             "get_world_context",
-            {"kind": "pcb", "max_tokens": 260, "focus_ref": "U19", "radius_mm": 15.0},
+            {"kind": "pcb", "max_tokens": 300, "focus_ref": "U19", "radius_mm": 15.0},
         )
     toon = _toon(result)
     assert toon.startswith("PCB|")

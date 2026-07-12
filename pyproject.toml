@@ -36,6 +36,7 @@ markers = [
     "golden: comparación byte a byte contra tests/golden/",
     "integration: requiere kicad-cli o KiCad corriendo (excluida por defecto)",
     "integration_gui: requiere KiCad GUI abierto con un proyecto de prueba (protocolo manual)",
+    "integration_gui_slow: integration_gui pesado (loops de mutación + refill); correr aislado por la contención IPC (D-12.7)",
 ]
 testpaths = ["tests"]
 asyncio_mode = "auto"

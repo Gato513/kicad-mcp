@@ -130,8 +130,13 @@ def _validate_footprint_id(footprint_id: str) -> None:
 
 
 def _list_project_sheets(root: Path) -> list[Path]:
-    """Todos los ``.kicad_sch`` del proyecto (root + hojas hijas)."""
-    return sorted(p.resolve() for p in root.glob("*.kicad_sch"))
+    """Hojas de DISEÑO del proyecto (root + hojas hijas), excluyendo la paleta.
+
+    ``paleta.kicad_sch`` es un archivo separado de plantillas (D-12.3), NO
+    parte de la jerarquía de diseño: sus refs de template no deben contar como
+    colisiones ni aparecer en los hints de "hojas disponibles".
+    """
+    return sorted(p.resolve() for p in root.glob("*.kicad_sch") if p.name != _PALETTE_FILENAME)
 
 
 def _collect_all_refs(root: Path) -> dict[str, Path]:
@@ -186,6 +191,38 @@ def _load_target_sheet(sheet_arg: str, root: Path) -> Path:
             message=f"Hoja {sheet_path.name} no existe en el proyecto.",
             hint=f"Hojas disponibles: {', '.join(p.name for p in _list_project_sheets(root))}.",
         )
+    return sheet_path
+
+
+_PALETTE_FILENAME = "paleta.kicad_sch"
+
+
+def _resolve_source(source: str | None, root: Path, sheet_path: Path) -> Path:
+    """Resuelve la hoja-fuente del template (D-12.3).
+
+    Prioridad: ``source`` explícito (relativo al proyecto, regla 4) >
+    ``paleta.kicad_sch`` en la raíz si existe > la hoja destino (clone
+    intra-archivo, comportamiento histórico cuando no hay paleta). Devolver
+    ``sheet_path`` señaliza el camino intra-archivo al llamador.
+    """
+    if source is not None:
+        source_path = canonicalize_within_project_root(source, root)
+        if source_path.suffix != ".kicad_sch":
+            raise KicadMcpError(
+                code=ErrorCode.INVALID_PARAMS,
+                message=f"source debe ser un .kicad_sch (recibido: {source_path.name}).",
+                hint="Pasá el nombre relativo, p. ej. 'paleta.kicad_sch'.",
+            )
+        if not source_path.is_file():
+            raise KicadMcpError(
+                code=ErrorCode.PROJECT_NOT_FOUND,
+                message=f"La paleta/fuente {source_path.name} no existe en el proyecto.",
+                hint="Creá la paleta o pasá el nombre correcto (ver docs/guia-paleta.md).",
+            )
+        return source_path
+    palette = (root / _PALETTE_FILENAME).resolve()
+    if palette.is_file():
+        return palette
     return sheet_path
 
 
@@ -309,6 +346,169 @@ def _add_symbol_to_sheet(
     pin_ids = _pin_ids_of_lib_id(sch, lib_id)
     sch.write(str(sheet_path))
     return {"value": template_value, "pin_ids": pin_ids}
+
+
+# --- clone cross-file desde una paleta (D-12.3, spike sesión 12) --------------
+#
+# kicad-skip bloquea el clone entre archivos vía sus wrappers de colección
+# (``symbol.new_from_list``/``lib_symbols.raw`` levantan "Unknown element"). El
+# spike de la sesión 12 verificó que sí funciona a nivel del árbol S-expr crudo
+# (``sch.tree``): se copia la definición ``(symbol "LIB:ID" ...)`` de la paleta
+# a ``lib_symbols`` del destino (dedup si ya está) y se anexa una instancia
+# ``(symbol (lib_id ...))`` con ref/uuid/posición nuevos. El netlist reconoce
+# el símbolo clonado.
+
+
+def _sexp_head(node: Any) -> str | None:
+    """Cabeza de un nodo S-expr (``str`` del primer átomo) o None si no es lista."""
+    if isinstance(node, list) and node:
+        return str(node[0])
+    return None
+
+
+def _find_sexp_child(tree: Any, head: str) -> Any:
+    """Primer sub-nodo ``(head ...)`` dentro de ``tree`` (o None)."""
+    if not isinstance(tree, list):
+        return None
+    for child in tree:
+        if _sexp_head(child) == head:
+            return child
+    return None
+
+
+def _find_lib_def(lib_node: Any, lib_id: str) -> Any:
+    """Definición ``(symbol "LIB:ID" ...)`` dentro de ``lib_symbols`` (o None)."""
+    if lib_node is None:
+        return None
+    for child in lib_node[1:]:
+        if _sexp_head(child) == "symbol" and len(child) > 1 and str(child[1]) == lib_id:
+            return child
+    return None
+
+
+def _find_instance_by_libid(root: Any, lib_id: str) -> Any:
+    """Primera instancia ``(symbol (lib_id "LIB:ID") ...)`` en el nivel raíz (o None)."""
+    for child in root:
+        if _sexp_head(child) == "symbol":
+            lid = _find_sexp_child(child, "lib_id")
+            if lid is not None and len(lid) > 1 and str(lid[1]) == lib_id:
+                return child
+    return None
+
+
+def _regen_uuids(node: Any) -> None:
+    """Reasigna todos los ``(uuid ...)`` del subárbol a uuid4 nuevos (evita colisión)."""
+    import uuid as _uuid
+
+    from sexpdata import Symbol  # type: ignore[import-untyped]
+
+    if not isinstance(node, list):
+        return
+    if _sexp_head(node) == "uuid" and len(node) >= 2:
+        node[1] = Symbol(str(_uuid.uuid4()))
+        return
+    for child in node:
+        _regen_uuids(child)
+
+
+def _set_instance_at(inst: Any, x_mm: float, y_mm: float) -> None:
+    """Fija ``(at x y rot)`` de la instancia preservando la rotación del template."""
+    at = _find_sexp_child(inst, "at")
+    if at is None:
+        return
+    rot = at[3] if len(at) >= 4 else 0
+    at[1] = float(x_mm)
+    at[2] = float(y_mm)
+    if len(at) >= 4:
+        at[3] = rot
+
+
+def _set_instance_ref(inst: Any, ref: str) -> None:
+    """Reescribe la Reference: propiedad + el bloque ``(instances ... (reference ...))``.
+
+    KiCad usa la reference del bloque ``instances`` para netlist/anotación, así
+    que ambas deben quedar en ``ref`` (si no, el clon saldría con el ref del
+    template de la paleta).
+    """
+    for child in inst:
+        if _sexp_head(child) == "property" and len(child) >= 3 and str(child[1]) == "Reference":
+            child[2] = ref
+    instances = _find_sexp_child(inst, "instances")
+    if instances is not None:
+        for project in instances[1:]:
+            if _sexp_head(project) == "project":
+                for path in project[1:]:
+                    if _sexp_head(path) == "path":
+                        reference = _find_sexp_child(path, "reference")
+                        if reference is not None and len(reference) >= 2:
+                            reference[1] = ref
+
+
+def _add_symbol_cross_file(
+    source_path: Path,
+    target_path: Path,
+    lib_id: str,
+    ref: str,
+    x_mm: float,
+    y_mm: float,
+) -> dict[str, Any]:
+    """Clona el símbolo ``lib_id`` DESDE ``source_path`` HACIA ``target_path`` (D-12.3).
+
+    Copia la definición de librería (dedup si el destino ya la tiene) y anexa
+    una instancia con ref/uuid/posición nuevos. Devuelve ``value`` + ``pin_ids``
+    para derivar el post-estado (igual que el clone intra-archivo).
+    """
+    import copy
+
+    from skip import Schematic
+
+    ssch = Schematic(str(source_path))
+    proot = ssch.tree
+    slib = _find_sexp_child(proot, "lib_symbols")
+    lib_def = _find_lib_def(slib, lib_id)
+    template_inst = _find_instance_by_libid(proot, lib_id)
+    if lib_def is None or template_inst is None:
+        seen = {
+            str(child[1])
+            for child in (slib[1:] if slib else [])
+            if _sexp_head(child) == "symbol" and len(child) > 1
+        }
+        hint_list = ", ".join(sorted(seen)[:5]) if seen else "paleta sin símbolos"
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_PARAMS,
+            message=f"lib_id {lib_id!r} no está instanciado en {source_path.name}.",
+            hint=f"lib_ids en la paleta: {hint_list}",
+        )
+
+    tsch = Schematic(str(target_path))
+    troot = tsch.tree
+    tlib = _find_sexp_child(troot, "lib_symbols")
+    if tlib is None:
+        # Destino sin lib_symbols: crear el nodo mínimo.
+        from sexpdata import Symbol
+
+        tlib = [Symbol("lib_symbols")]
+        troot.append(tlib)
+    if _find_lib_def(tlib, lib_id) is None:
+        tlib.append(copy.deepcopy(lib_def))
+
+    new_inst = copy.deepcopy(template_inst)
+    _set_instance_at(new_inst, x_mm, y_mm)
+    _set_instance_ref(new_inst, ref)
+    _regen_uuids(new_inst)
+    troot.append(new_inst)
+    tsch.overwrite = True
+    tsch.write(str(target_path))
+
+    template_value = _template_value(template_inst_wrapper(ssch, lib_id))
+    reopened = Schematic(str(target_path))
+    pin_ids = _pin_ids_of_lib_id(reopened, lib_id)
+    return {"value": template_value, "pin_ids": pin_ids}
+
+
+def template_inst_wrapper(sch: Any, lib_id: str) -> Any:
+    """Localiza el símbolo-wrapper de kicad-skip con ``lib_id`` (para leer Value)."""
+    return _find_template(sch, lib_id)
 
 
 def _derive_post_state_sch(
@@ -641,7 +841,9 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="add_symbol",
-        description="Clona un símbolo ya presente en una hoja y lo coloca con nueva ref",
+        description=(
+            "Clona un símbolo (de la hoja, o de una paleta con source) y lo coloca con nueva ref"
+        ),
     )
     def add_symbol(
         sheet: str,
@@ -650,6 +852,7 @@ def register(mcp: FastMCP) -> None:
         x_mm: float,
         y_mm: float,
         base_snap: int | None = None,
+        source: str | None = None,
     ) -> str:
         with tool_call_timer() as timer:
             root = _project_root()
@@ -663,6 +866,7 @@ def register(mcp: FastMCP) -> None:
                 "ref": ref,
                 "x_mm": x_mm,
                 "y_mm": y_mm,
+                "source": source,
             }
             # Regla 6: sanitizar TODO string que vaya al archivo.
             try:
@@ -672,6 +876,16 @@ def register(mcp: FastMCP) -> None:
                 raise
 
             sheet_path = _load_target_sheet(sheet, root)
+            # D-12.3: fuente del template. source explícito > paleta.kicad_sch
+            # en la raíz > la propia hoja (clone intra-archivo, comportamiento
+            # histórico si no hay paleta). El clone cross-file usa el árbol
+            # S-expr crudo (spike sesión 12).
+            try:
+                source_path = _resolve_source(source, root, sheet_path)
+            except KicadMcpError as err:
+                _audit_error(root, "add_symbol", params_for_audit, err.code)
+                raise
+            cross_file = source_path != sheet_path
             all_refs = _collect_all_refs(root)
             if ref in all_refs:
                 _audit_error(root, "add_symbol", params_for_audit, ErrorCode.INVALID_PARAMS)
@@ -698,8 +912,16 @@ def register(mcp: FastMCP) -> None:
                     ),
                 )
             # Valida presencia del lib_id ANTES del G1 (barato y trivialmente
-            # falseable — no ensuciamos backups por un typo del agente).
-            _find_template(probe, lib_id)
+            # falseable — no ensuciamos backups por un typo del agente). En
+            # modo cross-file el template vive en la paleta, no en la hoja.
+            try:
+                if cross_file:
+                    _find_template(Schematic(str(source_path)), lib_id)
+                else:
+                    _find_template(probe, lib_id)
+            except KicadMcpError as err:
+                _audit_error(root, "add_symbol", params_for_audit, err.code)
+                raise
 
             # Pre-estado del proyecto ANTES de la mutación: base del
             # snapshot post-write que se construirá por derivación local.
@@ -714,7 +936,12 @@ def register(mcp: FastMCP) -> None:
             pre_state = build_state_cached(root_sch, snap=0)[0]
 
             backup_info = ensure_session_backup(root)  # Gate G1
-            template_info = _add_symbol_to_sheet(sheet_path, lib_id, ref, x_mm, y_mm)
+            if cross_file:
+                template_info = _add_symbol_cross_file(
+                    source_path, sheet_path, lib_id, ref, x_mm, y_mm
+                )
+            else:
+                template_info = _add_symbol_to_sheet(sheet_path, lib_id, ref, x_mm, y_mm)
 
             # D-06.3: verificar el EFECTO leyendo el archivo escrito.
             effect = _verify_effect(sheet_path, ref, lib_id, x_mm, y_mm)

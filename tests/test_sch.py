@@ -104,6 +104,43 @@ def _strip_global_labels(sheet_path: Path) -> None:
     sch.write(str(sheet_path))
 
 
+def _make_palette_project(tmp_path: Path) -> Path:
+    """Proyecto con un root de diseño + ``paleta.kicad_sch`` separada (D-12.3).
+
+    El ``.kicad_pro`` desambigua el root cuando coexisten dos ``.kicad_sch``.
+    Ambos parten del fixture 001 (tiene los templates FIXLIB:*).
+    """
+    src = Path(__file__).parent / "fixtures" / "001_basico" / "fixture.kicad_sch"
+    proj = tmp_path / "pal_proj"
+    proj.mkdir()
+    shutil.copy(src, proj / "design.kicad_sch")
+    (proj / "design.kicad_pro").write_text("{}")
+    shutil.copy(src, proj / "paleta.kicad_sch")
+    return proj
+
+
+def _netlist_comps(sheet_path: Path, tmp_path: Path) -> list[str]:
+    """Exporta netlist (kicadxml) y devuelve la lista de refs de componentes."""
+    out = tmp_path / "comps.net"
+    r = subprocess.run(
+        [
+            "kicad-cli",
+            "sch",
+            "export",
+            "netlist",
+            "--format",
+            "kicadxml",
+            "-o",
+            str(out),
+            str(sheet_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    return re.findall(r'<comp ref="([^"]+)">', out.read_text())
+
+
 def _netlist_nodes_by_net(sheet_path: Path, tmp_path: Path) -> dict[str, list[tuple[str, str]]]:
     """Exporta netlist (kicadxml) y devuelve ``{net_name: [(ref, pin), ...]}``."""
     out = tmp_path / "verify.net"
@@ -691,3 +728,113 @@ async def test_connect_pins_rejects_cross_sheet(
     text = _text(result)
     assert "INVALID_PARAMS" in text
     assert "hojas distintas" in text
+
+
+# --- add_symbol cross-file desde paleta (D-12.3) -----------------------------
+
+
+@pytest.mark.unit
+async def test_add_symbol_cross_file_from_explicit_palette(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """source=paleta.kicad_sch clona cross-file; el netlist reconoce el símbolo."""
+    project = _make_palette_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "add_symbol",
+            {
+                "sheet": "design.kicad_sch",
+                "lib_id": "FIXLIB:R2",
+                "ref": "R50",
+                "x_mm": 175.0,
+                "y_mm": 60.0,
+                "source": "paleta.kicad_sch",
+            },
+        )
+    assert not result.isError, _text(result)
+    confirm = _text(result)
+    assert estimate_tokens(confirm) <= 50
+    assert confirm.startswith("OK add_symbol R50 FIXLIB:R2")
+    # Efecto en disco + netlist (la prueba de que el clon cross-file es válido).
+    assert "R50" in _refs_in(project / "design.kicad_sch")
+    assert "R50" in _netlist_comps(project / "design.kicad_sch", tmp_path)
+
+
+@pytest.mark.unit
+async def test_add_symbol_default_palette_lookup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Sin source: si existe paleta.kicad_sch en la raíz, se usa por default (D-12.3)."""
+    project = _make_palette_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "add_symbol",
+            {
+                "sheet": "design.kicad_sch",
+                "lib_id": "FIXLIB:C2",
+                "ref": "C50",
+                "x_mm": 175.0,
+                "y_mm": 60.0,
+            },
+        )
+    assert not result.isError, _text(result)
+    assert "C50" in _refs_in(project / "design.kicad_sch")
+    assert "C50" in _netlist_comps(project / "design.kicad_sch", tmp_path)
+
+
+@pytest.mark.unit
+async def test_add_symbol_source_missing_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """source apuntando a un archivo inexistente → PROJECT_NOT_FOUND."""
+    project = _make_palette_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "add_symbol",
+            {
+                "sheet": "design.kicad_sch",
+                "lib_id": "FIXLIB:R2",
+                "ref": "R51",
+                "x_mm": 175.0,
+                "y_mm": 60.0,
+                "source": "noexiste.kicad_sch",
+            },
+        )
+    assert result.isError
+    assert "PROJECT_NOT_FOUND" in _text(result)
+
+
+@pytest.mark.unit
+async def test_add_symbol_cross_file_lib_id_not_in_palette(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """lib_id ausente en la paleta → INVALID_PARAMS con los lib_ids disponibles."""
+    project = _make_palette_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    mcp = _make_server()
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "add_symbol",
+            {
+                "sheet": "design.kicad_sch",
+                "lib_id": "Device:LED",
+                "ref": "D50",
+                "x_mm": 175.0,
+                "y_mm": 60.0,
+                "source": "paleta.kicad_sch",
+            },
+        )
+    assert result.isError
+    text = _text(result)
+    assert "INVALID_PARAMS" in text
+    assert "FIXLIB:" in text

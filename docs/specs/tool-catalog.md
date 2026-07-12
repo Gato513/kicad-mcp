@@ -326,7 +326,7 @@ Superficie de mutación complementaria a `pcb`: opera sobre archivos
 
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
-| `add_symbol` | Clona un símbolo ya presente en una hoja y lo coloca con nueva ref | `sheet`, `lib_id`, `ref`, `x_mm`, `y_mm`, `base_snap?` | confirm | `INVALID_PARAMS`, `PATH_OUTSIDE_PROJECT`, `PROJECT_NOT_FOUND`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `KICAD_CLI_FAILED` |
+| `add_symbol` | Clona un símbolo (de la hoja, o de una paleta con `source`) y lo coloca con nueva ref | `sheet`, `lib_id`, `ref`, `x_mm`, `y_mm`, `base_snap?`, `source?` | confirm | `INVALID_PARAMS`, `PATH_OUTSIDE_PROJECT`, `PROJECT_NOT_FOUND`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `KICAD_CLI_FAILED` |
 | `set_value` | Cambia el `Value` de un símbolo existente (localiza la hoja por ref) | `ref`, `value`, `base_snap?` | confirm | `INVALID_PARAMS`, `COMPONENT_NOT_FOUND`, `PROJECT_NOT_FOUND`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `KICAD_CLI_FAILED` |
 | `set_footprint` | Asigna el `Footprint` (`lib:name`) de un símbolo existente | `ref`, `footprint_id`, `base_snap?` | confirm | `INVALID_PARAMS`, `COMPONENT_NOT_FOUND`, `PROJECT_NOT_FOUND`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `KICAD_CLI_FAILED` |
 | `connect_pins` | Conecta dos pines (`REF.PIN`) por labels locales homónimos | `pin_a`, `pin_b`, `net_name`, `base_snap?` | confirm | `INVALID_PARAMS`, `COMPONENT_NOT_FOUND`, `PROJECT_NOT_FOUND`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `KICAD_CLI_FAILED` |
@@ -382,12 +382,20 @@ Confirmaciones (≤ 50 tokens):
 `OK set_value R1 '10k'->'22k' in fixture.kicad_sch [snap:3]` ·
 `OK set_footprint R1 ->Resistor_SMD:R_0805_2012Metric in fixture.kicad_sch [snap:4]`.
 
-`add_symbol` — decisiones vinculantes (D-08.5):
+`add_symbol` — decisiones vinculantes (D-08.5, ampliadas por D-12.3):
 
-1. **Librería**: SOLO clonado desde un símbolo/template ya instanciado en
-   el archivo objetivo (`lib_id` existente). Pick desde librerías
-   externas fuera de scope permanente hasta nueva decisión. El hint del
-   error `INVALID_PARAMS` cuando el lib_id no está lista los disponibles.
+1. **Librería**: clonado desde un símbolo/template ya instanciado. Fuente
+   (`source`, D-12.3): explícito > `paleta.kicad_sch` en la raíz si existe >
+   la hoja destino (clone intra-archivo, comportamiento histórico si no hay
+   paleta). El clone **cross-file** copia la definición de librería (dedup si
+   el destino ya la tiene) y anexa una instancia con ref/uuid/posición nuevos
+   vía el árbol S-expr crudo (kicad-skip bloquea el clone entre archivos por
+   sus wrappers; spike sesión 12 lo verificó a nivel de árbol). `source`
+   inexistente → `PROJECT_NOT_FOUND`; `lib_id` ausente en la fuente →
+   `INVALID_PARAMS` con los lib_ids disponibles. La `paleta.kicad_sch` es un
+   archivo SEPARADO (no parte de la jerarquía de diseño): sus refs de template
+   NO cuentan como colisión ni aparecen en hints de hojas. Ver
+   `docs/guia-paleta.md`. Pick desde librerías del SISTEMA sigue fuera de scope.
 2. **Cableado**: `add_symbol` **coloca**, no conecta. El símbolo nuevo
    sale con todos sus pines como `net=None` (§2 TOON: `">-"`). Conexión
    de pines en `connect_pins` (v0.5).

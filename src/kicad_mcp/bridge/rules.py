@@ -34,6 +34,11 @@ class Item:
     ref: str | None
     net: str | None
     pos: tuple[float, float] | None
+    # Descripción cruda del ítem tal como la emite kicad-cli (p. ej.
+    # "PTH pad 22 [/TVRAM5] of U19"). Lleva net + objeto inline — es la vía
+    # más barata de exponer "nets/objetos involucrados" (F-10, D-12.6) sin
+    # re-parsear formatos que varían por tipo de violación.
+    desc: str | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +72,7 @@ def _extract_item(raw: dict[str, Any]) -> Item:
         ref=ref_match.group(1) if ref_match else None,
         net=net_match.group(1) if net_match else None,
         pos=pos,
+        desc=desc or None,
     )
 
 

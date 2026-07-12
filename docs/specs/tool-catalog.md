@@ -155,10 +155,29 @@ Notas de `get_context_delta` (sesión 05 T4):
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
 | `run_erc` | ERC del esquemático, violaciones estructuradas | `min_severity?=warning` | none | `KICAD_CLI_FAILED`, `PROJECT_NOT_FOUND` |
-| `run_drc` | DRC del PCB, violaciones estructuradas | `min_severity?=warning` | none | `KICAD_CLI_FAILED`, `PROJECT_NOT_FOUND` |
+| `run_drc` | DRC del PCB **presupuestado**: resumen por tipo (default) o detalle paginado | `min_severity?=warning`, `exclude_types?`, `detail_type?`, `offset?=0`, `limit?=20` | none | `INVALID_PARAMS`, `KICAD_CLI_FAILED`, `PROJECT_NOT_FOUND` |
 
-Formato de violación (idéntico para ambos): `{rule, severity, message,
+**`run_erc`** — formato de violación: `{rule, severity, message,
 items: [{ref?|net?|pos?}]}` — posiciones en **mm**.
+
+**`run_drc` presupuestado (F-10, D-12.6).** La respuesta cruda medía 18 956 tok
+/ 42 s (sesión 11, 47× el techo D4). Rediseño:
+
+- **Modo default = RESUMEN.** Agrupa por tipo de violación, ordena por
+  frecuencia, y por cada tipo emite `count`, `severity`, un `message`
+  representativo y hasta **N=5 muestras** compactas (`pos` + `items` con los
+  objetos/nets involucrados). Presupuesto verificado: **~1 491 tok con 608
+  violaciones** (target ≤2 000 con 283 → cumplido con margen). Forma:
+  `{mode:"summary", total, counts, coordinate_units, kicad_version, by_type:[{type,count,severity,message,samples}], hint}`.
+- **`exclude_types`** (p. ej. `["unconnected_items"]`) y **`min_severity`**
+  EXCLUYEN de verdad del payload (recomputan `total`/`counts`), no sólo ocultan.
+- **Detalle paginado**: `detail_type=<tipo>` + `offset`/`limit` (1..100, default
+  20) devuelve violaciones COMPLETAS de UN tipo por páginas
+  (`{mode:"detail", type, total, offset, limit, returned, violations:[...], hint}`).
+  Tipo inexistente → `total:0` + hint con los tipos disponibles.
+- **Compatibilidad:** el Gate G3 (F2) **no** consume esta tool — corre
+  `bridge.rules.run_drc` directo sobre el `RulesReport`, así que su semántica
+  (conteo de errores) no cambia. `offset`/`limit` inválidos → `INVALID_PARAMS`.
 
 ## Categoría `export`
 

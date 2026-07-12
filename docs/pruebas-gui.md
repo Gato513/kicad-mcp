@@ -177,3 +177,45 @@ Después de las mutaciones deberías ver:
   kicad-mcp`.
 
 Al terminar: cerrar KiCad y borrar `/tmp/mut-test` — es reproducible.
+
+## Contención IPC de la suite `integration_gui` (D-12.7, sesión 12)
+
+**Fenómeno observado.** Bajo carga (correr toda la suite `integration_gui`
+seguida, con el PCB Editor procesando otras cosas), un puñado de tests
+—históricamente ~4— fallan de forma **transitoria** con un
+`KICAD_CLI_FAILED` cuyo `data.ipc_status == "unhandled"` (mapeado desde
+`AS_UNHANDLED` del envelope IPC). **Corridos en aislamiento pasan.** No es
+un bug del código: es la cola de profundidad 1 de KiCad (todo request se
+procesa en el hilo de UI, timeout duro de 2 s) rechazando peticiones
+mientras la UI está ocupada. Es el mismo estado protocolar que distingue
+"PCB Editor no abierto" de "ocupado"; bajo ráfaga se manifiesta como ruido.
+
+**Orden de corrida recomendado.** Para minimizar el ruido transitorio:
+
+1. Dejá que KiCad **termine de abrir** el board y de refill/DRC en tiempo
+   real ANTES de lanzar la suite (esperá a que la UI quede quieta).
+2. Corré los tests de LECTURA primero (los round-trips de
+   `get_world_context`/`get_component_detail`), luego los de MUTACIÓN
+   (`add_track`, `add_via`, `move_footprint`, `draw_board_outline`), que
+   son más pesados y dejan a KiCad ocupado (refill de zonas).
+3. Si un test falla con `ipc_status="unhandled"`, **re-corrélo aislado**
+   (`uv run pytest -m integration_gui -k <nombre>`) antes de reportar un
+   bug: la mayoría de las veces pasa.
+4. Evitá correr `run_drc`/`export_*` (que lanzan `kicad-cli` sobre disco,
+   ~40 s) intercalados con mutaciones IPC en la misma ráfaga: compiten por
+   la UI y amplifican el fenómeno.
+
+**Propuesta de marker `integration_gui_slow` (F5 — el humano decide).** El
+loop completo de mutación de la sesión 11 (T6) y los round-trips lentos se
+beneficiarían de un marker separado para poder correrlos aislados del resto.
+No toco `pyproject.toml` (F5); la línea exacta para agregar al bloque
+`markers` de `[tool.pytest.ini_options]` sería:
+
+```toml
+    "integration_gui_slow: integration_gui pesado (loops de mutación + refill); correr aislado por la contención IPC (D-12.7)",
+```
+
+Con ese marker, la suite rápida quedaría `-m "integration_gui and not
+integration_gui_slow"` y el loop pesado `-m integration_gui_slow`, cada uno
+con KiCad recién quieto. Si el humano lo agrega, marcar los tests del loop
+completo (sesión 11 T6) y los round-trips de `draw_board_outline` con él.

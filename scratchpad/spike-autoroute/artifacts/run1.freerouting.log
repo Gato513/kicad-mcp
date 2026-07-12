@@ -1,0 +1,19 @@
+2026-07-12 19:23:09.876 INFO   Freerouting v2.1.0 (build-date: 2025-04-12)
+2026-07-12 19:23:10.050 WARN   No default constructor found for field: currentLocale
+2026-07-12 19:23:10.054 INFO   Settings were loaded from freerouting.json
+2026-07-12 19:23:12.685 INFO   Opening '/tmp/spike-route-proyecto/runs/run1/run1.dsn'...
+2026-07-12 19:23:13.259 INFO   New version available: v2.2.4
+2026-07-12 19:23:32.707 INFO   [2DC5E4\789003] Starting routing of 'run1' on 1 thread...
+2026-07-12 19:23:48.072 INFO   [2DC5E4\789003] Auto-router pass #1 on board '468295952d9da20505ed57d301759c3b' was completed in 13.95 seconds with the score of 793.91 (24 unrouted).
+2026-07-12 19:23:56.442 INFO   [2DC5E4\789003] Auto-router pass #2 on board '96817fcbc927f96a61b7846b38c7dc97' was completed in 8.25 seconds with the score of 843.15 (21 unrouted).
+2026-07-12 19:24:12.423 INFO   [2DC5E4\789003] Auto-router pass #3 on board '58049d70a77b69dbeba4da1d68827c39' was completed in 15.80 seconds with the score of 930.54 (11 unrouted).
+2026-07-12 19:24:38.325 INFO   [2DC5E4\789003] Auto-router pass #4 on board '73c52a88db89cccc5a41b459ca767032' was completed in 25.62 seconds with the score of 955.09 (8 unrouted).
+2026-07-12 19:24:43.897 INFO   [2DC5E4\789003] Auto-router pass #5 on board 'd2147ce73f29616b8644a74ad107453a' was completed in 5.48 seconds with the score of 966.29 (5 unrouted).
+2026-07-12 19:24:47.465 INFO   [2DC5E4\789003] Auto-router pass #6 on board '8dba8ad81b6e232ea2af69fc70523f10' was completed in 3.48 seconds with the score of 984.95 (1 unrouted).
+2026-07-12 19:24:47.754 INFO   [2DC5E4\789003] Auto-router pass #7 on board '2bf20621c37f30c181ee6d820e11d3cd' was completed in 0.16 seconds with the score of 989.13.
+2026-07-12 19:24:48.282 INFO   [2DC5E4\789003] Restoring an earlier board that has the score of 989.13.
+2026-07-12 19:24:48.283 INFO   [2DC5E4\789003] Auto-router pass #8 on board 'fd17bb779aff23ac6899bd65f5d0ea53' was completed in 0.24 seconds with the score of 989.13.
+2026-07-12 19:24:48.331 INFO   [2DC5E4\789003] Auto-routing was completed in 1 minute 15.61 seconds with the score of 989.13.
+2026-07-12 19:24:48.445 INFO   [2DC5E4\789003] Starting optimization on 1 thread...
+2026-07-12 19:24:48.498 INFO   [2DC5E4\789003] Optimization was completed in 0.05 seconds with the score of 989.13.
+2026-07-12 19:24:48.826 INFO   Saving '/tmp/spike-route-proyecto/runs/run1/run1.ses'...

@@ -1169,6 +1169,45 @@ class IpcBridge:
             with self._supervise("save_board"):
                 board.raw.save()
 
+    def draw_board_outline(
+        self,
+        board: BoardHandle,
+        x_mm: Mm,
+        y_mm: Mm,
+        width_mm: Mm,
+        height_mm: Mm,
+    ) -> str:
+        """Crea un contorno rectangular en ``Edge.Cuts`` (D-12.5).
+
+        Precondición: el llamador validó dimensiones positivas y que el board
+        NO tiene contorno todavía (no apilar bordes). Usa ``BoardRectangle``
+        (top_left/bottom_right en nm) sobre ``BL_Edge_Cuts`` y lo crea con
+        ``create_items`` — mismo camino que ``add_track``/``add_via``. Verificado
+        en vivo (sesión 12): create sube el conteo de Edge.Cuts y devuelve KIID.
+        ESCRITURA: supervisada directa, sin retry (D-07.1). Devuelve el KIID del
+        rectángulo creado, o ``""`` si KiCad no lo reporta.
+        """
+        from kipy.board_types import BoardRectangle
+        from kipy.geometry import Vector2
+        from kipy.proto.board.board_types_pb2 import BoardLayer
+
+        with self._lock:
+            self._detect_restart()
+            with self._supervise("draw_board_outline"):
+                raw_board = board.raw
+                rect = BoardRectangle()
+                rect.layer = BoardLayer.BL_Edge_Cuts
+                x0 = int(mm_to_nm(x_mm))
+                y0 = int(mm_to_nm(y_mm))
+                rect.top_left = Vector2.from_xy(x0, y0)
+                rect.bottom_right = Vector2.from_xy(
+                    x0 + int(mm_to_nm(width_mm)), y0 + int(mm_to_nm(height_mm))
+                )
+                created = raw_board.create_items(rect)
+                if created:
+                    return str(created[0].id.value)
+                return ""
+
     def remove_by_kiid(self, board: BoardHandle, kiid: str) -> bool:
         """Borra el ítem de board identificado por ``kiid`` (D-11.2).
 

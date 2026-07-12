@@ -863,6 +863,92 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         )
         return out
 
+    @mcp.tool(
+        name="draw_board_outline",
+        description="Crea un contorno rectangular en Edge.Cuts (x_mm, y_mm, width_mm, height_mm)",
+    )
+    def draw_board_outline(
+        x_mm: float,
+        y_mm: float,
+        width_mm: float,
+        height_mm: float,
+        base_snap: int | None = None,
+    ) -> str:
+        # D-12.5: contorno rectangular vía IPC (BoardRectangle en Edge.Cuts,
+        # verificado en vivo la sesión 12). Rechaza si YA hay contorno (no apilar
+        # bordes) usando board_outline (la cabecera 'outline:' de la sesión 11 lo
+        # dice barato). Snapshot vivo post-mutación (mtimes=None, patrón add_track:
+        # el contorno no vive en NormalizedState). El loop cierra con save_board.
+        with tool_call_timer() as timer:
+            root = _project_root()
+            if base_snap is not None:
+                _check_base_snap(base_snap)
+            board = _resolve_board(bridge)
+
+            params = _outline_params(x_mm, y_mm, width_mm, height_mm)
+            if width_mm <= 0 or height_mm <= 0:
+                _audit_error(root, "draw_board_outline", params, ErrorCode.INVALID_PARAMS)
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message=f"width/height deben ser positivos (recibido {width_mm}x{height_mm}).",
+                    hint="Pasá dimensiones > 0, p. ej. width_mm=80, height_mm=60.",
+                )
+            # Cordura de coordenadas absolutas (el contorno puede exceder el
+            # enjambre de footprints, así que NO se valida contra el bbox de
+            # footprints; sólo se rechazan valores absurdos fuera de KiCad).
+            for label, v in (
+                ("x_mm", x_mm),
+                ("y_mm", y_mm),
+                ("width_mm", width_mm),
+                ("height_mm", height_mm),
+            ):
+                if abs(v) > 10_000.0:
+                    _audit_error(root, "draw_board_outline", params, ErrorCode.INVALID_PARAMS)
+                    raise KicadMcpError(
+                        code=ErrorCode.INVALID_PARAMS,
+                        message=f"{label}={v} fuera de rango razonable (±10 000 mm).",
+                        hint="Las placas de KiCad caben de sobra en ±10 000 mm.",
+                    )
+
+            # Rechazo si ya existe contorno (no apilar bordes).
+            _bbox, outline = bridge.board_outline(board)
+            if outline != "none":
+                _audit_error(root, "draw_board_outline", params, ErrorCode.INVALID_PARAMS)
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message=f"El board ya tiene un contorno Edge.Cuts ({outline}).",
+                    hint=(
+                        "No se apilan bordes. Borrá el contorno existente en KiCad si querés "
+                        "redefinirlo, o mové/re-dimensioná el que hay."
+                    ),
+                )
+
+            # Snapshot pre (footprints) para derivar el post — el contorno no
+            # altera el NormalizedState (patrón add_track/add_via).
+            ctx = bridge.read_board_context(board)
+            backup_info = ensure_session_backup(root)  # Gate G1
+            kiid = bridge.draw_board_outline(board, Mm(x_mm), Mm(y_mm), Mm(width_mm), Mm(height_mm))
+            new_state = build_state_from_snapshot(ctx.footprints)
+            snap_id = get_default_store().register(new_state, mtimes=None)
+            audit_record(
+                root,
+                tool="draw_board_outline",
+                params={**params, "base_snap": base_snap},
+                result={"snap": snap_id, "backup": backup_info.get("backup"), "kiid": kiid},
+            )
+            confirmation = (
+                f"OK draw_board_outline @({x_mm:.1f},{y_mm:.1f}) "
+                f"{width_mm:.1f}x{height_mm:.1f}mm Edge.Cuts [snap:{snap_id}]"
+            )
+        log_tool_call(
+            tool_name="draw_board_outline",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(confirmation),
+            snap_id=snap_id,
+            extra={"base_snap": base_snap, "width_mm": width_mm, "height_mm": height_mm},
+        )
+        return confirmation
+
 
 def _resolve_root_schematic_or_pcb() -> Path:
     """``.kicad_sch`` raíz si existe; si no, el ``.kicad_pcb`` (proyecto pcb-only).
@@ -945,6 +1031,10 @@ def _track_params(
 
 def _via_params(net: str, x: float, y: float, size: float, drill: float) -> dict[str, Any]:
     return {"net": net, "pos": [x, y], "size_mm": size, "drill_mm": drill}
+
+
+def _outline_params(x: float, y: float, width: float, height: float) -> dict[str, Any]:
+    return {"pos": [x, y], "width_mm": width, "height_mm": height}
 
 
 def _audit_error(

@@ -202,6 +202,7 @@ audit line JSONL por cada mutación aceptada o rechazada.
 | `delete_via` | Borra la via de un net más cercana a (x_mm, y_mm) | `net`, `x_mm`, `y_mm`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
 | `save_board` | Persiste el board vivo del PCB Editor a disco | `base_snap?` | confirm | `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `KICAD_CLI_FAILED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
 | `get_component_detail` | Detalle de un footprint: posición, rotación, bbox/courtyard y pads absolutos | `ref`, `kind?="pcb"` | detail | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
+| `draw_board_outline` | Crea un contorno rectangular en Edge.Cuts | `x_mm`, `y_mm`, `width_mm`, `height_mm`, `base_snap?` | confirm | `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
 
 Respuestas de éxito son confirmaciones cortas (≤ 50 tokens, ADR-0004),
 p. ej. `OK move_footprint R5 -> (102.5, 44.0) [snap:12]`.
@@ -239,6 +240,20 @@ idéntico al pre y se DERIVA del snapshot leído (cero pasadas post, sin
 verificación puntual por KIID). G1 + audit + confirm ≤50 tokens con
 `snap_id`; sin retry en la escritura (D-07.1). Confirm:
 `OK add_via GND @(150.0,80.0) d0.80/0.40 [snap:N]`.
+
+**`draw_board_outline` (sesión 12, D-12.5).** Crea un contorno rectangular en
+`Edge.Cuts` vía `kipy.board_types.BoardRectangle` + `create_items` — mismo
+pipeline que `add_track`/`add_via` (verificado en vivo: create sube el conteo
+de shapes Edge.Cuts y devuelve KIID). Superficie mínima: un rectángulo
+(`x_mm, y_mm` esquina superior-izquierda + `width_mm, height_mm`); formas
+complejas fuera de scope. Validaciones: dimensiones positivas
+(`INVALID_PARAMS`), coords razonables (±10 000 mm), y **rechazo si ya existe
+contorno** — usa la lectura `board_outline` (la cabecera `outline:` de la
+sesión 11) para no apilar bordes (`INVALID_PARAMS` con hint). El contorno
+**no** vive en `NormalizedState`, así que —igual que `add_track`— el post-estado
+se DERIVA del snapshot vivo (mtimes=None). G1 + audit + confirm ≤50; sin retry
+(D-07.1). El loop cierra con `save_board`. Confirm:
+`OK draw_board_outline @(10.0,10.0) 80.0x60.0mm Edge.Cuts [snap:N]`.
 
 **`save_board` (sesión 11, D-11.1).** Persiste el board vivo (mutado por IPC)
 al `.kicad_pcb` de disco vía `Board.save()` (comando IPC `SaveDocument`).

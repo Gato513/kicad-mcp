@@ -61,6 +61,7 @@ class _FakeBridge(IpcBridge):
         bbox: BBoxMm,
         initial_positions: dict[str, tuple[float, float]] | None = None,
         divergence_mm: float = 0.0,
+        outline: str = "none",
     ) -> None:
         # No llamamos a super().__init__: eso resolvería el socket path,
         # que no lo necesitamos. Reproducimos el mínimo estado.
@@ -92,6 +93,9 @@ class _FakeBridge(IpcBridge):
         self.moves: list[tuple[str, float, float]] = []
         self.tracks: list[dict[str, Any]] = []
         self.vias: list[dict[str, Any]] = []
+        # Sesión 12 D-12.5: estado del contorno Edge.Cuts simulado.
+        self._outline = outline
+        self.outlines: list[dict[str, Any]] = []
         # Sesión 08 D-08.1: contadores de invocaciones (test contador).
         self.get_footprints_calls: int = 0  # pasadas O(board) que hacen refs+bbox+snapshot
         self.get_footprints_by_id_calls: int = 0  # verificación puntual O(1)
@@ -223,6 +227,27 @@ class _FakeBridge(IpcBridge):
         if timings is not None:
             timings["lookup_ms"] = 0.0
         return "00000000-0000-0000-0000-0000000000ff"
+
+    def board_outline(self, board: BoardHandle) -> tuple[BBoxMm, str]:  # type: ignore[override]
+        return (self._bbox, self._outline)
+
+    def draw_board_outline(  # type: ignore[override]
+        self,
+        board: BoardHandle,
+        x_mm: Mm,
+        y_mm: Mm,
+        width_mm: Mm,
+        height_mm: Mm,
+    ) -> str:
+        self.outlines.append(
+            {
+                "pos": [float(x_mm), float(y_mm)],
+                "width_mm": float(width_mm),
+                "height_mm": float(height_mm),
+            }
+        )
+        self._outline = f"{float(width_mm):.1f}x{float(height_mm):.1f}mm"
+        return "00000000-0000-0000-0000-0000000000ee"
 
     def snapshot_footprints(  # type: ignore[override]
         self, board: BoardHandle
@@ -832,6 +857,90 @@ async def test_move_footprint_falls_back_to_full_read_on_divergence(
     assert bridge.get_footprints_by_id_calls == 1
 
 
+# --- draw_board_outline (D-12.5) ---------------------------------------------
+
+
+def _outline_bridge(outline: str = "none") -> _FakeBridge:
+    return _FakeBridge(
+        refs=["U1", "R1"],
+        nets=["GND", "VCC"],
+        bbox=BBoxMm(Mm(0.0), Mm(0.0), Mm(200.0), Mm(200.0)),
+        initial_positions={"U1": (50.0, 50.0), "R1": (60.0, 60.0)},
+        outline=outline,
+    )
+
+
+@pytest.mark.unit
+async def test_draw_board_outline_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Board sin contorno → crea rectángulo, confirm ≤50, snap vivo, audit."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _outline_bridge(outline="none")
+    mcp = _make_server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "draw_board_outline",
+            {"x_mm": 10.0, "y_mm": 10.0, "width_mm": 80.0, "height_mm": 60.0},
+        )
+    assert not result.isError, _text(result)
+    confirm = _text(result)
+    assert estimate_tokens(confirm) <= 50, f"confirm largo: {confirm!r}"
+    assert confirm.startswith("OK draw_board_outline")
+    assert "Edge.Cuts" in confirm
+    assert len(bridge.outlines) == 1
+    assert bridge.outlines[0] == {"pos": [10.0, 10.0], "width_mm": 80.0, "height_mm": 60.0}
+
+    audit_file = project / ".kicad-mcp" / "audit.jsonl"
+    entries = [json.loads(line) for line in audit_file.read_text().splitlines()]
+    accepted = [e for e in entries if e["tool"] == "draw_board_outline" and "result" in e]
+    assert len(accepted) == 1
+    assert accepted[0]["result"]["snap"] >= 1
+
+
+@pytest.mark.unit
+async def test_draw_board_outline_rejects_existing_outline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Board con contorno → INVALID_PARAMS (no apilar bordes), sin mutar ni backup."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _outline_bridge(outline="100.0x50.0mm")
+    mcp = _make_server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "draw_board_outline",
+            {"x_mm": 10.0, "y_mm": 10.0, "width_mm": 80.0, "height_mm": 60.0},
+        )
+    assert result.isError
+    text = _text(result)
+    assert "INVALID_PARAMS" in text
+    assert "ya tiene un contorno" in text
+    assert len(bridge.outlines) == 0
+    assert not (project / ".kicad-mcp" / "backups").exists()
+
+
+@pytest.mark.unit
+async def test_draw_board_outline_rejects_nonpositive_dims(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """width/height ≤ 0 → INVALID_PARAMS antes de tocar IPC de escritura."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _outline_bridge(outline="none")
+    mcp = _make_server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "draw_board_outline",
+            {"x_mm": 10.0, "y_mm": 10.0, "width_mm": 0.0, "height_mm": 60.0},
+        )
+    assert result.isError
+    assert "INVALID_PARAMS" in _text(result)
+    assert len(bridge.outlines) == 0
+
+
 # --- integration_gui: E2E de add_track contra KiCad real (B2, D-09.2) ---------
 
 
@@ -1035,3 +1144,75 @@ async def test_add_via_round_trip_against_open_board() -> None:
 
             with contextlib.suppress(Exception):
                 raw.remove_items(created)
+
+
+# --- integration_gui: E2E de draw_board_outline (D-12.5) ---------------------
+
+
+def _edge_cuts_count(board: BoardHandle) -> int:
+    """Cuenta shapes en Edge.Cuts del board vivo (para el diff del round-trip)."""
+    from kipy.proto.board.board_types_pb2 import BoardLayer
+
+    return sum(
+        1 for s in board.raw.get_shapes() if getattr(s, "layer", None) == BoardLayer.BL_Edge_Cuts
+    )
+
+
+@pytest.mark.integration_gui
+async def test_draw_board_outline_bridge_create_and_remove_round_trip() -> None:
+    """Bridge E2E: crear un rectángulo en Edge.Cuts sube el conteo y devuelve KIID.
+
+    NET-ZERO al board: crea el rectángulo, verifica el diff (+1) y el KIID, y
+    lo BORRA (por KIID) dentro del test. No deja rastro en el proyecto real.
+    Verifica la capacidad de kipy de crear gráficos (D-12.5).
+    """
+    if os.environ.get("KICAD_MCP_GUI_TEST") != "1":
+        pytest.skip("KICAD_MCP_GUI_TEST != 1; ver docs/pruebas-gui.md")
+
+    bridge = IpcBridge()
+    board = bridge.get_open_board()
+    if board is None:
+        pytest.skip("no hay board abierto en KiCad")
+
+    before = _edge_cuts_count(board)
+    kiid = None
+    try:
+        # Rectángulo lejos del área útil para no colisionar visualmente.
+        kiid = bridge.draw_board_outline(board, Mm(400.0), Mm(400.0), Mm(20.0), Mm(10.0))
+        assert kiid, "el bridge debe devolver un KIID del rectángulo creado"
+        after = _edge_cuts_count(board)
+        assert after == before + 1, f"esperaba {before + 1} shapes Edge.Cuts; hubo {after}"
+    finally:
+        if kiid:
+            bridge.remove_by_kiid(board, kiid)
+    assert _edge_cuts_count(board) == before, "el teardown debe restaurar el conteo original"
+
+
+@pytest.mark.integration_gui
+async def test_draw_board_outline_tool_rejects_existing_outline_on_real_board() -> None:
+    """Tool E2E: el board de prueba YA tiene contorno → INVALID_PARAMS (no apilar)."""
+    if os.environ.get("KICAD_MCP_GUI_TEST") != "1":
+        pytest.skip("KICAD_MCP_GUI_TEST != 1; ver docs/pruebas-gui.md")
+    if not os.environ.get("KICAD_MCP_PROJECT"):
+        pytest.skip("KICAD_MCP_PROJECT no definida; apuntar al proyecto abierto")
+
+    from kicad_mcp.server import create_server
+
+    bridge = IpcBridge()
+    board = bridge.get_open_board()
+    if board is None:
+        pytest.skip("no hay board abierto en KiCad")
+    _bbox, outline = bridge.board_outline(board)
+    if outline == "none":
+        pytest.skip("el board de prueba no tiene contorno; no se puede verificar el rechazo")
+
+    mcp = create_server()
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "draw_board_outline",
+            {"x_mm": 10.0, "y_mm": 10.0, "width_mm": 80.0, "height_mm": 60.0},
+        )
+    assert result.isError
+    text = _text(result)
+    assert "INVALID_PARAMS" in text
+    assert "ya tiene un contorno" in text

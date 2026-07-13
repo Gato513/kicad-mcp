@@ -219,3 +219,43 @@ Con ese marker, la suite rápida quedaría `-m "integration_gui and not
 integration_gui_slow"` y el loop pesado `-m integration_gui_slow`, cada uno
 con KiCad recién quieto. Si el humano lo agrega, marcar los tests del loop
 completo (sesión 11 T6) y los round-trips de `draw_board_outline` con él.
+
+## Recarga manual post-`route_board` (sesión 14, D-14.1)
+
+`route_board` escribe el ruteo a **disco** (headless, subprocess Freerouting +
+`pcbnew` del sistema); el **PCB Editor vivo queda detrás**. Mientras eso pasa,
+el store marca `live_stale=True` y `route_board` bloquea toda mutación IPC y
+`save_board` con `EXTERNAL_EDIT_DETECTED` — si el agente mutara y guardara,
+**pisaría el ruteo con cobre viejo**. Protocolo para volver a un editor
+consistente:
+
+1. **Verificá el confirm** de `route_board`
+   (`OK route_board X/X nets +NNN tracks +NN vias drc_err=0 [snap:N]`). El
+   ruteo YA está en disco y es correcto; el DRC de disco lo confirma
+   (`run_drc`, `export_render pcb_png`, `export_manufacturing` leen el estado
+   ruteado sin bloquearse).
+2. **Recargá el board en KiCad**: en el PCB Editor, **File → Revert**
+   (`Ctrl+…` según binding) para descartar el estado vivo viejo y cargar el
+   `.kicad_pcb` de disco (con el ruteo). Alternativa equivalente: cerrar el
+   board (sin guardar) y reabrir el `.kicad_pcb`. **NO uses `Ctrl+S`** antes de
+   revertir: guardarías el board viejo sobre el ruteo.
+3. **Confirmá la recarga al agente**:
+   `get_world_context(kind='pcb', confirm_reloaded=true)`. Esto limpia el flag
+   `live_stale`; a partir de ahí las mutaciones IPC y `save_board` vuelven a
+   funcionar sobre el board ya ruteado. Sin `confirm_reloaded`, la lectura viva
+   sigue funcionando pero el TOON lleva una línea
+   `[AVISO] editor vivo detras del disco (route_board)` para recordártelo.
+
+**Por qué manual:** KiCad 10 no expone recarga programática del board (D-12.4,
+`reload_in_gui` diferido a KiCad 11). El paso 2 es humano por necesidad, no por
+diseño — es una acción de segundos.
+
+**Test `integration_gui_slow` del round-trip (sesión 14, T3).**
+`tests/test_route_board_gui_slow.py` ejercita el flujo COMPLETO contra una
+**copia** del proyecto chico de spike (`/tmp/spike-route-proyecto`, 24 fp / 64
+conexiones) — **no** el board de 189 fp de gui-test-project (demasiado denso).
+Dura ~2–3 min (dominado por el router). Correr AISLADO:
+`uv run pytest -m integration_gui_slow`. Requiere los tres requisitos de
+sistema (Java ≥17, `KICAD_MCP_FREEROUTING_JAR`, `pcbnew` del sistema) — se
+salta si falta alguno. Simula el paso 2 con `confirm_reloaded=true` (no recarga
+KiCad de verdad, sólo verifica el destrabe del flag).

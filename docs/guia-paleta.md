@@ -83,18 +83,35 @@ lib_id="Device:R", ref="R1", x_mm=100, y_mm=80)` → clona la resistencia →
 > importa es que **el ejemplar esté en la paleta** para que el clone tenga de
 > dónde copiar.
 
-## Flujo completo con la paleta
+## Flujo completo de 9 pasos (con la paleta)
+
+Numeración canónica del flujo end-to-end (tabla 1.3 de
+`ANALISIS-ESTADO-Y-BACKLOG.md`). Tras la sesión 14, **el paso 7 (rutear) lo
+automatiza `route_board`** — el único ruteo autónomo con calidad (100% del
+ratsnest, 0 shorts; ver ADR-0011). Sólo **1** y **5** quedan en manos del
+humano en KiCad 10:
 
 ```
-(humano)  arma paleta.kicad_sch con R, C, LED, conector, regulador, MCU
-(agente)  add_symbol   → clona el símbolo al diseño con ref nueva
-(agente)  set_value    → fija el valor real (10k, 100nF, …)
-(agente)  set_footprint→ asigna la huella (lib:name; existencia la valida KiCad)
-(agente)  connect_pins → nea pines por labels locales (misma hoja)
-(humano)  en KiCad: File → Update PCB from Schematic (F8) — re-anota y
-          trae los componentes al PCB con sus huellas
-(agente)  draw_board_outline, move_footprint, add_track/via, save_board, run_drc…
+1. (HUMANO)  crear/abrir el proyecto (KICAD_MCP_PROJECT) + armar paleta.kicad_sch
+2. (agente)  add_symbol → clona símbolos con ref nueva
+             set_value  → fija el valor real (10k, 100nF, …)
+             connect_pins → conecta pines por labels locales (misma hoja)
+3. (agente)  run_erc → valida el esquemático
+4. (agente)  set_footprint → asigna la huella (lib:name; existencia la valida KiCad)
+5. (HUMANO)  en KiCad: File → Update PCB from Schematic (F8) — re-anota y
+             baja los componentes al PCB con sus huellas (no automatizable en KiCad 10)
+6. (agente)  draw_board_outline + move_footprint → contorno y placement
+7. (agente)  route_board → AUTOROUTING headless a DISCO (Freerouting). Confirm:
+             `OK route_board 64/64 nets +NNN tracks +NN vias drc_err=0 [snap:N]`
+8. (HUMANO)  recargar el board en KiCad (File→Revert) — D-14.1, ver abajo;
+   (agente)  get_world_context(kind='pcb', confirm_reloaded=true) → destraba el flag
+             run_drc → confirma DRC limpio (post-route)
+9. (agente)  export_manufacturing → gerbers + drill (Gate G3: exige DRC sin errores)
 ```
+
+Nota: el paso 8 (recarga) es una acción de segundos, no un paso de diseño — el
+ruteo ya está en disco y correcto; la recarga sólo re-sincroniza el editor vivo
+para que futuras mutaciones IPC no lo pisen.
 
 ## Hazard del editor abierto y recarga (D-12.4)
 
@@ -116,3 +133,16 @@ queda diferido a KiCad 11.
 agente la mute, o aceptá el aviso de recarga cuando aparezca. El PCB Editor
 sí tiene IPC (KiCad 10): las mutaciones de PCB (`move_footprint`, `add_track`,
 `draw_board_outline`, …) se ven en vivo y se bajan a disco con `save_board`.
+
+## Hazard post-`route_board` (split-brain inverso, D-14.1)
+
+`route_board` es el caso **inverso**: escribe el ruteo a **disco** (headless,
+subprocess) y el **PCB Editor vivo queda detrás**. El peligro no es cosmético —
+una mutación IPC + `save_board` posteriores PISARÍAN el ruteo con el cobre
+viejo del editor. Por eso `route_board` activa un flag `live_stale` que
+**bloquea** `move_footprint`/`add_track`/`add_via`/`delete_track`/`delete_via`/
+`save_board` con `EXTERNAL_EDIT_DETECTED` hasta que recargues el board.
+**Protocolo de recarga:** ver `docs/pruebas-gui.md §recarga post-route`. En
+corto: en KiCad **File → Revert** (o cerrar y reabrir el `.kicad_pcb`), y luego
+el agente confirma con `get_world_context(kind='pcb', confirm_reloaded=true)`.
+Las lecturas de disco (`run_drc`, `export_*`, tools `sch`) NO se bloquean.

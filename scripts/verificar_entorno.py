@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -337,6 +338,80 @@ def check_npx() -> None:
             "El humano: instalar Node.js si quiere usar el Inspector; los tests "
             "con cliente MCP in-process no lo requieren",
         )
+
+
+# ------------------------------------------------------- checks autorouting (D-14.5)
+
+
+def check_autoroute() -> None:
+    """Tres checks WARN del flujo de autorouting (``route_board``, sesión 14).
+
+    WARN-level: no bloquean sesiones que no rutean. Con los tres OK, imprime
+    "flujo de autorouting disponible". Requisitos de SISTEMA (no de pyproject):
+    Java ≥17, jar en ``KICAD_MCP_FREEROUTING_JAR``, ``pcbnew`` en el python del
+    SISTEMA.
+    """
+    before = len(RESULTS)
+
+    # (a) java -version ≥ 17 (java escribe la versión a stderr).
+    code, out, err = run(["java", "-version"])
+    if code != 0:
+        add(
+            "WARN",
+            "Autorouting: java",
+            "java no está en PATH",
+            "El humano: instalar Java ≥17 (en Arch: `sudo pacman -S jre-openjdk`) "
+            "si vas a rutear con route_board",
+        )
+    else:
+        m = re.search(r'version "?(\d+)', out + " " + err)
+        major = int(m.group(1)) if m else 0
+        if major >= 17:
+            add("OK", "Autorouting: java", f"java {major} (≥17)")
+        else:
+            add(
+                "WARN",
+                "Autorouting: java",
+                f"java {major} < 17",
+                "El humano: actualizar Java a ≥17 para Freerouting",
+            )
+
+    # (b) jar de freerouting existente.
+    jar = os.environ.get("KICAD_MCP_FREEROUTING_JAR")
+    if not jar:
+        add(
+            "WARN",
+            "Autorouting: jar",
+            "KICAD_MCP_FREEROUTING_JAR no seteada",
+            "El humano: `export KICAD_MCP_FREEROUTING_JAR=<ruta al freerouting.jar>` "
+            "(release en github.com/freerouting/freerouting/releases)",
+        )
+    elif not Path(jar).is_file():
+        add(
+            "WARN",
+            "Autorouting: jar",
+            f"ruta inexistente: {jar}",
+            "El humano: corregir KICAD_MCP_FREEROUTING_JAR",
+        )
+    else:
+        add("OK", "Autorouting: jar", f"{Path(jar).name} presente")
+
+    # (c) pcbnew importable con el python del SISTEMA (NO el venv del proyecto).
+    sys_py = os.environ.get("KICAD_MCP_SYSTEM_PYTHON") or "/usr/bin/python3"
+    code, _, _ = run([sys_py, "-c", "import pcbnew"])
+    if code == 0:
+        add("OK", "Autorouting: pcbnew (python sistema)", f"{sys_py} importa pcbnew")
+    else:
+        add(
+            "WARN",
+            "Autorouting: pcbnew (python sistema)",
+            f"{sys_py} no importa pcbnew",
+            "El humano: instalar KiCad completo (trae pcbnew en el python del sistema); "
+            "o setear KICAD_MCP_SYSTEM_PYTHON al intérprete que sí lo tenga",
+        )
+
+    if all(state == "OK" for state, *_ in RESULTS[before:]):
+        add("OK", "Flujo de autorouting", "disponible (java + jar + pcbnew)")
 
 
 # ------------------------------------------------------- checks integration_gui
@@ -674,6 +749,7 @@ def main() -> int:
     # Bloque de integración (integration + integration_gui).
     if mode in ("integration", "integration_gui"):
         _run(check_pcb_render)
+        _run(check_autoroute)  # D-14.5 (WARN-level, no bloquea)
 
     # Bloque comunes de fondo.
     _run(check_ipc_socket)

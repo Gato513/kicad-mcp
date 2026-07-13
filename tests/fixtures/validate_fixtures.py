@@ -8,6 +8,7 @@ ground_truth.json. Cualquier divergencia es fallo.
 Uso: python3 validate_fixtures.py [dir_fixtures]
 Requiere kicad-cli en PATH (KiCad 7+).
 """
+
 from __future__ import annotations
 
 import json
@@ -22,9 +23,10 @@ def netlist(sch: Path) -> ET.Element:
     with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
         out = Path(tmp.name)
     res = subprocess.run(
-        ["kicad-cli", "sch", "export", "netlist", "--format", "kicadxml",
-         "-o", str(out), str(sch)],
-        capture_output=True, text=True, timeout=60,
+        ["kicad-cli", "sch", "export", "netlist", "--format", "kicadxml", "-o", str(out), str(sch)],
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if res.returncode != 0:
         raise RuntimeError(f"kicad-cli falló: {res.stderr[:400]}")
@@ -36,13 +38,14 @@ def parse(root: ET.Element) -> tuple[dict, dict]:
         c.get("ref"): {
             "value": c.findtext("value") or "",
             "lib": (c.find("libsource").get("lib") + ":" + c.find("libsource").get("part"))
-            if c.find("libsource") is not None else "",
+            if c.find("libsource") is not None
+            else "",
         }
         for c in root.iter("comp")
     }
     nets: dict[str, list[str]] = {}
     for n in root.iter("net"):
-        members = [f'{node.get("ref")}.{node.get("pin")}' for node in n.iter("node")]
+        members = [f"{node.get('ref')}.{node.get('pin')}" for node in n.iter("node")]
         if len(members) >= 2:  # nets de 1 solo nodo = pin sin conectar
             nets[n.get("name")] = sorted(members)
     return comps, nets
@@ -55,8 +58,10 @@ def validate(fixture_dir: Path) -> list[str]:
 
     gt_refs = set(gt["components"])
     if set(comps) != gt_refs:
-        errs.append(f"refs: netlist={sorted(set(comps) - gt_refs)} extra, "
-                    f"faltan={sorted(gt_refs - set(comps))}")
+        errs.append(
+            f"refs: netlist={sorted(set(comps) - gt_refs)} extra, "
+            f"faltan={sorted(gt_refs - set(comps))}"
+        )
     for ref, meta in gt["components"].items():
         if ref in comps and comps[ref]["value"] != meta["value"]:
             errs.append(f"{ref}: value netlist='{comps[ref]['value']}' gt='{meta['value']}'")
@@ -65,8 +70,10 @@ def validate(fixture_dir: Path) -> list[str]:
 
     gt_nets = {k: v for k, v in gt["nets"].items() if len(v) >= 2}
     if set(nets) != set(gt_nets):
-        errs.append(f"nets: extra={sorted(set(nets) - set(gt_nets))}, "
-                    f"faltan={sorted(set(gt_nets) - set(nets))}")
+        errs.append(
+            f"nets: extra={sorted(set(nets) - set(gt_nets))}, "
+            f"faltan={sorted(set(gt_nets) - set(nets))}"
+        )
     for name in set(nets) & set(gt_nets):
         if nets[name] != gt_nets[name]:
             errs.append(f"net {name}: netlist={nets[name]} gt={gt_nets[name]}")
@@ -81,8 +88,7 @@ def validate(fixture_dir: Path) -> list[str]:
 
 def main() -> int:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
-    dirs = sorted(d for d in root.iterdir()
-                  if d.is_dir() and (d / "ground_truth.json").exists())
+    dirs = sorted(d for d in root.iterdir() if d.is_dir() and (d / "ground_truth.json").exists())
     if not dirs:
         print("No hay fixtures con ground_truth.json en", root)
         return 2

@@ -7,6 +7,8 @@ dependencies = [
     # Runtime pre-aprobado (frontera F5: añadir dependencias requiere aprobación humana)
     "mcp[cli]>=1.10,<2.0",
     "pydantic>=2.7,<3.0",
+    "kicad-python>=0.7,<0.8",
+    "kicad-skip>=0.1",
 ]
 
 [dependency-groups]
@@ -28,11 +30,13 @@ build-backend = "hatchling.build"
 packages = ["src/kicad_mcp"]
 
 [tool.pytest.ini_options]
-addopts = "-m 'not integration' -q"
+addopts = "-m 'not integration and not integration_gui' -q"
 markers = [
     "unit: lógica pura, sin I/O",
     "golden: comparación byte a byte contra tests/golden/",
     "integration: requiere kicad-cli o KiCad corriendo (excluida por defecto)",
+    "integration_gui: requiere KiCad GUI abierto con un proyecto de prueba (protocolo manual)",
+    "integration_gui_slow: integration_gui pesado (loops de mutación + refill); correr aislado por la contención IPC (D-12.7)",
 ]
 testpaths = ["tests"]
 asyncio_mode = "auto"

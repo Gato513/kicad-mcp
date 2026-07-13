@@ -1,33 +1,87 @@
 """Encoder TOON v1.
 
-Contrato en `docs/specs/toon-v1.md`. MVP: encoder sin degradación (§2).
-La degradación por presupuesto (§4) y el delta (§3) llegan en v0.3.
+Contrato en ``docs/specs/toon-v1.md``. Cubre:
+- §2 (formato completo, sin degradación) — MVP sesión 01.
+- §4 (degradación por presupuesto, 3 niveles + fallback) — MVP sesión 02.
+- §3 (ΔTOON) — v0.3.
 
-Frontera F1: los golden files bajo `tests/golden/` son la definición
+Frontera F1: los golden files bajo ``tests/golden/`` son la definición
 ejecutable. Ante discrepancia entre este código y el golden, el golden manda.
 """
 
 from __future__ import annotations
 
+import math
 import re
+from dataclasses import dataclass, field, replace
 from typing import Final
 
+from ..errors import ErrorCode, KicadMcpError
+from ..logging_config import estimate_tokens
 from .schema import Component, NormalizedState, Pin
 
 _STRUCTURAL_CHARS: Final = str.maketrans({">": "_", "|": "_", ":": "_"})
 _CONTROL_RE: Final = re.compile(r"[\x00-\x1f\x7f]")
 _MAX_FIELD_LEN: Final = 40
 _NATURAL_SPLIT_RE: Final = re.compile(r"(\d+)")
+_REF_PREFIX_RE: Final = re.compile(r"^([A-Za-z_]+)(\d+)$")
 
-# `docs/specs/toon-v1.md §4`: regex de nets de poder. En §2 la usamos también
+# ``docs/specs/toon-v1.md §4``: regex de nets de poder. En §2 la usamos también
 # para ordenar (poder primero, resto alfabético).
 _POWER_NET_RE: Final = re.compile(
     r"^(GND|VSS|AGND|DGND|PGND|VCC|VDD|VBUS|[0-9]+V[0-9]*|3V3|5V|12V|-?[0-9]+V)$",
     re.IGNORECASE,
 )
+_POWER_COLLAPSE_THRESHOLD: Final = 8  # spec §4 nivel 1: >8 miembros
+_AREA_OK_THRESHOLD: Final = 20  # spec §3: umbral del bloque [AREA]
+
+# Factor de seguridad sobre el estimador ``len/3.5`` (ADR-0004). El estimador
+# es aproximado; sin margen, documentos que apenas caben terminan cortados en
+# el tokenizador real. El golden 002 asume este margen (F1). Ver "Notas de
+# implementación" de ADR-0004.
+_BUDGET_SAFETY_FACTOR: Final = 0.9
 
 # Heurística de inyección (§5.4): estos términos disparan el aviso final.
 _SUSPICIOUS_RE: Final = re.compile(r"(?i)(ignore|system|instruction|prompt|you are)")
+
+_CATEGORY_MAP: Final[dict[str, str]] = {
+    "R": "resistencias",
+    "C": "caps",
+    "L": "inductores",
+    "D": "diodos",
+    "Q": "transistores",
+    "Y": "cristales",
+    "U": "ICs",
+    "J": "conectores",
+    "SW": "switches",
+    "TP": "test_points",
+    "K": "reles",
+    "FB": "ferrites",
+    "F": "fusibles",
+    "BT": "baterias",
+}
+
+
+@dataclass(frozen=True)
+class _Options:
+    """Configuración interna del encoder (nunca expuesta al llamador)."""
+
+    collapse_power: bool = False
+    focus_ref: str | None = None
+    radius_mm: float | None = None
+    omit_pos: bool = False
+    degrade_labels: tuple[str, ...] = field(default_factory=tuple)
+    # Sesión 11 (F-01): ref que el llamador pidió enfocar, con o sin radius.
+    # Habilita el indicador ``area:`` de la cabecera (``area:full`` cuando NO
+    # hubo recorte; ``area:rN@ref`` cuando sí). Distinto de ``focus_ref``, que
+    # solo se setea cuando el recorte está ACTIVO (radius presente). Sin foco
+    # pedido no se emite token (preserva goldens 001/002, byte a byte).
+    focus_requested: str | None = None
+    # Sesión 11 (F-03): geometría de board para la cabecera de ``kind="pcb"``.
+    # ``pcb_bbox`` = (min_x, min_y, max_x, max_y) en mm; ``pcb_outline`` =
+    # ``"none"`` | ``"WxHmm"``. Solo el path pcb de get_world_context los pasa.
+    pcb_bbox: tuple[float, float, float, float] | None = None
+    pcb_outline: str | None = None
 
 
 def _sanitize(raw: str) -> tuple[str, bool]:
@@ -41,7 +95,7 @@ def _sanitize(raw: str) -> tuple[str, bool]:
 
 
 def _natural_key(text: str) -> tuple[object, ...]:
-    """Orden natural (`C1, C2, C10` en vez de `C1, C10, C2`)."""
+    """Orden natural (``C1, C2, C10`` en vez de ``C1, C10, C2``)."""
     return tuple(
         int(part) if part.isdigit() else part.lower()
         for part in _NATURAL_SPLIT_RE.split(text)
@@ -61,7 +115,7 @@ def _format_pin_ref(pin: Pin) -> str:
     return pin.name or ""
 
 
-def _encode_component_line(comp: Component, warnings: list[str]) -> str:
+def _encode_component_line(comp: Component, warnings: list[str], omit_pos: bool) -> str:
     ref, ref_flag = _sanitize(comp.ref)
     value, value_flag = _sanitize(comp.value)
     if ref_flag:
@@ -70,7 +124,8 @@ def _encode_component_line(comp: Component, warnings: list[str]) -> str:
         warnings.append(f"{ref}.value")
 
     pin_tokens: list[str] = []
-    for pin in sorted(comp.pins, key=lambda p: _natural_key(_format_pin_ref(p))):
+    # Orden de emisión = orden de entrada (los goldens 001/002 lo requieren).
+    for pin in comp.pins:
         pin_id, pin_flag = _sanitize(_format_pin_ref(pin))
         if pin_flag:
             warnings.append(f"{ref}.pin[{pin_id}]")
@@ -82,8 +137,11 @@ def _encode_component_line(comp: Component, warnings: list[str]) -> str:
                 warnings.append(f"{ref}.pin[{pin_id}].net")
             pin_tokens.append(f"{pin_id}>{net}")
 
+    body = " ".join(pin_tokens)
+    if omit_pos:
+        return f"{ref}  {value}  {body}"
     pos = f"x{_format_num(comp.x)} y{_format_num(comp.y)}"
-    return f"{ref}  {value}  {pos}  {' '.join(pin_tokens)}"
+    return f"{ref}  {value}  {pos}  {body}"
 
 
 def _collect_nets(components: tuple[Component, ...]) -> dict[str, list[str]]:
@@ -109,35 +167,146 @@ def _sort_nets(nets: dict[str, list[str]]) -> list[str]:
     return sorted(nets.keys(), key=key)
 
 
-def _encode_net_line(net: str, members: list[str]) -> str:
+def _encode_net_line(net: str, members: list[str], *, collapse_power: bool) -> str:
+    if collapse_power and _POWER_NET_RE.match(net) and len(members) > _POWER_COLLAPSE_THRESHOLD:
+        return f"{net}: {len(members)} pines (colapsada)"
     members_sorted = sorted(members, key=_natural_key)
     return f"{net}: {' '.join(members_sorted)}"
 
 
-def encode_state(state: NormalizedState) -> str:
-    """Serializa un estado completo a TOON v1 sin degradación.
+def _in_area_refs(components: tuple[Component, ...], focus_ref: str, radius_mm: float) -> set[str]:
+    focus = next((c for c in components if c.ref == focus_ref), None)
+    if focus is None:
+        raise KicadMcpError(
+            code=ErrorCode.COMPONENT_NOT_FOUND,
+            message=f"El foco ``{focus_ref}`` no existe en el snapshot vigente.",
+            hint="Verificar la referencia; usar get_world_context sin foco.",
+        )
+    result = {focus.ref}
+    for c in components:
+        if math.hypot(c.x - focus.x, c.y - focus.y) <= radius_mm:
+            result.add(c.ref)
+    return result
 
-    Salida terminada en ``\\n`` (una sola línea final, spec §6).
-    """
+
+def _compact_ref_group(refs: list[str]) -> str:
+    """Colapsa una lista de refs con mismo prefijo a rangos ``R1-R3`` o ``R1,R3``."""
+    numbered: list[tuple[str, int, str]] = []
+    unparsed: list[str] = []
+    for r in refs:
+        m = _REF_PREFIX_RE.match(r)
+        if m:
+            numbered.append((m.group(1), int(m.group(2)), r))
+        else:
+            unparsed.append(r)
+    numbered.sort(key=lambda t: (t[0], t[1]))
+    pieces: list[str] = []
+    i = 0
+    while i < len(numbered):
+        prefix, start_n, start_ref = numbered[i]
+        end_n = start_n
+        end_ref = start_ref
+        j = i + 1
+        while j < len(numbered) and numbered[j][0] == prefix and numbered[j][1] == end_n + 1:
+            end_n = numbered[j][1]
+            end_ref = numbered[j][2]
+            j += 1
+        pieces.append(start_ref if end_n == start_n else f"{start_ref}-{end_ref}")
+        i = j
+    pieces.extend(sorted(unparsed, key=_natural_key))
+    return ",".join(pieces)
+
+
+def _format_far_summary(far: tuple[Component, ...]) -> str:
+    """``[FUERA_DE_AREA] N comp: R1-R3(resistencias) …`` — spec §4 nivel 2."""
+    groups: dict[str, list[str]] = {}
+    for c in far:
+        m = _REF_PREFIX_RE.match(c.ref)
+        prefix = m.group(1).upper() if m else c.ref.upper()
+        groups.setdefault(prefix, []).append(c.ref)
+    parts: list[str] = []
+    for prefix in sorted(groups.keys()):
+        category = _CATEGORY_MAP.get(prefix, f"{prefix.lower()}s")
+        parts.append(f"{_compact_ref_group(groups[prefix])}({category})")
+    return f"[FUERA_DE_AREA] {len(far)} comp: {' '.join(parts)}"
+
+
+def _encode_impl(state: NormalizedState, opts: _Options) -> str:
     components_sorted = tuple(sorted(state.components, key=lambda c: _natural_key(c.ref)))
+    total_components = len(components_sorted)
+    if opts.focus_ref is not None and opts.radius_mm is not None:
+        in_area = _in_area_refs(components_sorted, opts.focus_ref, opts.radius_mm)
+    else:
+        in_area = {c.ref for c in components_sorted}
+
     warnings: list[str] = []
-    comp_lines = [_encode_component_line(c, warnings) for c in components_sorted]
+    comp_lines: list[str] = []
+    far_components: list[Component] = []
+    for c in components_sorted:
+        if c.ref in in_area:
+            comp_lines.append(_encode_component_line(c, warnings, opts.omit_pos))
+        else:
+            far_components.append(c)
+    if far_components:
+        comp_lines.append(_format_far_summary(tuple(far_components)))
 
     nets = _collect_nets(components_sorted)
     net_names = _sort_nets(nets)
-    net_lines = [_encode_net_line(n, nets[n]) for n in net_names]
+    net_lines = [
+        _encode_net_line(n, nets[n], collapse_power=opts.collapse_power) for n in net_names
+    ]
 
     kind = state.kind.upper()
-    header = f"{kind}|v1|{len(components_sorted)}c|{len(nets)}n|snap:{state.snap}"
+    # Tokens opcionales entre ``{n}n`` y ``snap:`` (sesión 11). ``snap:`` SIEMPRE
+    # va último: el agente y varios tests extraen el snap con ``split("snap:")``
+    # / ``rsplit(":",1)`` asumiendo que es el campo terminal.
+    extras: list[str] = []
+    if opts.pcb_bbox is not None:  # F-03: bbox del board (kind="pcb")
+        min_x, min_y, max_x, max_y = opts.pcb_bbox
+        extras.append(f"bbox:{min_x:.1f},{min_y:.1f};{max_x:.1f},{max_y:.1f}")
+    if opts.pcb_outline is not None:  # F-03: contorno Edge.Cuts
+        extras.append(f"outline:{opts.pcb_outline}")
+    if opts.focus_requested is not None:  # F-01: qué área recibió el agente
+        if far_components:
+            extras.append(f"area:r{int(opts.radius_mm or 0)}@{opts.focus_requested}")
+        else:
+            extras.append("area:full")
+    extras_str = ("|" + "|".join(extras)) if extras else ""
+    header = f"{kind}|v1|{total_components}c|{len(nets)}n{extras_str}|snap:{state.snap}"
 
-    lines = [header, "[C]", *comp_lines, "[N]", *net_lines]
+    lines: list[str] = [header, "[C]", *comp_lines, "[N]", *net_lines]
     if warnings:
-        # De-duplica preservando el primer orden en que apareció cada campo.
         seen: dict[str, None] = {}
         for w in warnings:
             seen.setdefault(w, None)
         lines.append(f"[AVISO] campos con texto sospechoso: {', '.join(seen)}")
+    if opts.degrade_labels:
+        lines.append(f"[DEGRADADO] {' '.join(opts.degrade_labels)}")
     return "\n".join(lines) + "\n"
+
+
+def encode_state(state: NormalizedState) -> str:
+    """Serializa un estado completo a TOON v1 sin degradación (§2).
+
+    Salida terminada en ``\\n`` (una sola línea final, spec §6).
+    """
+    return _encode_impl(state, _Options())
+
+
+def _try_options_sequence(
+    state: NormalizedState, sequence: list[_Options], max_tokens: int
+) -> tuple[str, _Options] | None:
+    """Devuelve el primer encoding que cabe en ``max_tokens`` (o None si ninguno).
+
+    Usa un umbral ``max_tokens * _BUDGET_SAFETY_FACTOR`` para dejar margen al
+    tokenizador real (ver constante).
+    """
+    threshold = math.floor(max_tokens * _BUDGET_SAFETY_FACTOR)
+    for opts in sequence:
+        encoded = _encode_impl(state, opts)
+        if estimate_tokens(encoded) <= threshold:
+            return encoded, opts
+    return None
 
 
 def encode(
@@ -146,22 +315,150 @@ def encode(
     max_tokens: int = 800,
     focus_ref: str | None = None,
     radius_mm: float | None = None,
+    board_bbox: tuple[float, float, float, float] | None = None,
+    outline: str | None = None,
 ) -> str:
-    """API pública futura: encoder con presupuesto y área local.
+    """Encoder con presupuesto de tokens y área local (spec §4).
 
-    MVP: si el estado cabe sin degradar, devuelve la versión completa. En
-    cuanto haga falta degradar (§4) o filtrar por foco/radio, se lanza
-    ``NotImplementedError`` — se resuelve en v0.3.
+    Aplica los tres niveles de degradación en orden aditivo hasta caber en
+    ``max_tokens``; si ni siquiera con todo aplicado cabe, lanza
+    ``CONTEXT_BUDGET_IMPOSSIBLE`` con hint del presupuesto mínimo calculado.
+
+    ``board_bbox``/``outline`` (sesión 11, F-03): geometría de board que el
+    path ``kind="pcb"`` de ``get_world_context`` inyecta en la cabecera. El
+    indicador de área (F-01) sale de ``focus_ref``: si se pidió foco, la
+    cabecera dice ``area:full`` (sin recorte) o ``area:rN@ref`` (con recorte).
     """
-    _ = (focus_ref, radius_mm)  # aún no aplicados
-    full = encode_state(state)
-    from ..logging_config import estimate_tokens
+    can_focus = focus_ref is not None and radius_mm is not None
 
-    if estimate_tokens(full) > max_tokens:
-        raise NotImplementedError(
-            "Degradación por presupuesto no implementada (docs/specs/toon-v1.md §4, v0.3)."
+    sequence: list[_Options] = [_Options()]
+    sequence.append(_Options(collapse_power=True, degrade_labels=("poder_colapsado",)))
+    if can_focus:
+        sequence.append(
+            _Options(
+                collapse_power=True,
+                focus_ref=focus_ref,
+                radius_mm=radius_mm,
+                degrade_labels=("poder_colapsado", "fuera_de_area"),
+            )
         )
-    return full
+    last_labels = [*sequence[-1].degrade_labels, "posiciones_omitidas"]
+    sequence.append(
+        _Options(
+            collapse_power=True,
+            focus_ref=focus_ref if can_focus else None,
+            radius_mm=radius_mm if can_focus else None,
+            omit_pos=True,
+            degrade_labels=tuple(last_labels),
+        )
+    )
+
+    # Los tokens de cabecera (F-01 area / F-03 pcb bbox+outline) son constantes
+    # a través de la cascada de degradación: se inyectan en cada nivel por igual.
+    sequence = [
+        replace(
+            o,
+            focus_requested=focus_ref,
+            pcb_bbox=board_bbox,
+            pcb_outline=outline,
+        )
+        for o in sequence
+    ]
+
+    found = _try_options_sequence(state, sequence, max_tokens)
+    if found is not None:
+        return found[0]
+
+    # Ni el nivel máximo cabe. Calculamos el presupuesto mínimo con lo más
+    # degradado que sabemos hacer y lo comunicamos como hint accionable.
+    min_encoding = _encode_impl(state, sequence[-1])
+    min_budget = estimate_tokens(min_encoding)
+    hint = (
+        f"presupuesto mínimo estimado ≈ {min_budget} tokens; "
+        "subir max_tokens o reducir el foco/radio"
+    )
+    raise KicadMcpError(
+        code=ErrorCode.CONTEXT_BUDGET_IMPOSSIBLE,
+        message=(
+            f"El estado no cabe en {max_tokens} tokens ni aplicando todos los "
+            "niveles de degradación (spec §4)."
+        ),
+        hint=hint,
+    )
+
+
+def _encode_delta_impl(
+    state: NormalizedState,
+    *,
+    base: NormalizedState,
+    focus_ref: str,
+    radius_mm: float,
+    base_snap: int,
+    opts: _Options,
+) -> str:
+    """Serialización TOON del delta (spec §3) con opciones de degradación.
+
+    ``opts`` transporta las mismas banderas que el encoder de estado completo
+    para que ``get_context_delta`` (sesión 05 T4) reutilice el mecanismo §4.
+    Los cambios (added/removed/updated) siempre se emiten sin degradación:
+    son el corazón del mensaje. Lo que sí se puede degradar es la sección
+    ``[N]`` (colapso de nets de poder) y las posiciones dentro de líneas
+    ``[+]`` / ``[~C]``.
+    """
+    from ..snapshots.delta import compute_delta
+
+    delta = compute_delta(base, state)
+
+    warnings: list[str] = []
+    header = f"DTOON|v1|snap:{state.snap}|base:{base_snap}|area:r{int(radius_mm)}@{focus_ref}"
+    lines: list[str] = [header]
+
+    curr_by_ref = {c.ref: c for c in state.components}
+    curr_nets = _collect_nets(state.components)
+
+    for comp in delta.added:
+        lines.append(f"[+] {_encode_component_line(comp, warnings, opts.omit_pos)}")
+    for ref in delta.removed:
+        ref_clean, _flag = _sanitize(ref)
+        lines.append(f"[-] {ref_clean}")
+    for comp in delta.updated:
+        lines.append(f"[~C] {_encode_component_line(comp, warnings, opts.omit_pos)}")
+    for net in delta.nets_changed:
+        members = curr_nets.get(net, [])
+        if not members:
+            # Net eliminada por completo — no la emitimos (no la modela el
+            # grammar del §3; los componentes involucrados ya aparecen en
+            # [-] / [~C]). Se ejercita en tests unit.
+            continue
+        lines.append(f"[~N] {_encode_net_line(net, members, collapse_power=opts.collapse_power)}")
+
+    # Sección [AREA] (spec §3): refs dentro del radio SIN cambios estructurales.
+    # Se computa contra el estado actual (curr) porque describe la vista que
+    # el agente tiene DESPUÉS de aplicar el delta.
+    changed_refs = (
+        {c.ref for c in delta.added} | set(delta.removed) | {c.ref for c in delta.updated}
+    )
+    if focus_ref in curr_by_ref:
+        area_refs = _in_area_refs(state.components, focus_ref, radius_mm)
+        stable_refs = sorted(area_refs - changed_refs, key=_natural_key)
+        if stable_refs:
+            if len(stable_refs) > _AREA_OK_THRESHOLD:
+                lines.append(f"[AREA] {len(stable_refs)} refs sin cambios")
+            else:
+                lines.append("[AREA]")
+                for ref in stable_refs:
+                    ref_clean, _flag = _sanitize(ref)
+                    lines.append(f"{ref_clean} ok")
+
+    if warnings:
+        seen: dict[str, None] = {}
+        for w in warnings:
+            seen.setdefault(w, None)
+        lines.append(f"[AVISO] campos con texto sospechoso: {', '.join(seen)}")
+    if opts.degrade_labels:
+        lines.append(f"[DEGRADADO] {' '.join(opts.degrade_labels)}")
+
+    return "\n".join(lines) + "\n"
 
 
 def encode_delta(
@@ -172,6 +469,77 @@ def encode_delta(
     radius_mm: float,
     base_snap: int,
 ) -> str:
-    """Placeholder del delta (§3). Se implementa en v0.3."""
-    _ = (state, base, focus_ref, radius_mm, base_snap)
-    raise NotImplementedError("ΔTOON no implementado (docs/specs/toon-v1.md §3, v0.3).")
+    """Serializa el delta ``base → state`` a TOON (spec §3), sin degradación.
+
+    Contrato del golden 003: coincidencia byte-a-byte. Frontera F1.
+    Para aplicar presupuesto y degradación, ver ``encode_delta_with_budget``.
+    """
+    return _encode_delta_impl(
+        state,
+        base=base,
+        focus_ref=focus_ref,
+        radius_mm=radius_mm,
+        base_snap=base_snap,
+        opts=_Options(),
+    )
+
+
+def encode_delta_with_budget(
+    state: NormalizedState,
+    *,
+    base: NormalizedState,
+    focus_ref: str,
+    radius_mm: float,
+    base_snap: int,
+    max_tokens: int,
+) -> str:
+    """Encoder del delta con presupuesto (sesión 05 T4, D-05.5).
+
+    Reusa la secuencia de degradación §4 del estado completo (colapso de
+    poder → omisión de posiciones). No se agrupa ``fuera_de_area`` porque
+    el delta ya está semánticamente localizado (el foco lo define el
+    llamador). Si ni el nivel máximo cabe: ``CONTEXT_BUDGET_IMPOSSIBLE``,
+    igual que ``encode`` (D-05.5).
+    """
+    sequence: list[_Options] = [
+        _Options(),
+        _Options(collapse_power=True, degrade_labels=("poder_colapsado",)),
+        _Options(
+            collapse_power=True,
+            omit_pos=True,
+            degrade_labels=("poder_colapsado", "posiciones_omitidas"),
+        ),
+    ]
+    threshold = math.floor(max_tokens * _BUDGET_SAFETY_FACTOR)
+    for opts in sequence:
+        encoded = _encode_delta_impl(
+            state,
+            base=base,
+            focus_ref=focus_ref,
+            radius_mm=radius_mm,
+            base_snap=base_snap,
+            opts=opts,
+        )
+        if estimate_tokens(encoded) <= threshold:
+            return encoded
+
+    min_encoding = _encode_delta_impl(
+        state,
+        base=base,
+        focus_ref=focus_ref,
+        radius_mm=radius_mm,
+        base_snap=base_snap,
+        opts=sequence[-1],
+    )
+    min_budget = estimate_tokens(min_encoding)
+    raise KicadMcpError(
+        code=ErrorCode.CONTEXT_BUDGET_IMPOSSIBLE,
+        message=(
+            f"El delta no cabe en {max_tokens} tokens ni aplicando todos los "
+            "niveles de degradación (spec §4)."
+        ),
+        hint=(
+            f"presupuesto mínimo estimado ≈ {min_budget} tokens; "
+            "subir max_tokens o reducir el radio"
+        ),
+    )

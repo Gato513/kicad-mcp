@@ -74,3 +74,26 @@ def tool_call_timer() -> Iterator[dict[str, float]]:
         yield result
     finally:
         result["latency_ms"] = (time.perf_counter() - start) * 1000
+
+
+def log_ipc_retry(op_name: str, attempt: int, backoff_ms: int) -> None:
+    """Emite una línea JSON por cada retry por ``AS_BUSY`` (sesión 07 D-07.1).
+
+    ``tool_name="ipc_retry"`` es un canal fijo para grep/filter en producción;
+    ``op_name`` es la operación IPC concreta que fue reintentada
+    (``get_version``, ``list_footprint_refs``, etc.). ``attempt`` es 1-indexed
+    (1 = primer retry) y ``backoff_ms`` es la espera aplicada ANTES de este
+    intento (el intento inicial es ``attempt=0`` y no se loguea).
+    """
+    _LOGGER.info(
+        json.dumps(
+            {
+                "tool_name": "ipc_retry",
+                "op_name": op_name,
+                "attempt": attempt,
+                "backoff_ms": backoff_ms,
+            },
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+    )

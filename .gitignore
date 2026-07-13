@@ -5,3 +5,9 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .kicad-mcp/
+scratchpad/
+
+# Basura de la GUI de KiCad (no son fixtures — evita reincidencia, sesión 09 D3)
+_autosave-*
+*.lck
+*-backups/

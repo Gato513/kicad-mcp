@@ -55,6 +55,10 @@ class RulesReport:
     counts: dict[str, int]
     coordinate_units: str
     kicad_version: str
+    # Ítems del ratsnest sin conectar (``unconnected_items`` del DRC json).
+    # 0 para ERC. ``route_board`` (D-14.2) lo usa como total del ratsnest:
+    # pre-route = conexiones a rutear, post-route = restantes (idealmente 0).
+    unconnected: int = 0
 
 
 def _extract_item(raw: dict[str, Any]) -> Item:
@@ -89,7 +93,9 @@ def _iter_drc_violations(payload: dict[str, Any]) -> Iterable[dict[str, Any]]:
         yield {**v, "severity": v.get("severity", "warning")}
 
 
-def _build_report(payload: dict[str, Any], iterator: Iterable[dict[str, Any]]) -> RulesReport:
+def _build_report(
+    payload: dict[str, Any], iterator: Iterable[dict[str, Any]], *, unconnected: int = 0
+) -> RulesReport:
     violations: list[Violation] = []
     counts: dict[str, int] = {}
     for v in iterator:
@@ -109,6 +115,7 @@ def _build_report(payload: dict[str, Any], iterator: Iterable[dict[str, Any]]) -
         counts=counts,
         coordinate_units=str(payload.get("coordinate_units", "mm")),
         kicad_version=str(payload.get("kicad_version", "")),
+        unconnected=unconnected,
     )
 
 
@@ -198,7 +205,8 @@ def run_drc(pcb_path: Path) -> RulesReport:
         payload = json.loads(tmp_path.read_text(encoding="utf-8"))
     finally:
         tmp_path.unlink(missing_ok=True)
-    return _build_report(payload, _iter_drc_violations(payload))
+    unconnected = len(payload.get("unconnected_items", []))
+    return _build_report(payload, _iter_drc_violations(payload), unconnected=unconnected)
 
 
 def filter_by_min_severity(report: RulesReport, min_severity: str) -> RulesReport:
@@ -213,4 +221,5 @@ def filter_by_min_severity(report: RulesReport, min_severity: str) -> RulesRepor
         counts=counts,
         coordinate_units=report.coordinate_units,
         kicad_version=report.kicad_version,
+        unconnected=report.unconnected,
     )

@@ -177,6 +177,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         focus_ref: str | None = None,
         radius_mm: float | None = None,
         kind: Literal["sch", "pcb"] = "sch",
+        confirm_reloaded: bool = False,
     ) -> str:
         # Devuelve el string TOON puro (sin envelope JSON). La cabecera
         # ya lleva ``snap`` y ``kind`` — reintroducir un wrapper añadía
@@ -199,6 +200,15 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             cache_hit = False
             board_bbox: tuple[float, float, float, float] | None = None
             outline: str | None = None
+            # D-14.1: si ``route_board`` dejó el ruteo en disco y el editor vivo
+            # quedó detrás, la lectura viva sigue funcionando pero lleva un aviso
+            # en el TOON. ``confirm_reloaded=True`` (tras recargar en KiCad) limpia
+            # el flag y la lectura sale sin aviso.
+            store = get_default_store()
+            stale_before = store.is_live_stale()
+            if kind == "pcb" and confirm_reloaded:
+                store.clear_live_stale()
+            emit_stale_notice = kind == "pcb" and stale_before and not confirm_reloaded
             if kind == "pcb":
                 # Board vivo: KiCad cerrado → KICAD_NOT_RUNNING (fast-fail del
                 # bridge); PCB Editor cerrado → KICAD_CLI_FAILED con
@@ -237,6 +247,8 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 board_bbox=board_bbox,
                 outline=outline,
             )
+            if emit_stale_notice:
+                toon = "[AVISO] editor vivo detras del disco (route_board)\n" + toon
         log_tool_call(
             tool_name="get_world_context",
             latency_ms=timer["latency_ms"],
@@ -248,6 +260,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 "max_tokens": max_tokens,
                 "cache_hit": cache_hit,
                 "kind": state.kind,
+                "confirm_reloaded": confirm_reloaded,
             },
         )
         return toon

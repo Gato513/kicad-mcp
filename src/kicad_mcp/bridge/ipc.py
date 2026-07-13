@@ -796,6 +796,25 @@ class IpcBridge:
                     return False
                 raise
 
+    def get_open_board_path(self, board: BoardHandle) -> Path | None:
+        """Ruta en disco del board abierto, o ``None`` si no es determinable.
+
+        Lee ``document.project.path`` + ``document.board_filename`` del proto
+        que kipy cachea en el ``Board`` (atributo local — sin IPC). D-14.3 lo
+        usa para decidir el ``save_board`` implícito de ``route_board`` de forma
+        SEGURA: sólo baja live→disco si el board abierto ES el que se va a
+        rutear; si difiere (o no se puede determinar), no toca el board vivo.
+        """
+        doc = getattr(board.raw, "document", None)
+        if doc is None:
+            return None
+        filename = str(getattr(doc, "board_filename", "") or "")
+        project = getattr(doc, "project", None)
+        project_path = str(getattr(project, "path", "") or "") if project is not None else ""
+        if not filename or not project_path:
+            return None
+        return Path(project_path) / filename
+
     # -- consultas del board (para validación previa a mutaciones) ------------
 
     def list_footprint_refs(self, board: BoardHandle) -> list[str]:

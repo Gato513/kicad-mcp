@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import difflib
 import math
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..audit.logger import record as audit_record
+from ..bridge.autoroute import run_autoroute
 from ..bridge.ipc import (
     BoardHandle,
     ComponentDetail,
@@ -30,6 +32,7 @@ from ..bridge.ipc import (
     IpcBridge,
     Mm,
 )
+from ..bridge.rules import run_drc
 from ..bridge.state_builder import build_state_from_board, build_state_from_snapshot
 from ..errors import ErrorCode, KicadMcpError
 from ..gates.g1 import ensure_session_backup
@@ -48,6 +51,28 @@ if TYPE_CHECKING:
 
 def _project_root() -> Path:
     return _resolve_root_schematic().parent
+
+
+def _guard_live_stale() -> None:
+    """D-14.1: bloquea mutar/guardar el board vivo si el disco tiene un ruteo
+    (de ``route_board``) que el editor vivo aún no refleja.
+
+    Una mutación IPC + ``save_board`` posteriores PISARÍAN el ruteo con cobre
+    viejo. Se destraba recargando el board en KiCad (File→Revert) y confirmando
+    con ``get_world_context(kind='pcb', confirm_reloaded=true)`` (ADR-0011).
+    Las tools de DISCO (run_drc, export_*, sch) NO pasan por acá: leen el estado
+    correcto y no se bloquean.
+    """
+    if get_default_store().is_live_stale():
+        raise KicadMcpError(
+            code=ErrorCode.EXTERNAL_EDIT_DETECTED,
+            message="El disco tiene el ruteo de route_board y el editor vivo no.",
+            hint=(
+                "el disco tiene el ruteo y el editor vivo no; recargá el board en "
+                "KiCad (File→Revert) y confirmá con "
+                "get_world_context(kind='pcb', confirm_reloaded=true)"
+            ),
+        )
 
 
 def _similars(target: str, candidates: list[str], *, limit: int = 3) -> list[str]:
@@ -301,6 +326,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
     )
     def move_footprint(ref: str, x_mm: float, y_mm: float, base_snap: int | None = None) -> str:
         with tool_call_timer() as timer:
+            _guard_live_stale()  # D-14.1
             root = _project_root()
             # Validación de snap opcional (sesión 04 T4). Se hace ANTES de
             # tocar IPC para que un stale/edición externa no dispare G1.
@@ -420,6 +446,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         base_snap: int | None = None,
     ) -> str:
         with tool_call_timer() as timer:
+            _guard_live_stale()  # D-14.1
             root = _project_root()
             if base_snap is not None:
                 _check_base_snap(base_snap)
@@ -567,6 +594,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # sin re-lectura ni verificación puntual por KIID). No hay retry en la
         # escritura (D-07.1): add_via viaja por _supervise directo en el bridge.
         with tool_call_timer() as timer:
+            _guard_live_stale()  # D-14.1
             root = _project_root()
             if base_snap is not None:
                 _check_base_snap(base_snap)
@@ -673,6 +701,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # ecoamos su snap_id. G1 aplica (backup 1ª vez por sesión). Sin retry
         # en la escritura (D-07.1). busy → se propaga tal cual.
         with tool_call_timer() as timer:
+            _guard_live_stale()  # D-14.1: no pisar el ruteo de disco con vivo viejo
             root = _project_root()
             if base_snap is not None:
                 _check_base_snap(base_snap)
@@ -721,6 +750,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         snapshot derivado del pre-estado (el borrado no altera el
         NormalizedState de footprints, patrón add_track/add_via).
         """
+        _guard_live_stale()  # D-14.1
         root = _project_root()
         err_params = {"net": net, "pos": [x_mm, y_mm]}
         if base_snap is not None:
@@ -948,6 +978,112 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             extra={"base_snap": base_snap, "width_mm": width_mm, "height_mm": height_mm},
         )
         return confirmation
+
+    @mcp.tool(
+        name="route_board",
+        description="Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a disco",
+    )
+    def route_board(max_passes: int | None = None, timeout_s: int = 600) -> str:
+        # D-14.2/D-14.3: mutación masiva de cobre SIN gate interactivo (es cobre
+        # re-ruteable; G1 + git protegen). Pipeline: save_board implícito
+        # (live→disco, sólo si el board abierto ES el target) → DRC pre-route
+        # (ratsnest total) → round-trip DSN/Freerouting/SES (subprocess, python
+        # del SISTEMA + java; NUNCA el venv) → reemplazo atómico del .kicad_pcb →
+        # DRC post-route (conteo de errores) → snapshot de DISCO + flag D-14.1.
+        # El router corre como subprocess, no por IPC: no toca la cola IPC
+        # (contención D-12.7 intacta).
+        with tool_call_timer() as timer:
+            pcb_path = _resolve_root_pcb()
+            root = pcb_path.parent
+            backup_info = ensure_session_backup(root)  # Gate G1 pre-route
+            store = get_default_store()
+
+            # save_board implícito seguro (D-14.3): sólo baja live→disco si el
+            # board abierto es el target y NO hay un ruteo de disco pendiente de
+            # recargar (si live_stale ya está activo, el vivo está detrás del
+            # disco y guardar lo PISARÍA — se salta).
+            live_saved = False
+            pre_footprints: tuple[FootprintData, ...] = ()
+            open_board = _open_board_or_none(bridge)
+            if open_board is not None and not store.is_live_stale():
+                open_path = bridge.get_open_board_path(open_board)
+                if open_path is not None and open_path.resolve() == pcb_path.resolve():
+                    bridge.save_board(open_board)  # baja live→disco
+                    live_saved = True
+                    pre_footprints = bridge.read_board_context(open_board).footprints
+
+            # Ratsnest total pre-route (unconnected del DRC de disco, D-14.2).
+            total = run_drc(pcb_path).unconnected
+
+            # Round-trip headless. Los errores tipados (D-14.4) se propagan.
+            workdir = root / ".kicad-mcp" / "autoroute"
+            result = run_autoroute(pcb_path, workdir, max_passes=max_passes, timeout_s=timeout_s)
+            # Reemplazo ATÓMICO del board por el ruteado (mismo filesystem →
+            # os.replace no deja el .kicad_pcb a medio escribir).
+            os.replace(result.routed_pcb, pcb_path)
+
+            # DRC post-route (bridge.rules, como G3) para el conteo de errores.
+            post_report = run_drc(pcb_path)
+            drc_err = sum(1 for v in post_report.violations if v.severity == "error")
+            routed = max(total - post_report.unconnected, 0)
+
+            # Snapshot de DISCO: el ruteo no mueve footprints, se deriva de los
+            # leídos pre-route (o vacío si el board no estaba abierto/coincidía;
+            # el agente re-sincroniza con confirm_reloaded tras recargar).
+            new_state = build_state_from_snapshot(pre_footprints)
+            mtimes = collect_project_mtimes(_resolve_root_schematic_or_pcb())
+            snap_id = store.register(new_state, mtimes)
+            store.mark_live_stale(snap_id)  # D-14.1: disco adelante del vivo
+
+            tracks_added = result.tracks_after - result.tracks_before
+            vias_added = result.vias_after - result.vias_before
+            audit_record(
+                root,
+                tool="route_board",
+                params={"max_passes": max_passes, "timeout_s": timeout_s},
+                result={
+                    "snap": snap_id,
+                    "backup": backup_info.get("backup"),
+                    "tracks_added": tracks_added,
+                    "vias_added": vias_added,
+                    "nets_routed": routed,
+                    "nets_total": total,
+                    "drc_err": drc_err,
+                    "live_saved": live_saved,
+                },
+            )
+            confirmation = (
+                f"OK route_board {routed}/{total} nets +{tracks_added} tracks "
+                f"+{vias_added} vias drc_err={drc_err} [snap:{snap_id}]"
+            )
+        log_tool_call(
+            tool_name="route_board",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(confirmation),
+            snap_id=snap_id,
+            extra={
+                "export_ms": round(result.export_ms, 3),
+                "route_ms": round(result.route_ms, 3),
+                "import_ms": round(result.import_ms, 3),
+                "live_saved": live_saved,
+                "drc_err": drc_err,
+            },
+        )
+        return confirmation
+
+
+def _open_board_or_none(bridge: IpcBridge) -> BoardHandle | None:
+    """Board abierto, o ``None`` si KiCad no corre / no hay board (D-14.3).
+
+    ``route_board`` opera sobre DISCO: la ausencia del board vivo no es un error
+    (el ruteo no lo necesita), sólo desactiva el ``save_board`` implícito.
+    """
+    try:
+        return bridge.get_open_board()
+    except KicadMcpError as exc:
+        if exc.code is ErrorCode.KICAD_NOT_RUNNING:
+            return None
+        raise
 
 
 def _resolve_root_schematic_or_pcb() -> Path:

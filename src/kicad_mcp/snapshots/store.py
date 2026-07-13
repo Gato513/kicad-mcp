@@ -65,6 +65,14 @@ class SnapshotStore:
         self._entries: OrderedDict[SnapId, SnapshotEntry] = OrderedDict()
         self._next_id: SnapId = 1
         self._lock = threading.Lock()
+        # D-14.1 (split-brain post-route): ``route_board`` escribe el ruteo a
+        # DISCO y el board vivo de KiCad queda detrás. Mientras el flag esté
+        # activo, las mutaciones IPC y ``save_board`` FALLAN
+        # (``EXTERNAL_EDIT_DETECTED``) para no pisar el ruteo con cobre viejo;
+        # se limpia con ``get_world_context(kind='pcb', confirm_reloaded=true)``
+        # tras recargar el board en KiCad (File→Revert).
+        self._live_stale: bool = False
+        self._live_stale_snap: SnapId | None = None
 
     def register(
         self,
@@ -101,11 +109,37 @@ class SnapshotStore:
     def retention(self) -> int:
         return self._retention
 
+    # --- flag D-14.1 (split-brain post-route) --------------------------------
+
+    def mark_live_stale(self, snap_id: SnapId) -> None:
+        """Marca que el DISCO tiene el ruteo y el editor vivo quedó detrás.
+
+        ``snap_id`` es el snapshot de DISCO que ``route_board`` registró tras
+        el ruteo. Con el flag activo, las tools que mutan el board vivo o lo
+        guardan deben fallar con ``EXTERNAL_EDIT_DETECTED`` (ver ADR-0011).
+        """
+        with self._lock:
+            self._live_stale = True
+            self._live_stale_snap = snap_id
+
+    def clear_live_stale(self) -> None:
+        """Limpia el flag D-14.1 (el humano recargó el board en KiCad)."""
+        with self._lock:
+            self._live_stale = False
+            self._live_stale_snap = None
+
+    def is_live_stale(self) -> bool:
+        """``True`` si hay un ruteo en disco que el editor vivo no refleja."""
+        with self._lock:
+            return self._live_stale
+
     def reset(self) -> None:
         """Test-only: limpia el store y resetea el contador. NO usar en runtime."""
         with self._lock:
             self._entries.clear()
             self._next_id = 1
+            self._live_stale = False
+            self._live_stale_snap = None
 
 
 # --- singleton por proceso servidor ------------------------------------------

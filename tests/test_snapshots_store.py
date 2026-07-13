@@ -228,6 +228,20 @@ def test_register_copies_mtimes_defensively() -> None:
 
 
 @pytest.mark.unit
+def test_live_stale_flag_lifecycle() -> None:
+    """D-14.1: mark → is True; clear → is False; reset limpia el flag."""
+    store = SnapshotStore()
+    assert store.is_live_stale() is False
+    store.mark_live_stale(42)
+    assert store.is_live_stale() is True
+    store.clear_live_stale()
+    assert store.is_live_stale() is False
+    store.mark_live_stale(7)
+    store.reset()
+    assert store.is_live_stale() is False
+
+
+@pytest.mark.unit
 def test_collect_project_mtimes_includes_both_files(tmp_path: Path) -> None:
     sch = tmp_path / "p.kicad_sch"
     pcb = tmp_path / "p.kicad_pcb"

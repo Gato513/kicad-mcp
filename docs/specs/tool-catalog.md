@@ -64,7 +64,7 @@ Ejemplo con KiCad cerrado:
 
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
-| `get_world_context` | Estado del proyecto (sch de disco o pcb vivo) en TOON v1 | `max_tokens?=800`, `focus_ref?`, `radius_mm?`, `kind?="sch"` | full | `KICAD_TIMEOUT`, `KICAD_NOT_RUNNING`, `KICAD_CLI_FAILED`, `PROJECT_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `UNSUPPORTED_HIERARCHY` |
+| `get_world_context` | Estado del proyecto (sch de disco o pcb vivo) en TOON v1 | `max_tokens?=800`, `focus_ref?`, `radius_mm?`, `kind?="sch"`, `confirm_reloaded?=false` | full | `KICAD_TIMEOUT`, `KICAD_NOT_RUNNING`, `KICAD_CLI_FAILED`, `PROJECT_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `UNSUPPORTED_HIERARCHY` |
 | `get_context_delta` | Delta TOON entre un `base_snap` y el estado actual | `base_snap`, `focus_ref`, `radius_mm`, `max_tokens?` | delta | `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `UNSUPPORTED_HIERARCHY` |
 
 Notas de `get_world_context` (parámetro `kind`, sesión 09 D-09.1):
@@ -98,6 +98,17 @@ Notas de `get_world_context` (parámetro `kind`, sesión 09 D-09.1):
     `data.ipc_status="unhandled"` (mapeo D-07.2); el hint dirige a abrir el
     PCB Editor.
   - `kind` distinto de `"sch"`/`"pcb"` → `INVALID_PARAMS`.
+- **`confirm_reloaded` (sesión 14, D-14.1).** Sólo relevante con `kind="pcb"`.
+  Tras `route_board`, el DISCO tiene el ruteo y el editor vivo quedó detrás
+  (flag `live_stale` en el store). Con el flag activo:
+  - `confirm_reloaded=false` (default): la lectura viva **funciona** pero el
+    TOON lleva una primera línea de aviso
+    `[AVISO] editor vivo detras del disco (route_board)`.
+  - `confirm_reloaded=true`: el agente afirma que el humano recargó el board en
+    KiCad (File→Revert); limpia el flag y la lectura sale sin aviso. Es el
+    destrabe de las mutaciones/`save_board` que el flag bloquea (ver §pcb).
+  Para `kind="sch"` el parámetro se ignora (las lecturas de disco no se ven
+  afectadas por el flag).
 - Ejemplo `kind="pcb"` (board de prueba, cabecera):
 
   ```
@@ -222,6 +233,17 @@ audit line JSONL por cada mutación aceptada o rechazada.
 | `save_board` | Persiste el board vivo del PCB Editor a disco | `base_snap?` | confirm | `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `KICAD_CLI_FAILED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
 | `get_component_detail` | Detalle de un footprint: posición, rotación, bbox/courtyard y pads absolutos | `ref`, `kind?="pcb"` | detail | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 | `draw_board_outline` | Crea un contorno rectangular en Edge.Cuts | `x_mm`, `y_mm`, `width_mm`, `height_mm`, `base_snap?` | confirm | `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
+| `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO | `max_passes?`, `timeout_s?=600` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED` |
+
+**Flag `live_stale` (sesión 14, D-14.1).** Mientras `route_board` haya dejado un
+ruteo en disco que el editor vivo no refleja, `move_footprint`, `add_track`,
+`add_via`, `delete_track`, `delete_via` y `save_board` FALLAN con
+`EXTERNAL_EDIT_DETECTED` (código existente, F3 intacta: el disco cambió por
+fuera del editor vivo). Hint fijo: "el disco tiene el ruteo y el editor vivo no;
+recargá el board en KiCad (File→Revert) y confirmá con
+`get_world_context(kind='pcb', confirm_reloaded=true)`". El destrabe es ese
+`confirm_reloaded=true`. Las tools de DISCO (`run_drc`, `export_*`, tools `sch`)
+NO se bloquean: leen el estado correcto. Ver ADR-0011.
 
 Respuestas de éxito son confirmaciones cortas (≤ 50 tokens, ADR-0004),
 p. ej. `OK move_footprint R5 -> (102.5, 44.0) [snap:12]`.
@@ -306,6 +328,26 @@ falta uno de los dos pads). La resolución pad→coordenada absoluta usa la mism
 lógica de `get_component_detail` (los pads ya vienen absolutos/rotados de
 kipy). `REF` inexistente → `COMPONENT_NOT_FOUND`; `PAD` inexistente en ese
 footprint → `INVALID_PARAMS` con los pads disponibles en el hint.
+
+**`route_board` (sesión 14, D-14.1..D-14.4, ADR-0011).** Autorouting headless
+con **Freerouting** (jar, subprocess java) vía round-trip Specctra con `pcbnew`
+SWIG del python del **SISTEMA** (NO el venv; `pcbnew` lo instala KiCad, F5
+intacta). **Muta cobre en masa SIN gate interactivo** (D-14.2, coherente con
+D-R8/ADR-0010: es cobre re-ruteable, G1+git protegen). Pipeline: `save_board`
+implícito (live→disco, **sólo si el board abierto ES el target**) → DRC
+pre-route (ratsnest total) → export DSN → Freerouting (acotado por `timeout_s`)
+→ import SES → **reemplazo atómico** del `.kicad_pcb` → DRC post-route (conteo de
+errores, `bridge.rules` como G3) → snapshot de DISCO + **flag `live_stale`**
+(D-14.1, ver arriba). El router corre como subprocess, no por IPC: no toca la
+cola IPC de profundidad 1 (contención D-12.7 intacta). Requisitos de **sistema**
+(no de `pyproject`, estilo kicad-cli): Java ≥17, `KICAD_MCP_FREEROUTING_JAR`
+apuntando al jar, `pcbnew` en el python del sistema. Confirm (≤50 tok):
+`OK route_board 64/64 nets +318 tracks +26 vias drc_err=0 [snap:N]` — `X/Y`
+= conexiones del ratsnest resueltas / total pre-route. Errores tipados (D-14.4,
+F3 — cero códigos nuevos): jar/java/`pcbnew` ausentes → `KICAD_CLI_MISSING`;
+export DSN falla (típico: sin Edge.Cuts → hint `draw_board_outline`), Freerouting
+exit≠0/SES vacío, import SES falla → `KICAD_CLI_FAILED`; Freerouting timeout →
+`KICAD_TIMEOUT`.
 
 **`get_component_detail` (sesión 11, D-11.3).** Detalle geométrico de un
 footprint **bajo demanda** (sale de reservados; ver más abajo). Devuelve, en
@@ -464,7 +506,8 @@ abierto, el humano acepta el aviso de recarga" queda documentado
 (`docs/guia-paleta.md`); no se construye nada.
 v0.3: `get_session_summary`, `checkpoint` (el ya implementado
 `get_context_delta` se mueve a la categoría `world`).
-v0.4: `suggest_positions`, `route_with_freerouting`.
+v0.4: `suggest_positions`. (`route_with_freerouting` se realizó como
+`route_board` en la sesión 14 — categoría `pcb`, D-14.1..D-14.4/ADR-0011.)
 
 **Consultas de detalle (D-09.4 / D-R7 — reservadas, no implementadas):**
 `get_net_detail`, `list_unconnected`. Se implementan **sólo** si el dogfooding

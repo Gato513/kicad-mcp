@@ -1,76 +1,70 @@
-# Hoja de ruta v2 — kicad-mcp
+# Hoja de ruta v2.1 — kicad-mcp (post-Dogfooding Etapa 1)
 
-**Fecha:** 2026-07-11 · **Reemplaza a:** la hoja de ruta de
-`docs/arquitectura.md §10` (obsoleta tras las sesiones 06-08).
-**Fuentes:** `ANALISIS-ESTADO-Y-BACKLOG.md` (evidencia y candidatos),
-historial de decisiones D-04..D-08 (arquitecto), y objetivos declarados
-del humano (2026-07-11).
+**Fecha:** 2026-07-12 · **Reemplaza a:** HOJA-DE-RUTA-V2.md
+**Disparador:** Dogfooding Etapa 1 (2026-07-11, `dogfood-fricciones.md`,
+nota 5/10). Los objetivos rectores y las decisiones D-R1..D-R7 de la v2
+siguen vigentes; cambia el orden y contenido de las sesiones.
 
-## Objetivos rectores (declarados por el humano, en orden)
+## Qué reveló el dogfooding (resumen ejecutivo)
 
-1. **Herramienta personal para proyectos reales** — flujo confiable,
-   rápido y barato en tokens para que agentes LLM (Claude Code con
-   Opus/Sonnet) operen KiCad. Placas típicas: 10-60 componentes,
-   una sola hoja.
-2. **Rust v0.4: DIFERIDO con condiciones** (ratificado). Se re-evalúa
-   solo si (a) la Eval A valida el encoder que se portaría, y (b) el
-   dogfooding revela un cuello de botella propio (no de KiCad).
-   Evidencia actual: 89 % de la latencia es IPC/UI de KiCad; el cómputo
-   Python atacable es <0,3 %. Se formaliza en ADR (sesión 09).
-3. **Open source: después** de que la herramienta resuelva el flujo
-   personal.
-4. Portfolio/aprendizaje: no guía decisiones.
+- **Lectura y economía: excelentes.** TOON 24comp+41nets en ~1600 tok,
+  delta "la joya", confirms ~25 tok, batching paralelo, 34 llamadas /
+  0 crashes, G3 inviolable. No tocar lo que funciona.
+- **Escritura: el loop no cierra.** Tres gaps estructurales:
+  F-05 split-brain live/disco (sin `save_board`, render/DRC/export ven
+  el board viejo); F-08 sin borrado (un track malo es permanente →
+  DRC limpio inalcanzable); F-04/06 sin geometría de pads (colocar y
+  rutear exige parsear el archivo crudo).
+- **D-R3 respondido con números:** ruteo manual completo NO viable
+  (~300 tok/track de razonamiento, 13 shorts en el subconjunto fácil,
+  25-40 turnos extrapolados). → La condición de re-entrada de
+  autorouter SE DISPARÓ.
 
-## Decisiones de re-planificación (de las respuestas del humano)
+## Decisiones nuevas (arquitecto, 2026-07-12)
 
-- **D-R1:** Multi-hoja (`UNSUPPORTED_HIERARCHY`) diferido. Todo el
-  esfuerzo va a single-sheet sólido. El error tipado se mantiene como
-  frontera honesta.
-- **D-R2:** Pasos manuales aceptados de forma estable: crear proyecto,
-  mantener la hoja paleta, F8 (sync sch→pcb). El agente cubre el resto.
-- **D-R3:** Ruteo: el agente rutea con `add_track`+`add_via`. La
-  calidad se MIDE en el dogfooding Etapa 1; si no alcanza, Freerouting
-  sube al roadmap (hoy no se promete).
-- **D-R4:** "Hoja paleta" es el puente estable para símbolos.
-  `add_symbol` desde librerías externas (A4) queda diferido hasta que
-  el uso real demuestre que la paleta no alcanza.
-- **D-R5:** Cliente objetivo: Claude Code (Opus/Sonnet). Acepta
-  imágenes → el render PNG del board entra al plan como feedback
-  visual. La Eval A usa el tokenizador real de Claude.
-- **D-R6:** Conectar por labels ES una implementación válida de
-  `connect_pins` (práctica estándar de KiCad); el nombre se conserva
-  con semántica documentada.
-- **D-R7:** Tools fantasma del catálogo (`get_component_detail`,
-  `get_net_detail`, `list_unconnected`) → se mueven a "reservados" en
-  la 09. Se implementan solo si el dogfooding demuestra que el agente
-  las necesita. `discover_tools` se elimina del diseño (12 tools no
-  justifican un router).
+- **D-R8 (borrado de cobre sin G2):** `delete_track`/`delete_via`
+  entran sin gate interactivo — el cobre es re-agregable en un call y
+  está protegido por G1+git; sin borrado el loop de DRC no cierra.
+  Borrar footprints/componentes SIGUE siendo territorio G2 (no existe
+  aún → fuera de scope). Se documenta la asimetría en ADR.
+- **D-R9 (re-entrada de `get_component_detail`):** condición D-R7
+  cumplida (el dogfooding lo demostró). Se implementa con bbox/
+  courtyard + pads absolutos, bajo demanda. `get_net_detail` /
+  `list_unconnected` siguen reservadas (sin evidencia todavía).
+- **D-R10 (sin clearance-check en add_track):** no se reconstruye el
+  DRC dentro de la tool. El loop save→DRC→delete→reintentar es el
+  mecanismo. Se reabre solo si el Dogfooding 2 muestra tasa de shorts
+  insoportable con el loop cerrado.
+- **D-R11 (autorouter al plan):** spike en sesión 13 — Freerouting
+  (export DSN → route → import SES) vs router de KiCad por IPC si
+  existe. `add_track`/`add_via` quedan como retoque. Sin promesa de
+  integración hasta el veredicto del spike.
 
-## Plan de sesiones
+## Plan de sesiones (v2.1)
 
-| Sesión | Tipo | Contenido | Resultado esperado |
+| Sesión | Tipo | Contenido | Cierra fricciones |
 |---|---|---|---|
-| **09** | Dev | B1 leer PCB sin mutar · B2 E2E `add_track` · B3 `add_via` · `pcb_png` real (kicad-cli render) · ADR Rust diferido · catálogo honesto (D-R7) · higiene D3 | Pipeline PCB completo, confiable y visible |
-| **10** | **Dogfooding Etapa 1** | El humano + agente sobre COPIA de una placa real suya (sch terminado + F8 hecho): colocar, rutear, DRC, exportar. Registro de fricciones | Priorización con datos reales; veredicto de ruteo (D-R3) |
-| **11** | Dev | A3 doc paleta · A1 `set_value`+`set_footprint` · A5 `reload_in_gui` · spike A2 (labels) · D1+D4 (deuda tests) | Properties del sch editables; spike de conexión resuelto |
-| **12** | Dev | A2 tool `connect_pins` por labels + tests · ajustes del dogfooding 1 | Flujo sch mínimo completo (con paleta + F8 humanos) |
-| **13** | **Dogfooding Etapa 2** | Flujo end-to-end: breakout real desde hoja vacía (con paleta) hasta gerbers | Criterio de éxito del objetivo 1 |
-| Flexible | Lab | **Eval A** (TOON vs JSON/CSV con tokenizador de Claude, ~200 llamadas API del humano). Recomendado: entre 10 y 11, con muestras del dogfooding | Valida la premisa del formato; condición (a) de Rust |
+| **11** | Dev | **Cerrar el loop de escritura PCB:** `save_board` · `delete_track`/`delete_via` (D-R8) · `get_component_detail` (D-R9) · `add_track` anclado a pads · quick wins F-01(doc)/F-02 | F-05, F-08, F-04, F-06, F-07, F-11 |
+| **12** | Dev | **Flujo sch mínimo + calidad de loop:** A1 `set_value`+`set_footprint` · A2 `connect_pins` por labels (spike+tool) · A3 doc paleta · A5 `reload_in_gui` · `draw_board_outline` (Edge.Cuts) · F-10 DRC enriquecido/paginado | F-03, F-10 + flujo sch |
+| **13** | Spike | **Autorouting (D-R11):** viabilidad Freerouting vs router IPC, medición sobre la placa del dogfooding, veredicto con números. Si es viable y barato: integración mínima | D-R3 |
+| **14** | **Dogfooding Etapa 2** | Flujo end-to-end real: sch desde paleta → PCB → ruteo (con el veredicto del 13 aplicado) → DRC limpio → gerbers | Criterio de éxito del objetivo 1 |
+| Flexible | Lab | Eval A (sin cambios de la v2) | — |
 
-## Diferidos con condición de re-entrada
+## Diferidos (v2 sin cambios) + nuevos
 
-- **Multi-hoja (C2):** si los proyectos del humano crecen a multi-hoja.
-- **Librerías externas (A4):** si la paleta demuestra fricción real.
-- **Freerouting:** si el dogfooding 1 reprueba el ruteo del agente.
-- **Rust (E2):** condiciones (a)+(b) arriba.
-- **`get_component_detail`/`get_net_detail`/`list_unconnected`:** si el
-  dogfooding las extraña.
-- **Contador `post_fallback` en health (C3):** oportunista, si un
-  fallback aparece en la práctica.
+Los de la v2 siguen: multi-hoja (D-R1), librerías externas (D-R4),
+Rust (ADR-0009), `get_net_detail`/`list_unconnected` (evidencia
+pendiente), contador post_fallback.
 
-## Puntos de re-evaluación del plan
+Nuevos diferidos con condición:
+- **Clearance-check en add_track (D-R10):** si Dogfooding 2 reprueba.
+- **`undo` por snap:** el borrado dirigido (D-R8) cubre el caso medido;
+  undo genérico si el uso real lo pide.
+- **Paginación general de tools:** solo `run_drc` mostró necesidad
+  (F-10, va en la 12); el resto sin evidencia.
 
-Tras cada dogfooding se revisa esta hoja de ruta. El plan sirve a los
-objetivos; cuando la evidencia y el plan choquen, gana la evidencia —
-esta v2 existe precisamente porque la v1 no sobrevivió al contacto con
-KiCad real.
+## Puntos de re-evaluación
+
+Tras la sesión 13 (veredicto autorouter) y tras el Dogfooding 2. La
+nota objetivo del Dogfooding 2 es ≥8/10 con el loop cerrado — si no se
+alcanza, se re-prioriza con el nuevo log de fricciones.

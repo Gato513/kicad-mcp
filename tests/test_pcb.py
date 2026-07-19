@@ -30,6 +30,7 @@ from kicad_mcp.bridge.ipc import (
     FootprintPadData,
     IpcBridge,
     Mm,
+    PadGeom,
     mm_to_nm,
 )
 from kicad_mcp.gates import g1
@@ -230,6 +231,11 @@ class _FakeBridge(IpcBridge):
 
     def board_outline(self, board: BoardHandle) -> tuple[BBoxMm, str]:  # type: ignore[override]
         return (self._bbox, self._outline)
+
+    def list_all_pads(self, board: BoardHandle) -> tuple[PadGeom, ...]:  # type: ignore[override]
+        # Sesión 16 D-16.4: sin pads simulados por default — los tests de
+        # colisión los pasan explícitamente vía ``self.pads`` si lo necesitan.
+        return tuple(getattr(self, "pads", ()))
 
     def draw_board_outline(  # type: ignore[override]
         self,

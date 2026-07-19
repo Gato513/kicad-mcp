@@ -340,8 +340,12 @@ def test_snapshot_stale_exposes_structured_base_snap(tmp_path: Path) -> None:
     err = excinfo.value
     assert err.code is ErrorCode.SNAPSHOT_STALE
     assert err.data == {"base_snap": 42, "retention": 7}
-    # to_dict expone el payload al agente (frontera MCP futura).
+    # to_dict expone el payload estructurado (uso interno/tests); el agente lo
+    # recibe embebido como JSON en el mensaje de la excepción (sesión 16, ver
+    # ``KicadMcpError.__init__``) ya que el SDK ``mcp`` colapsa toda excepción
+    # a ``str(e)`` antes de llegar al cliente.
     payload = err.to_dict()
+    assert "data" in str(err) and '"base_snap": 42' in str(err)
     assert payload["data"]["base_snap"] == 42
     assert payload["data"]["retention"] == 7
 

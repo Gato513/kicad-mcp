@@ -13,6 +13,7 @@ sanear proveniente del proyecto.
 
 from __future__ import annotations
 
+import json
 from enum import StrEnum
 from typing import Any
 
@@ -37,6 +38,7 @@ class ErrorCode(StrEnum):
     BUDGET_EXCEEDED = "BUDGET_EXCEEDED"
     INVALID_PARAMS = "INVALID_PARAMS"
     PATH_OUTSIDE_PROJECT = "PATH_OUTSIDE_PROJECT"
+    TRACK_ID_STALE = "TRACK_ID_STALE"
 
 
 class KicadMcpError(Exception):
@@ -63,7 +65,19 @@ class KicadMcpError(Exception):
         # El texto propaga a través de FastMCP; incluir hint para que el
         # agente reciba la parte accionable sin depender de contenido
         # estructurado (que MVP no expone).
-        super().__init__(f"[{code.value}] {message} hint: {hint}")
+        #
+        # Sesión 16: ``data`` viajaba SOLO en ``to_dict()``, que ningún punto
+        # del server (ni el SDK ``mcp`` vendorizado, que colapsa toda excepción
+        # a ``str(e)`` en ``ToolError``/``_make_error_result``) llega a invocar.
+        # El payload estructurado (p. ej. ``data.candidates`` de la
+        # desambiguación de ``delete_track``) quedaba prometido en el hint pero
+        # nunca llegaba al agente. Lo embebemos en el mensaje de la excepción
+        # — el único canal que de verdad cruza esa frontera hoy — como JSON
+        # legible/parseable. No requiere tocar el SDK vendorizado (F5).
+        text = f"[{code.value}] {message} hint: {hint}"
+        if self.data:
+            text += f" data: {json.dumps(self.data, ensure_ascii=False, sort_keys=True)}"
+        super().__init__(text)
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {

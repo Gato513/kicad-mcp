@@ -234,7 +234,7 @@ audit line JSONL por cada mutación aceptada o rechazada.
 | `get_component_detail` | Detalle de un footprint: posición, rotación, bbox/courtyard y pads absolutos | `ref`, `kind?="pcb"` | detail | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 | `get_tracks` | Lista tracks/vías filtrados por `net`/`bbox`/`layer`, con `id` estable | `net?`, `bbox?`, `layer?`, `max_tokens?` | detail | `NET_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 | `draw_board_outline` | Crea un contorno rectangular en Edge.Cuts | `x_mm`, `y_mm`, `width_mm`, `height_mm`, `base_snap?` | confirm | `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
-| `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO | `max_passes?`, `timeout_s?=600` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED` |
+| `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO — devuelve JSON estructurado (sesión 17, P2.2), no un confirm de texto | `max_passes?`, `timeout_s?=600` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED` |
 
 **Flag `live_stale` (sesión 14, D-14.1).** Mientras `route_board` haya dejado un
 ruteo en disco que el editor vivo no refleja, `move_footprint`, `add_track`,
@@ -408,25 +408,84 @@ del editor vivo, la salida lleva `[AVISO] editor vivo detras del disco
 (route_board)` — no bloquea, sólo avisa (patrón `get_world_context`, no el de
 las mutaciones).
 
-**`route_board` (sesión 14, D-14.1..D-14.4, ADR-0011).** Autorouting headless
-con **Freerouting** (jar, subprocess java) vía round-trip Specctra con `pcbnew`
-SWIG del python del **SISTEMA** (NO el venv; `pcbnew` lo instala KiCad, F5
-intacta). **Muta cobre en masa SIN gate interactivo** (D-14.2, coherente con
-D-R8/ADR-0010: es cobre re-ruteable, G1+git protegen). Pipeline: `save_board`
-implícito (live→disco, **sólo si el board abierto ES el target**) → DRC
-pre-route (ratsnest total) → export DSN → Freerouting (acotado por `timeout_s`)
-→ import SES → **reemplazo atómico** del `.kicad_pcb` → DRC post-route (conteo de
-errores, `bridge.rules` como G3) → snapshot de DISCO + **flag `live_stale`**
-(D-14.1, ver arriba). El router corre como subprocess, no por IPC: no toca la
-cola IPC de profundidad 1 (contención D-12.7 intacta). Requisitos de **sistema**
-(no de `pyproject`, estilo kicad-cli): Java ≥17, `KICAD_MCP_FREEROUTING_JAR`
-apuntando al jar, `pcbnew` en el python del sistema. Confirm (≤50 tok):
-`OK route_board 64/64 nets +318 tracks +26 vias drc_err=0 [snap:N]` — `X/Y`
-= conexiones del ratsnest resueltas / total pre-route. Errores tipados (D-14.4,
-F3 — cero códigos nuevos): jar/java/`pcbnew` ausentes → `KICAD_CLI_MISSING`;
-export DSN falla (típico: sin Edge.Cuts → hint `draw_board_outline`), Freerouting
-exit≠0/SES vacío, import SES falla → `KICAD_CLI_FAILED`; Freerouting timeout →
-`KICAD_TIMEOUT`.
+**`route_board` (sesión 14, D-14.1..D-14.4, ADR-0011; contrato JSON + reglas
+de proyecto + causa de bloqueo: sesión 17, P2.1/P2.2, D-V3.4/D-V3.5).**
+Autorouting headless con **Freerouting** (jar, subprocess java) vía round-trip
+Specctra con `pcbnew` SWIG del python del **SISTEMA** (NO el venv; `pcbnew` lo
+instala KiCad, F5 intacta). **Muta cobre en masa SIN gate interactivo** (D-14.2,
+coherente con D-R8/ADR-0010: es cobre re-ruteable, G1+git protegen). Pipeline:
+`save_board` implícito (live→disco, **sólo si el board abierto ES el target**)
+→ DRC pre-route (para `drc.err_preexistentes`) → export DSN → **inyección de
+reglas del proyecto al DSN** (P2.1: netclasses ya viajaban solas vía
+`pcbnew.LoadBoard()`; `min_copper_edge_clearance` se post-procesa al `.dsn`
+como `(clearance_class "board_edge")` en el `boundary` + una `(class
+"board_edge" (rule (clearance V)))` sin nets en `network` — mecanismo de
+Freerouting sin equivalente documentado, confirmado por bytecode del jar
+2.1.0; best-effort, nunca rompe el pipeline si el `.dsn` no tiene la forma
+esperada) → Freerouting (acotado por `timeout_s`) → import SES → **reemplazo
+atómico** del `.kicad_pcb` → DRC post-route (`bridge.rules`, como G3) →
+snapshot de DISCO + **flag `live_stale`** (D-14.1, ver arriba). El router corre
+como subprocess, no por IPC: no toca la cola IPC de profundidad 1 (contención
+D-12.7 intacta). Requisitos de **sistema** (no de `pyproject`, estilo
+kicad-cli): Java ≥17, `KICAD_MCP_FREEROUTING_JAR` apuntando al jar, `pcbnew`
+en el python del sistema.
+
+Resultado: **JSON estructurado**, no un confirm de texto (rompe el límite de
+≤50 tok de D-14.2 original — trade-off aceptado explícitamente: sigue siendo
+1 sola llamada, no contexto caliente repetido).
+
+```json
+{
+  "route_ms": 101800.0,
+  "nets": {
+    "total": 588,
+    "ruteables": 371,
+    "ruteadas": 368,
+    "parciales": [{"net": "/SDA", "faltan": 1}],
+    "bloqueadas": [
+      {"net": "/RESET", "code": "ROUTE_NET_BLOCKED",
+       "causa": "sin camino aparente; revisar manualmente"}
+    ]
+  },
+  "drc": {
+    "err_preexistentes": 0, "err_post": 0, "err_introducidos": 0,
+    "por_tipo": {}
+  },
+  "tracks_added": 640, "vias_added": 42, "snap": 17,
+  "session_dsn": ".../route.dsn", "session_ses": ".../route.ses"
+}
+```
+
+- `route_ms` (F-08): ya se medía desde sesión 14 (`AutorouteResult.route_ms`)
+  pero nunca llegaba al agente — sólo se logueaba. Ahora siempre presente en
+  éxito. **Nota:** en un fallo del pipeline (jar ausente, timeout, etc.) el
+  error tipado se propaga como antes (D-14.4) — `route_ms` en esos casos queda
+  fuera de alcance de esta sesión (diferido a 17b), salvo el `data.timeout_s`
+  que `KICAD_TIMEOUT` ya trae como proxy.
+- `nets.total`/`ruteables` (F-09): ya NO salen del `unconnected` del DRC (esa
+  cuenta mezclaba conexiones de ratsnest con `unconnected-*` de 1 pin — el
+  "24/64" engañoso del Dogfooding 2). Se leen del `.dsn` (`(network (net
+  <nombre> (pins ...)))`): `total` = todas las nets, `ruteables` = con ≥2
+  pines.
+- `nets.ruteadas`/`parciales`/`bloqueadas`: heurística sobre el `.ses`
+  (`(routes (network_out (net <nombre> (wire ...))))`) — net con N pines
+  necesita ~N-1 wires en una cadena simple; 0 wires ⇒ bloqueada, `1..N-2` ⇒
+  parcial (`faltan` = conexiones que quedan). No reconstruye el grafo de
+  conectividad real.
+- `bloqueadas[].causa` (F-12): mínimo honesto por decisión de sesión 17 — SIN
+  A* de bloqueador concreto (diferido a 17b si hace falta). Siempre `"sin
+  camino aparente; revisar manualmente"`.
+- `drc.por_tipo`: sólo violaciones de severidad `error` del reporte
+  post-route, agrupadas por `rule` — el desglose que permite verificar "0
+  violaciones sistemáticas de `copper_edge_clearance`" sin parsear texto.
+
+Errores tipados (D-14.4, F3 — cero códigos nuevos en la ruta de fallo del
+pipeline): jar/java/`pcbnew` ausentes → `KICAD_CLI_MISSING`; export DSN falla
+(típico: sin Edge.Cuts → hint `draw_board_outline`), Freerouting exit≠0/SES
+vacío, import SES falla → `KICAD_CLI_FAILED`; Freerouting timeout →
+`KICAD_TIMEOUT`. `ROUTE_NET_BLOCKED` (código nuevo, sesión 17) es
+**informativo, no aborta**: viaja embebido en `nets.bloqueadas[].code`, nunca
+como excepción — ver Taxonomía de errores más abajo.
 
 **`get_component_detail` (sesión 11, D-11.3).** Detalle geométrico de un
 footprint **bajo demanda** (sale de reservados; ver más abajo). Devuelve, en
@@ -627,6 +686,7 @@ catálogo para no prometer una superficie que no existe.
 | `INVALID_PARAMS` | Parámetros no validan contra el schema | No | Nombrar el campo exacto y el valor recibido |
 | `PATH_OUTSIDE_PROJECT` | Ruta fuera de la raíz del proyecto | No | Mostrar la raíz permitida; jamás la ruta canónica del sistema |
 | `TRACK_ID_STALE` | El `id` de `get_tracks` no resuelve (board mutado/recargado) o apunta a otro `kind` | No | Instruir: re-listar con `get_tracks` y usar un id vigente |
+| `ROUTE_NET_BLOCKED` | Sesión 17, P2.2. Net que `route_board` no pudo rutear (0 wires en el `.ses`) | Sí, tras cambios manuales | **Informativo, nunca se lanza como excepción** — viaja embebido en `route_board`'s `nets.bloqueadas[].code`/`causa` (mínimo honesto: "sin camino aparente; revisar manualmente", sin identificar el bloqueador concreto — diferido a 17b) |
 
 Reglas de la taxonomía: los códigos son SCREAMING_SNAKE en inglés (estables
 ante cambios de idioma de la UI); `message` y `hint` en el idioma de la

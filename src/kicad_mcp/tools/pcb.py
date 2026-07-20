@@ -16,6 +16,7 @@ pueden pasar un fake vía ``register(mcp, ipc_bridge=fake)``.
 from __future__ import annotations
 
 import difflib
+import json
 import math
 import os
 import time
@@ -23,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..audit.logger import record as audit_record
-from ..bridge.autoroute import run_autoroute
+from ..bridge.autoroute import classify_net_routing, run_autoroute
 from ..bridge.ipc import (
     BoardHandle,
     ComponentDetail,
@@ -34,6 +35,7 @@ from ..bridge.ipc import (
     PadGeom,
 )
 from ..bridge.rules import run_drc
+from ..bridge.rules_reader import load_project_rules
 from ..bridge.state_builder import build_state_from_board, build_state_from_snapshot
 from ..errors import ErrorCode, KicadMcpError
 from ..gates.g1 import ensure_session_backup
@@ -52,14 +54,6 @@ _TRACKS_DEFAULT_BUDGET: int = 800
 # Mismo factor de seguridad que ``toon/encoder.py`` (_BUDGET_SAFETY_FACTOR):
 # el estimador de tokens (chars/3.5) es aproximado; dejamos margen del 10%.
 _TRACKS_BUDGET_SAFETY: float = 0.9
-
-# Clearance mínimo asumido para la validación de colisiones de ``add_track``
-# (D-16.4). Aproximación documentada: el server no lee reglas de netclass
-# hoy (no hay plumbing IPC para eso); 0.2 mm es el default clásico de KiCad
-# y un piso razonable — infla el rectángulo/roundrect del pad en vez de
-# leer la regla real (fallback explícitamente autorizado por el prompt de
-# sesión si el costo de la vía completa es alto).
-_MIN_CLEARANCE_MM: float = 0.2
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -426,14 +420,17 @@ def _find_track_pad_collision(
     start_y_mm: float,
     end_x_mm: float,
     end_y_mm: float,
+    clearance_mm: float,
 ) -> PadGeom | None:
     """Primer pad de OTRO net que el track invadiría, o ``None`` (D-16.4).
 
     Excluye pads del MISMO net (se espera que el track los toque/conecte) y
     pads en una capa de cobre distinta a la del track (salvo pasantes,
-    ``layer="*.Cu"``, que aplican a cualquier capa).
+    ``layer="*.Cu"``, que aplican a cualquier capa). ``clearance_mm`` es el
+    de la netclass real del track (sesión 17, P2.1 — ``rules_reader``); antes
+    era un piso fijo de 0.2mm (deuda de sesión 16, D-16.4).
     """
-    threshold = width_mm / 2.0 + _MIN_CLEARANCE_MM
+    threshold = width_mm / 2.0 + clearance_mm
     for pad in pads:
         if pad.net_name == net:
             continue
@@ -706,12 +703,16 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                         ),
                     )
 
-            # D-16.4: colisión contra pads de OTRO net (roundrect/circle/oval
-            # modelados exactos, ver ``_find_track_pad_collision``). Antes de
-            # G1: un rechazo acá no debe disparar backup. Clearance asumido
-            # ``_MIN_CLEARANCE_MM`` (aproximación documentada: no hay lectura
-            # de reglas de netclass todavía).
+            # D-16.4/P2.1 (sesión 17): colisión contra pads de OTRO net
+            # (roundrect/circle/oval modelados exactos, ver
+            # ``_find_track_pad_collision``). Antes de G1: un rechazo acá no
+            # debe disparar backup. Clearance de la netclass REAL del net
+            # (``rules_reader``, lee el ``.kicad_pro``) — ya no el piso fijo
+            # 0.2mm de la sesión 16 (fallback si no hay reglas legibles).
             pads = bridge.list_all_pads(board)
+            net_clearance_mm = (
+                load_project_rules(_resolve_root_pcb()).class_for_net(net).clearance_mm
+            )
             collision = _find_track_pad_collision(
                 pads,
                 net=net,
@@ -721,6 +722,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 start_y_mm=start_y_mm,
                 end_x_mm=end_x_mm,
                 end_y_mm=end_y_mm,
+                clearance_mm=net_clearance_mm,
             )
             if collision is not None:
                 _audit_error(
@@ -734,7 +736,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                     message=(
                         f"El track invade un pad del net {collision.net_name or '(sin net)'} "
                         f"@({float(collision.x_mm):.3f},{float(collision.y_mm):.3f}) en {layer} "
-                        f"(clearance mínimo {_MIN_CLEARANCE_MM} mm)."
+                        f"(clearance mínimo {net_clearance_mm} mm)."
                     ),
                     hint=(
                         "Ajustá el trazado o el ancho; usá get_tracks/get_component_detail "
@@ -746,7 +748,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                             round(float(collision.x_mm), 3),
                             round(float(collision.y_mm), 3),
                         ],
-                        "clearance_mm": _MIN_CLEARANCE_MM,
+                        "clearance_mm": net_clearance_mm,
                     },
                 )
 
@@ -1353,15 +1355,24 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="route_board",
         description="Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a disco",
     )
-    def route_board(max_passes: int | None = None, timeout_s: int = 600) -> str:
+    def route_board(max_passes: int | None = None, timeout_s: int = 600) -> dict[str, Any]:
         # D-14.2/D-14.3: mutación masiva de cobre SIN gate interactivo (es cobre
         # re-ruteable; G1 + git protegen). Pipeline: save_board implícito
         # (live→disco, sólo si el board abierto ES el target) → DRC pre-route
-        # (ratsnest total) → round-trip DSN/Freerouting/SES (subprocess, python
-        # del SISTEMA + java; NUNCA el venv) → reemplazo atómico del .kicad_pcb →
-        # DRC post-route (conteo de errores) → snapshot de DISCO + flag D-14.1.
-        # El router corre como subprocess, no por IPC: no toca la cola IPC
-        # (contención D-12.7 intacta).
+        # (para drc.err_preexistentes) → round-trip DSN/Freerouting/SES
+        # (subprocess, python del SISTEMA + java; NUNCA el venv) → reemplazo
+        # atómico del .kicad_pcb → DRC post-route → snapshot de DISCO + flag
+        # D-14.1. El router corre como subprocess, no por IPC: no toca la cola
+        # IPC (contención D-12.7 intacta).
+        #
+        # P2.2 (sesión 17, D-V3.4): el resultado deja de ser un confirm de
+        # ≤50 tok (D-14.2 original) y pasa a JSON estructurado — route_ms
+        # (F-08, medido desde sesión 14 pero nunca surfaceado), denominador de
+        # nets correcto desde el .dsn/.ses en vez de ``unconnected`` del DRC
+        # (F-09: ese conteo mezclaba ratsnest de nets multi-pin con
+        # unconnected-* de 1 pin), y causa mínima honesta por net bloqueada
+        # (F-12). Trade-off de tokens documentado en tool-catalog.md: sigue
+        # siendo 1 sola llamada, no contexto caliente repetido.
         with tool_call_timer() as timer:
             pcb_path = _resolve_root_pcb()
             root = pcb_path.parent
@@ -1382,8 +1393,10 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                     live_saved = True
                     pre_footprints = bridge.read_board_context(open_board).footprints
 
-            # Ratsnest total pre-route (unconnected del DRC de disco, D-14.2).
-            total = run_drc(pcb_path).unconnected
+            # DRC pre-route: sólo para drc.err_preexistentes (P2.2). El
+            # denominador de nets YA NO sale de acá (F-09).
+            pre_report = run_drc(pcb_path)
+            pre_err = sum(1 for v in pre_report.violations if v.severity == "error")
 
             # Round-trip headless. Los errores tipados (D-14.4) se propagan.
             workdir = root / ".kicad-mcp" / "autoroute"
@@ -1394,8 +1407,19 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
 
             # DRC post-route (bridge.rules, como G3) para el conteo de errores.
             post_report = run_drc(pcb_path)
-            drc_err = sum(1 for v in post_report.violations if v.severity == "error")
-            routed = max(total - post_report.unconnected, 0)
+            post_err = sum(1 for v in post_report.violations if v.severity == "error")
+            por_tipo: dict[str, int] = {}
+            for v in post_report.violations:
+                if v.severity == "error":
+                    por_tipo[v.rule] = por_tipo.get(v.rule, 0) + 1
+
+            # P2.2 (F-09): denominador y estado por net desde el .dsn/.ses del
+            # round-trip, no del ``unconnected`` del DRC.
+            pin_counts = result.nets_pin_counts
+            wire_counts = result.nets_wire_counts
+            nets_total = len(pin_counts)
+            nets_ruteables = sum(1 for p in pin_counts.values() if p >= 2)
+            routed_nets, partial_nets, blocked_nets = classify_net_routing(pin_counts, wire_counts)
 
             # Snapshot de DISCO: el ruteo no mueve footprints, se deriva de los
             # leídos pre-route (o vacío si el board no estaba abierto/coincidía;
@@ -1407,6 +1431,36 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
 
             tracks_added = result.tracks_after - result.tracks_before
             vias_added = result.vias_after - result.vias_before
+
+            payload: dict[str, Any] = {
+                "route_ms": round(result.route_ms, 3),
+                "nets": {
+                    "total": nets_total,
+                    "ruteables": nets_ruteables,
+                    "ruteadas": len(routed_nets),
+                    "parciales": partial_nets,
+                    "bloqueadas": [
+                        {
+                            "net": net,
+                            "code": ErrorCode.ROUTE_NET_BLOCKED.value,
+                            "causa": "sin camino aparente; revisar manualmente",
+                        }
+                        for net in blocked_nets
+                    ],
+                },
+                "drc": {
+                    "err_preexistentes": pre_err,
+                    "err_post": post_err,
+                    "err_introducidos": post_err - pre_err,
+                    "por_tipo": por_tipo,
+                },
+                "tracks_added": tracks_added,
+                "vias_added": vias_added,
+                "snap": snap_id,
+                "session_dsn": result.dsn_path,
+                "session_ses": result.ses_path,
+            }
+
             audit_record(
                 root,
                 tool="route_board",
@@ -1416,30 +1470,28 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                     "backup": backup_info.get("backup"),
                     "tracks_added": tracks_added,
                     "vias_added": vias_added,
-                    "nets_routed": routed,
-                    "nets_total": total,
-                    "drc_err": drc_err,
+                    "nets_total": nets_total,
+                    "nets_ruteables": nets_ruteables,
+                    "nets_ruteadas": len(routed_nets),
+                    "nets_bloqueadas": len(blocked_nets),
+                    "drc_err_post": post_err,
                     "live_saved": live_saved,
                 },
-            )
-            confirmation = (
-                f"OK route_board {routed}/{total} nets +{tracks_added} tracks "
-                f"+{vias_added} vias drc_err={drc_err} [snap:{snap_id}]"
             )
         log_tool_call(
             tool_name="route_board",
             latency_ms=timer["latency_ms"],
-            tokens_est=estimate_tokens(confirmation),
+            tokens_est=estimate_tokens(json.dumps(payload, ensure_ascii=False)),
             snap_id=snap_id,
             extra={
                 "export_ms": round(result.export_ms, 3),
                 "route_ms": round(result.route_ms, 3),
                 "import_ms": round(result.import_ms, 3),
                 "live_saved": live_saved,
-                "drc_err": drc_err,
+                "drc_err_post": post_err,
             },
         )
-        return confirmation
+        return payload
 
 
 def _open_board_or_none(bridge: IpcBridge) -> BoardHandle | None:

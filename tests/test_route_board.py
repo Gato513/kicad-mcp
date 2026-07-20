@@ -11,6 +11,7 @@ Dos bloques:
 
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,6 @@ from kicad_mcp.bridge.ipc import (
 from kicad_mcp.bridge.rules import RulesReport
 from kicad_mcp.errors import ErrorCode
 from kicad_mcp.gates import g1
-from kicad_mcp.logging_config import estimate_tokens
 from kicad_mcp.snapshots import get_default_store
 from kicad_mcp.tools import pcb as pcb_module
 from kicad_mcp.tools.pcb import register as register_pcb
@@ -106,6 +106,12 @@ def _text(result: CallToolResult) -> str:
     block = result.content[0]
     assert isinstance(block, TextContent)
     return block.text
+
+
+def _json(result: CallToolResult) -> dict[str, Any]:
+    """``route_board`` devuelve JSON estructurado (P2.2, sesión 17) — no un
+    confirm de texto plano."""
+    return json.loads(_text(result))
 
 
 @pytest.fixture(autouse=True)
@@ -275,7 +281,19 @@ def _patch_pipeline(
     return calls
 
 
-def _result(workdir: Path) -> AutorouteResult:
+def _result(
+    workdir: Path,
+    *,
+    ruteables: int = 64,
+    routed: int = 64,
+    blocked: int = 0,
+) -> AutorouteResult:
+    """AutorouteResult fake con N nets ruteables de 2 pines c/u; ``routed``
+    de ellas con 1 wire (ruteadas), el resto (``ruteables - routed``, hasta
+    ``blocked``) con 0 wires (bloqueadas) — el resto queda sin entrada en
+    ``nets_wire_counts`` (mismo caso: 0 wires, bloqueada)."""
+    pin_counts = {f"NET{i}": 2 for i in range(ruteables)}
+    wire_counts = {f"NET{i}": 1 for i in range(routed)}
     return AutorouteResult(
         tracks_before=0,
         tracks_after=318,
@@ -286,6 +304,10 @@ def _result(workdir: Path) -> AutorouteResult:
         import_ms=15.0,
         routed_pcb=str(workdir / ".kicad-mcp" / "autoroute" / "routed.kicad_pcb"),
         freerouting_log=str(workdir / "log"),
+        nets_pin_counts=pin_counts,
+        nets_wire_counts=wire_counts,
+        dsn_path=str(workdir / ".kicad-mcp" / "autoroute" / "route.dsn"),
+        ses_path=str(workdir / ".kicad-mcp" / "autoroute" / "route.ses"),
     )
 
 
@@ -307,9 +329,28 @@ async def test_route_board_confirm_flag_and_counts(
         result = await client.call_tool("route_board", {})
 
     assert not result.isError
-    text = _text(result)
-    assert text.startswith("OK route_board 64/64 nets +318 tracks +26 vias drc_err=0 [snap:")
-    assert estimate_tokens(text) <= 50
+    payload = _json(result)
+    # P2.2: JSON estructurado — route_ms (F-08), denominador de nets desde
+    # el .dsn/.ses (F-09, no del DRC), DRC pre/post + por_tipo, session paths.
+    assert payload["route_ms"] == 101800.0
+    assert payload["nets"] == {
+        "total": 64,
+        "ruteables": 64,
+        "ruteadas": 64,
+        "parciales": [],
+        "bloqueadas": [],
+    }
+    assert payload["drc"] == {
+        "err_preexistentes": 0,
+        "err_post": 0,
+        "err_introducidos": 0,
+        "por_tipo": {},
+    }
+    assert payload["tracks_added"] == 318
+    assert payload["vias_added"] == 26
+    assert isinstance(payload["snap"], int)
+    assert payload["session_dsn"].endswith("route.dsn")
+    assert payload["session_ses"].endswith("route.ses")
     # Flag activo tras el ruteo.
     assert get_default_store().is_live_stale() is True
     # save_board implícito corrió (board abierto == target).
@@ -320,12 +361,87 @@ async def test_route_board_confirm_flag_and_counts(
 
 
 @pytest.mark.unit
+async def test_route_board_reports_blocked_nets_with_cause(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """F-12: net bloqueada (0 wires) reporta causa honesta, code
+    ROUTE_NET_BLOCKED — sin A* de bloqueador concreto (decisión de sesión 17)."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    _patch_pipeline(
+        monkeypatch,
+        drc_sequence=[_drc(3), _drc(0)],
+        result=_result(project, ruteables=3, routed=2),  # NET2 queda con 0 wires
+    )
+    bridge = _FakeBridge(open_board_path=str(project / "proj.kicad_pcb"))
+    mcp = _server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("route_board", {})
+
+    assert not result.isError
+    payload = _json(result)
+    assert payload["nets"]["ruteables"] == 3
+    assert payload["nets"]["ruteadas"] == 2
+    assert payload["nets"]["bloqueadas"] == [
+        {
+            "net": "NET2",
+            "code": "ROUTE_NET_BLOCKED",
+            "causa": "sin camino aparente; revisar manualmente",
+        }
+    ]
+
+
+@pytest.mark.unit
+async def test_route_board_reports_drc_error_breakdown_by_type(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """P2.1/gate de sesión 17: el desglose por_tipo debe permitir verificar
+    "0 violaciones sistemáticas de copper_edge_clearance" sin parsear texto."""
+    from kicad_mcp.bridge.rules import RulesReport, Violation
+
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    post_drc = RulesReport(
+        violations=(
+            Violation(rule="copper_edge_clearance", severity="error", message="e", items=()),
+            Violation(rule="copper_edge_clearance", severity="error", message="e", items=()),
+            Violation(rule="silk_overlap", severity="warning", message="w", items=()),
+        ),
+        counts={"error": 2, "warning": 1},
+        coordinate_units="mm",
+        kicad_version="10.0.4",
+        unconnected=0,
+    )
+    _patch_pipeline(
+        monkeypatch,
+        drc_sequence=[_drc(2), post_drc],
+        result=_result(project, ruteables=2, routed=2),
+    )
+    bridge = _FakeBridge(open_board_path=str(project / "proj.kicad_pcb"))
+    mcp = _server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("route_board", {})
+
+    assert not result.isError
+    payload = _json(result)
+    assert payload["drc"]["err_post"] == 2
+    assert payload["drc"]["err_introducidos"] == 2  # pre_err=0 (drc_sequence[0])
+    assert payload["drc"]["por_tipo"] == {"copper_edge_clearance": 2}  # warnings no cuentan acá
+
+
+@pytest.mark.unit
 async def test_route_board_skips_save_cross_project(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     project = _make_project(tmp_path)
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
-    _patch_pipeline(monkeypatch, drc_sequence=[_drc(10), _drc(0)], result=_result(project))
+    _patch_pipeline(
+        monkeypatch,
+        drc_sequence=[_drc(10), _drc(0)],
+        result=_result(project, ruteables=10, routed=10),
+    )
     # El board abierto es OTRO proyecto → no se debe guardar.
     bridge = _FakeBridge(open_board_path="/tmp/otro-proyecto/otro.kicad_pcb")
     mcp = _server(bridge)
@@ -334,6 +450,8 @@ async def test_route_board_skips_save_cross_project(
         result = await client.call_tool("route_board", {})
 
     assert not result.isError
+    payload = _json(result)
+    assert payload["nets"]["total"] == 10
     assert bridge.saved == []  # no se tocó el board vivo de otro proyecto
     assert get_default_store().is_live_stale() is True
 
@@ -344,7 +462,11 @@ async def test_route_board_works_without_kicad(
 ) -> None:
     project = _make_project(tmp_path)
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
-    _patch_pipeline(monkeypatch, drc_sequence=[_drc(5), _drc(0)], result=_result(project))
+    _patch_pipeline(
+        monkeypatch,
+        drc_sequence=[_drc(5), _drc(0)],
+        result=_result(project, ruteables=5, routed=5),
+    )
     bridge = _FakeBridge(raise_not_running=True)  # KiCad cerrado
     mcp = _server(bridge)
 
@@ -352,7 +474,9 @@ async def test_route_board_works_without_kicad(
         result = await client.call_tool("route_board", {})
 
     assert not result.isError
-    assert "OK route_board 5/5 nets" in _text(result)
+    payload = _json(result)
+    assert payload["nets"]["total"] == 5
+    assert payload["nets"]["ruteadas"] == 5
     assert bridge.saved == []
 
 

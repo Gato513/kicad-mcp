@@ -4,7 +4,9 @@ Round-trip COMPLETO contra una COPIA del proyecto chico de spike
 (``/tmp/spike-route-proyecto``, 24 fp / 64 conexiones ratsnest). NO se ruteo el
 board de 189 fp de gui-test-project (demasiado lento/denso). Verifica:
 
-- confirm con ``X/X nets`` (100% del ratsnest), ``drc_err=0``, tracks/vías > 0.
+- JSON estructurado (sesión 17, P2.2): ``nets.ruteadas == nets.ruteables``
+  (100% del ratsnest), ``drc.err_post == 0``, ``tracks_added > 0``,
+  ``route_ms`` presente (F-08).
 - flag ``live_stale`` activo → una mutación (``move_footprint``) queda BLOQUEADA
   con ``EXTERNAL_EDIT_DETECTED``.
 - ``get_world_context(kind='pcb', confirm_reloaded=true)`` (recarga simulada)
@@ -19,8 +21,8 @@ producción NO lo dibuja solo, D-14.4).
 
 from __future__ import annotations
 
+import json
 import os
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -117,18 +119,17 @@ async def test_route_board_real_roundtrip(monkeypatch: pytest.MonkeyPatch, tmp_p
         # --- ruteo real (~2 min) -------------------------------------------
         res = await client.call_tool("route_board", {})
         assert not res.isError, _text(res)
-        confirm = _text(res)
-        pattern = (
-            r"OK route_board (\d+)/(\d+) nets \+(\d+) tracks "
-            r"\+(\d+) vias drc_err=(\d+) \[snap:\d+\]"
+        payload = json.loads(_text(res))
+        ruteables = payload["nets"]["ruteables"]
+        ruteadas = payload["nets"]["ruteadas"]
+        assert ruteables >= 60, f"ratsnest esperado ~64, fue {ruteables}"
+        assert ruteadas == ruteables, (
+            f"ruteo incompleto: {ruteadas}/{ruteables} — bloqueadas: "
+            f"{payload['nets']['bloqueadas']}"
         )
-        m = re.match(pattern, confirm)
-        assert m is not None, f"confirm inesperado: {confirm!r}"
-        routed, total, tracks, _vias, drc_err = (int(g) for g in m.groups())
-        assert total >= 60, f"ratsnest esperado ~64, fue {total}"
-        assert routed == total, f"ruteo incompleto: {routed}/{total}"
-        assert drc_err == 0, f"DRC con {drc_err} errores post-route"
-        assert tracks > 0
+        assert payload["drc"]["err_post"] == 0, f"DRC con {payload['drc']} errores post-route"
+        assert payload["tracks_added"] > 0
+        assert payload["route_ms"] > 0  # F-08: route_ms ahora llega al agente
 
         # --- flag D-14.1: mutación bloqueada post-route --------------------
         assert get_default_store().is_live_stale() is True

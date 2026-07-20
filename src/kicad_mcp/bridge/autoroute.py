@@ -40,13 +40,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
+import tempfile
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Protocol
 
 from ..errors import ErrorCode, KicadMcpError
+from .rules_reader import load_project_rules
 
 _LOGGER = logging.getLogger("kicad_mcp")
 
@@ -171,6 +175,13 @@ class AutorouteResult:
     import_ms: float
     routed_pcb: str
     freerouting_log: str
+    # P2.2 (sesión 17): denominador correcto + estado por net, del .dsn/.ses
+    # (ver bloque "Parsers de .dsn/.ses" — reemplaza el ``unconnected`` del
+    # DRC, F-09). ``{}`` si el .dsn/.ses no tenían la forma esperada.
+    nets_pin_counts: dict[str, int]
+    nets_wire_counts: dict[str, int]
+    dsn_path: str
+    ses_path: str
 
 
 def _resolve_system_python(system_python: str | None) -> str:
@@ -266,6 +277,334 @@ def _run_export_dsn(
         )
 
 
+# --- Inyección de edge clearance al DSN (F-11, sesión 17 P2.1) ---------------
+#
+# Contexto: ``pcbnew.LoadBoard()`` SÍ carga las netclasses del ``.kicad_pro``
+# hermano — el ``(class <nombre> <nets...> (rule (width..)(clearance..)))``
+# que emite ``ExportSpecctraDSN`` ya refleja los valores reales del proyecto
+# (verificado empíricamente sesión 17: exportando ``tests/fixtures/004_real/
+# video.kicad_pcb`` el DSN trae ``(class pwr ... (rule (width 250)(clearance
+# 200)))`` — 0.25mm/0.2mm, exactos a ``video.kicad_pro``). Esa parte NO
+# necesita fix.
+#
+# Lo que SÍ falta — la causa real de F-11 (Freerouting violó
+# ``min_copper_edge_clearance`` en 7 sitios) — es que Freerouting no tiene
+# noción de "clearance al borde del board" en absoluto: su matriz de
+# clearance sólo conoce los item-class ``TRACE/VIA/PIN/SMD/AREA``
+# (``DefaultItemClearanceClasses$ItemClass``, decompilado del jar 2.1.0), y
+# ``ExportSpecctraDSN`` nunca asocia el ``(boundary ...)`` a una clase de
+# clearance. Mecanismo real (confirmado por bytecode con ``javap`` sobre
+# ``Structure.class``/``NetClass.class`` del jar de Freerouting 2.1.0, sesión
+# 17 — no está documentado en ningún lado):
+#
+#   1. ``Structure.read_boundary_scope`` acepta un sub-scope
+#      ``(clearance_class "<nombre>")`` DENTRO de ``(boundary ...)``, que
+#      guarda el string en ``BoardConstructionInfo.outline_clearance_class_name``.
+#   2. Ese nombre viaja tal cual a ``BoardManager.create_board(...)`` (última
+#      línea de ``Structure.read_scope``) — es decir, el contorno SÍ puede
+#      tener una clearance class asociada, KiCad/pcbnew simplemente nunca la
+#      emite.
+#   3. ``NetClass.read_scope`` (el parser de ``(class <nombre> <nets...>
+#      (rule ...))`` en ``(network ...)``) lee la lista de nets con
+#      ``next_string_list()`` sin exigir que sea no vacía — una clase con
+#      CERO nets asignados (sólo para registrar su ``(rule (clearance V))``
+#      en la matriz) es sintácticamente válida.
+#
+# Por eso: post-procesamos el ``.dsn`` (texto plano) para (a) declarar
+# ``(clearance_class "board_edge")`` dentro de ``(boundary ...)`` y (b)
+# agregar una clase ``(class "board_edge" (rule (clearance <edge_um>)))`` sin
+# nets en ``(network ...)``. Best-effort: si la forma del DSN no matchea lo
+# esperado (versión de pcbnew distinta), se loguea un warning y se sigue sin
+# la inyección — nunca rompe el pipeline por esto.
+
+_EDGE_CLEARANCE_CLASS_NAME: Final = "board_edge"
+_DSN_MM_TO_UNIT: Final = 1000  # "(unit um)" — 1mm = 1000um, verificado en el DSN real.
+
+
+class _DsnScopeNotFound(Exception):
+    """El scope buscado no está donde se esperaba — activa el fallback best-effort."""
+
+
+def _find_dsn_scope_span(text: str, keyword: str) -> tuple[int, int]:
+    """Índices ``[start, end)`` del scope ``(keyword ...)`` de nivel superior.
+
+    Balanceo de paréntesis consciente de strings entre comillas dobles (el
+    DSN declara ``(string_quote ")`` — ese es el carácter de quote real).
+    Exige que el token que sigue a ``keyword`` sea whitespace o ``(``, para
+    no matchear un keyword más largo por accidente de substring.
+    """
+    open_token = f"({keyword}"
+    start = text.find(open_token)
+    while start != -1:
+        after = start + len(open_token)
+        if after >= len(text) or text[after].isspace() or text[after] in "()":
+            break
+        start = text.find(open_token, start + 1)
+    if start == -1:
+        raise _DsnScopeNotFound(f"scope {keyword!r} no encontrado")
+    depth = 0
+    in_string = False
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if in_string:
+            if ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return start, i + 1
+        i += 1
+    raise _DsnScopeNotFound(f"paréntesis desbalanceados buscando el cierre de {keyword!r}")
+
+
+def _inject_edge_clearance(dsn_path: Path, edge_clearance_mm: float) -> None:
+    """Declara el edge clearance del proyecto en el ``.dsn`` (ver bloque arriba).
+
+    Nunca levanta: si el DSN no tiene la forma esperada, loguea un warning y
+    deja el archivo intacto (el round-trip sigue con el comportamiento
+    implícito de Freerouting, igual que antes de la sesión 17).
+    Tolera también un ``.dsn`` ausente (arnés de tests con runner fake que no
+    materializa el archivo; en producción ``_run_export_dsn`` ya garantizó su
+    existencia si llegamos hasta acá).
+    """
+    try:
+        text = dsn_path.read_text(encoding="utf-8")
+        edge_units = round(edge_clearance_mm * _DSN_MM_TO_UNIT)
+
+        _, b_end = _find_dsn_scope_span(text, "boundary")
+        boundary_addition = f'\n      (clearance_class "{_EDGE_CLEARANCE_CLASS_NAME}")\n    '
+        text = text[: b_end - 1] + boundary_addition + text[b_end - 1 :]
+
+        _, n_end = _find_dsn_scope_span(text, "network")
+        class_addition = (
+            f'\n    (class "{_EDGE_CLEARANCE_CLASS_NAME}"\n'
+            f"      (rule\n"
+            f"        (clearance {edge_units})\n"
+            f"      )\n"
+            f"    )\n  "
+        )
+        text = text[: n_end - 1] + class_addition + text[n_end - 1 :]
+
+        dsn_path.write_text(text, encoding="utf-8")
+    except (_DsnScopeNotFound, OSError) as exc:
+        _LOGGER.warning(
+            json.dumps(
+                {
+                    "tool_name": "autoroute_runner",
+                    "warning": "edge_clearance_injection_skipped",
+                    "reason": str(exc),
+                },
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+        )
+
+
+# --- Parsers de .dsn/.ses (P2.2, sesión 17: contrato route_board) ------------
+#
+# Fuentes de verdad para el resultado estructurado de ``route_board``, en vez
+# de derivar todo del ``unconnected`` de ``run_drc`` (F-09: ese conteo mezcla
+# conexiones de ratsnest de nets multi-pin CON el ruido de las
+# ``unconnected-*`` de 1 pad, de ahí el "24/64" engañoso del Dogfooding 2).
+#
+# ``ruteables`` (denominador correcto): nets con ≥2 pines, leído de la
+# sección ``(network (net <nombre> (pins ...)) ...)`` del ``.dsn`` — excluye
+# por construcción las nets de 1 pin (no aparecen como ``unconnected-*`` acá,
+# aparecen con un solo pin en su lista).
+#
+# ``ruteadas``/``parciales``/``bloqueadas``: se comparan los pines esperados
+# por net (del ``.dsn``) contra los wires que el router efectivamente generó
+# por net, leídos de ``(routes (network_out (net <nombre> (wire ...) ...)))``
+# en el ``.ses`` de vuelta. Heurística de conteo: una net con N pines
+# necesita razonablemente N-1 wires para quedar 100% conectada en una
+# topología simple (cadena); 0 wires con N≥2 pines = bloqueada, entre 1 y
+# N-2 = parcial. No es un solver de conectividad real (no reconstruye el
+# grafo), es la señal más barata que el propio ``.ses`` ya te da gratis.
+
+
+def _iter_direct_child_scopes(text: str) -> Iterator[tuple[str, int, int]]:
+    """``(keyword, start, end)`` de cada scope HIJO DIRECTO ``(keyword ...)``
+    en ``text`` (el CONTENIDO ya aislado de un scope padre, sin sus propios
+    paréntesis externos) — no baja a nietos. Consciente de strings entre
+    comillas dobles, mismo criterio que ``_find_dsn_scope_span``.
+    """
+    depth = 0
+    in_string = False
+    child_start: int | None = None
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if in_string:
+            if ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == "(":
+            if depth == 0:
+                child_start = i
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0 and child_start is not None:
+                j = child_start + 1
+                k = j
+                while k < n and not text[k].isspace() and text[k] not in "()":
+                    k += 1
+                yield text[j:k], child_start, i + 1
+                child_start = None
+        i += 1
+
+
+def _leading_token(text: str) -> tuple[str, int]:
+    """``(nombre, offset)`` del primer token de ``text`` — quoted o bare —
+    con ``offset`` = cuántos chars de ``text`` ocupó (para poder saltarlo con
+    precisión, sin volver a buscarlo por substring en el resto del scope).
+    """
+    if text.startswith('"'):
+        end_q = text.index('"', 1)
+        return text[1:end_q], end_q + 1
+    m = re.match(r"[^\s()]+", text)
+    if m is None:
+        return "", 0
+    return m.group(0), m.end()
+
+
+def _scope_own_name(scope_text: str, keyword: str) -> tuple[str, int]:
+    """De un scope ``(keyword NOMBRE resto...)`` (con o sin comillas):
+    ``(NOMBRE sin comillas, offset ABSOLUTO en scope_text donde termina
+    NOMBRE)`` — el offset sirve para aislar ``resto...`` sin volver a buscar
+    NOMBRE por substring (nombres cortos podrían matchear en otro lado).
+    ``scope_text`` incluye los paréntesis externos.
+    """
+    inner_start = 1 + len(keyword)
+    rest = scope_text[inner_start:].lstrip()
+    pad = len(scope_text[inner_start:]) - len(rest)
+    name, consumed = _leading_token(rest)
+    return name, inner_start + pad + consumed
+
+
+_PINS_RE: Final = re.compile(r"\(pins([\s\S]*?)\)")
+
+
+def parse_dsn_net_pin_counts(dsn_text: str) -> dict[str, int]:
+    """net → cantidad de pines, desde ``(network (net <nombre> (pins ...)))``.
+
+    Denominador correcto para ``nets.ruteables`` (F-09): un net con 1 solo
+    pin queda con ``pin_count=1`` acá — el llamador filtra ``>= 2``.
+    """
+    try:
+        n_start, n_end = _find_dsn_scope_span(dsn_text, "network")
+    except _DsnScopeNotFound:
+        return {}
+    inner = dsn_text[n_start + 1 : n_end - 1]
+    counts: dict[str, int] = {}
+    for keyword, start, end in _iter_direct_child_scopes(inner):
+        if keyword != "net":
+            continue
+        scope_text = inner[start:end]
+        name, _ = _scope_own_name(scope_text, "net")
+        pins_match = _PINS_RE.search(scope_text)
+        pin_count = len(pins_match.group(1).split()) if pins_match else 0
+        counts[name] = pin_count
+    return counts
+
+
+def parse_ses_net_wire_counts(ses_text: str) -> dict[str, int]:
+    """net → cantidad de ``(wire ...)`` generados, desde ``(network_out ...)``
+    del ``.ses``. Net ausente del dict = 0 wires (net que Freerouting nunca
+    tocó — típicamente bloqueada desde el vamos).
+    """
+    try:
+        n_start, n_end = _find_dsn_scope_span(ses_text, "network_out")
+    except _DsnScopeNotFound:
+        return {}
+    inner = ses_text[n_start + 1 : n_end - 1]
+    counts: dict[str, int] = {}
+    for keyword, start, end in _iter_direct_child_scopes(inner):
+        if keyword != "net":
+            continue
+        scope_text = inner[start:end]
+        name, name_end = _scope_own_name(scope_text, "net")
+        # scope_text[name_end:-1] = todo lo que sigue al nombre, sin el ')' final.
+        wire_count = sum(
+            1 for kw, _, _ in _iter_direct_child_scopes(scope_text[name_end:-1]) if kw == "wire"
+        )
+        counts[name] = wire_count
+    return counts
+
+
+def classify_net_routing(
+    pin_counts: dict[str, int], wire_counts: dict[str, int]
+) -> tuple[list[str], list[dict[str, str | int]], list[str]]:
+    """Clasifica nets ruteables (≥2 pines) en ruteadas/parciales/bloqueadas.
+
+    Heurística documentada (ver bloque de arriba): net con N pines necesita
+    aproximadamente N-1 wires para una cadena simple. 0 wires ⇒ bloqueada;
+    ``1..N-2`` ⇒ parcial (``faltan`` = conexiones que quedan); ``>=N-1`` ⇒
+    ruteada. No reconstruye el grafo de conectividad real.
+    """
+    routed: list[str] = []
+    partial: list[dict[str, str | int]] = []
+    blocked: list[str] = []
+    for net, pins in pin_counts.items():
+        if pins < 2:
+            continue
+        needed = pins - 1
+        wires = wire_counts.get(net, 0)
+        if wires <= 0:
+            blocked.append(net)
+        elif wires < needed:
+            partial.append({"net": net, "faltan": needed - wires})
+        else:
+            routed.append(net)
+    return routed, partial, blocked
+
+
+_FREEROUTING_SETTINGS_CANDIDATES: Final = (
+    Path(tempfile.gettempdir()) / "freerouting" / "freerouting.json",
+    Path.home() / ".config" / "freerouting" / "freerouting.json",
+)
+
+
+def _ensure_freerouting_headless_config() -> None:
+    """Fuerza ``gui.enabled=false`` en la config persistente de Freerouting
+    (sesión 17, hallazgo empírico — no documentado por freerouting).
+
+    Con ``gui.enabled=true`` (default de la instalación), el batch mode
+    (``-de/-do -host KiCad``) completa el ruteo y lo loguea ("Auto-routing
+    was completed"/"Optimization was completed") pero el proceso JVM se
+    queda colgado DESPUÉS de eso y nunca escribe el ``.ses`` — el subprocess
+    revienta por ``KICAD_TIMEOUT`` aunque Freerouting ya haya terminado
+    (reproducido de forma consistente: boards que tardan más de ~1 pasada
+    rápida cuelgan; el board sintético de 2 pads, que rutea en <1s, no
+    llegaba a exhibirlo). Con ``gui.enabled=false`` el mismo router corre
+    limpio de punta a punta y escribe el SES normalmente. Best-effort: si el
+    archivo de config no existe en ninguna ubicación candidata o no es JSON
+    válido, no se toca nada — el pipeline sigue con el comportamiento que
+    tenga instalado (podría volver a colgar; es la config del USUARIO, no
+    algo que este server pueda garantizar sin tocar estado fuera del repo).
+    """
+    for path in _FREEROUTING_SETTINGS_CANDIDATES:
+        if not path.is_file():
+            continue
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(config, dict):
+                continue
+            gui = config.get("gui")
+            if isinstance(gui, dict) and gui.get("enabled") is not False:
+                gui["enabled"] = False
+                path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        except (OSError, json.JSONDecodeError):
+            continue
+
+
 def _run_freerouting(
     runner: SubprocessRunner,
     java_exe: str,
@@ -283,6 +622,7 @@ def _run_freerouting(
     no vacío, no el exit code (freerouting v2 puede devolver ≠0 y aun así
     producir el ruteo). El timeout SÍ es un fallo duro tipado.
     """
+    _ensure_freerouting_headless_config()
     args = [java_exe, "-jar", jar, "-de", str(dsn), "-do", str(ses), "-host", "KiCad"]
     if max_passes is not None:
         args += ["-mp", str(max_passes)]
@@ -404,6 +744,13 @@ def run_autoroute(
 
     t0 = time.perf_counter()
     _run_export_dsn(run, sys_py, src_pcb, dsn, _pcbnew_timeout)
+    # Inyección de reglas del proyecto (P2.1, F-11): las netclasses ya viajan
+    # solas vía pcbnew.LoadBoard(); el edge clearance no tiene mecanismo
+    # nativo en ExportSpecctraDSN, así que se post-procesa el .dsn — ver
+    # docstring de ``_inject_edge_clearance``. Cuenta como parte de "producir
+    # el DSN ruteable", de ahí que quede dentro de la ventana de ``export_ms``.
+    project_rules = load_project_rules(src_pcb)
+    _inject_edge_clearance(dsn, project_rules.min_copper_edge_clearance_mm)
     export_ms = (time.perf_counter() - t0) * 1000
 
     t1 = time.perf_counter()
@@ -415,6 +762,20 @@ def run_autoroute(
     t2 = time.perf_counter()
     tb, ta, vb, va = _run_import_ses(run, sys_py, src_pcb, ses, routed, _pcbnew_timeout)
     import_ms = (time.perf_counter() - t2) * 1000
+
+    # P2.2: denominador correcto + estado por net (F-09) — best-effort, los
+    # parsers ya degradan a {} solos si el .dsn/.ses no tienen la forma
+    # esperada (nunca lanzan); acá además toleramos que el archivo ni
+    # siquiera exista (arnés de tests con runner fake, igual que
+    # ``_inject_edge_clearance``).
+    try:
+        nets_pin_counts = parse_dsn_net_pin_counts(dsn.read_text(encoding="utf-8"))
+    except OSError:
+        nets_pin_counts = {}
+    try:
+        nets_wire_counts = parse_ses_net_wire_counts(ses.read_text(encoding="utf-8"))
+    except OSError:
+        nets_wire_counts = {}
 
     _LOGGER.info(
         json.dumps(
@@ -440,4 +801,8 @@ def run_autoroute(
         import_ms=import_ms,
         routed_pcb=str(routed),
         freerouting_log=str(log_path),
+        nets_pin_counts=nets_pin_counts,
+        nets_wire_counts=nets_wire_counts,
+        dsn_path=str(dsn),
+        ses_path=str(ses),
     )

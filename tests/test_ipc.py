@@ -167,6 +167,99 @@ def test_get_footprint_position_raises_component_not_found() -> None:
     assert excinfo.value.code is ErrorCode.COMPONENT_NOT_FOUND
 
 
+# --- get_items_by_id: bug del not-found (sesión 17, P2.0) ---------------------
+#
+# Bug descubierto en sesión 16b (docs/sesiones/16b-reporte.md): los 4
+# consumidores de ``get_items_by_id`` (``verify_footprint_by_kiid``,
+# ``get_copper_by_kiid``, ``remove_by_kiid``, ``move_footprint``) asumen que
+# kipy devuelve ``[]`` para un KIID inexistente. En la práctica kipy lanza
+# ``ApiError("... none of the requested IDs were found or valid")``. El
+# helper ``_get_items_by_id_or_empty`` (ipc.py) debe absorber ESA excepción
+# puntual y devolver ``[]`` — sin tocar ningún otro fallo IPC.
+
+
+class _KipyApiErrorNotFound(Exception):
+    """Simula ``kipy.errors.ApiError`` del caso not-found (mensaje real observado)."""
+
+
+_KipyApiErrorNotFound.__qualname__ = "ApiError"
+_KipyApiErrorNotFound.__module__ = "kipy.errors"
+
+
+class _KipyApiErrorOther(Exception):
+    """``ApiError`` de kipy con un mensaje NO relacionado a not-found — debe propagar."""
+
+
+_KipyApiErrorOther.__qualname__ = "ApiError"
+_KipyApiErrorOther.__module__ = "kipy.errors"
+
+
+class _NotFoundRawBoard:
+    """``raw`` fake cuyo ``get_items_by_id`` siempre lanza la ApiError not-found."""
+
+    def get_items_by_id(self, kiids: list[Any]) -> list[Any]:
+        raise _KipyApiErrorNotFound(
+            "none of the requested IDs were found or valid on the current document"
+        )
+
+
+class _OtherErrorRawBoard:
+    """``raw`` fake cuyo ``get_items_by_id`` lanza una ApiError distinta (no absorbible)."""
+
+    def get_items_by_id(self, kiids: list[Any]) -> list[Any]:
+        raise _KipyApiErrorOther("some unrelated kicad error")
+
+
+@pytest.mark.unit
+def test_get_copper_by_kiid_returns_none_on_kipy_not_found_error() -> None:
+    """El KIID stale debe resolver a ``None`` (→ ``TRACK_ID_STALE`` en la tool), no reventar."""
+    board = BoardHandle(_raw=_NotFoundRawBoard())
+    bridge = IpcBridge()
+
+    assert bridge.get_copper_by_kiid(board, "stale-kiid") is None
+
+
+@pytest.mark.unit
+def test_get_copper_by_kiid_propagates_unrelated_api_error() -> None:
+    """Una ``ApiError`` que NO es el caso not-found sigue mapeándose como siempre."""
+    board = BoardHandle(_raw=_OtherErrorRawBoard())
+    bridge = IpcBridge()
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.get_copper_by_kiid(board, "any-kiid")
+    assert excinfo.value.code is ErrorCode.KICAD_CLI_FAILED
+    assert "unrelated kicad error" in excinfo.value.hint
+
+
+@pytest.mark.unit
+def test_verify_footprint_by_kiid_returns_none_on_kipy_not_found_error() -> None:
+    board = BoardHandle(_raw=_NotFoundRawBoard())
+    bridge = IpcBridge()
+
+    assert bridge.verify_footprint_by_kiid(board, "stale-kiid") is None
+
+
+@pytest.mark.unit
+def test_remove_by_kiid_returns_false_on_kipy_not_found_error() -> None:
+    """Borrado concurrente (id ya no está) ⇒ ``False``, no una excepción cruda."""
+    board = BoardHandle(_raw=_NotFoundRawBoard())
+    bridge = IpcBridge()
+
+    assert bridge.remove_by_kiid(board, "stale-kiid") is False
+
+
+@pytest.mark.unit
+def test_move_footprint_by_kiid_raises_component_not_found_on_kipy_not_found_error() -> None:
+    """El fast-path por kiid, con KIID stale, cae al mismo ``COMPONENT_NOT_FOUND``
+    de consistencia que el camino sin kiid — no un ``KICAD_CLI_FAILED`` crudo."""
+    board = BoardHandle(_raw=_NotFoundRawBoard())
+    bridge = IpcBridge()
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.move_footprint(board, "U1", Mm(1.0), Mm(1.0), kiid="stale-kiid")
+    assert excinfo.value.code is ErrorCode.COMPONENT_NOT_FOUND
+
+
 # --- restart detection --------------------------------------------------------
 
 

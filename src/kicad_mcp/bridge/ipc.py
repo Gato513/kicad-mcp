@@ -660,6 +660,44 @@ def _is_busy(exc: KicadMcpError) -> bool:
     )
 
 
+def _is_kipy_not_found_error(exc: BaseException) -> bool:
+    """``True`` si ``exc`` es la ``ApiError`` que kipy lanza por KIID(s) inexistentes.
+
+    Bug descubierto en sesión 16b (``docs/sesiones/16b-reporte.md``): el
+    contrato asumido por los 4 consumidores de ``get_items_by_id`` (lista
+    vacía si el id no existe) no coincide con kipy, que lanza
+    ``ApiError("... none of the requested IDs were found or valid")`` en vez
+    de devolver ``[]``. Esta ``ApiError`` no trae un ``code`` de status
+    reconocido (no es AS_BUSY ni AS_UNHANDLED, ver ``_map_ipc_failure``) — la
+    única señal disponible es el mensaje, así que se distingue por substring
+    además de la detección estructural (qualname + módulo) ya usada arriba.
+    """
+    exc_type = type(exc)
+    is_from_kipy = (exc_type.__module__ or "").startswith("kipy")
+    if not (is_from_kipy and exc_type.__qualname__ == "ApiError"):
+        return False
+    return "were found or valid" in str(exc)
+
+
+def _get_items_by_id_or_empty(raw_board: Any, kiids: list[Any]) -> list[Any]:
+    """``raw_board.get_items_by_id(kiids)`` tolerante a KIID(s) inexistentes.
+
+    Envuelve la llamada para los 4 consumidores (``verify_footprint_by_kiid``,
+    ``get_copper_by_kiid``, ``remove_by_kiid``, ``move_footprint``) que ya
+    asumían — y siguen asumiendo, sin cambios — el contrato "lista vacía en
+    not-found". Sólo absorbe la ``ApiError`` puntual de
+    ``_is_kipy_not_found_error``; cualquier otro fallo (busy, unhandled,
+    desconexión, etc.) se re-lanza intacto para que ``_supervise``/
+    ``_run_supervised_read`` lo mapeen como siempre.
+    """
+    try:
+        return list(raw_board.get_items_by_id(kiids))
+    except Exception as exc:
+        if _is_kipy_not_found_error(exc):
+            return []
+        raise
+
+
 # --- Retry acotado para lecturas idempotentes (D-07.1) ------------------------
 
 # Whitelist EXPLÍCITA de operaciones a las que se les puede aplicar retry ante
@@ -1094,7 +1132,7 @@ class IpcBridge:
             def _do() -> FootprintData | None:
                 kiid_proto = KIID()
                 kiid_proto.value = kiid
-                items = board.raw.get_items_by_id([kiid_proto])
+                items = _get_items_by_id_or_empty(board.raw, [kiid_proto])
                 if not items:
                     return None
                 return _footprint_to_data(items[0], capture_kiid=True)
@@ -1248,7 +1286,7 @@ class IpcBridge:
                 raw_board = board.raw
                 kiid_proto = _KIID_proto()
                 kiid_proto.value = kiid
-                items = raw_board.get_items_by_id([kiid_proto])
+                items = _get_items_by_id_or_empty(raw_board, [kiid_proto])
                 if not items or not _is_copper_item(items[0]):
                     return None
                 it = items[0]
@@ -1424,7 +1462,7 @@ class IpcBridge:
                 raw_board = board.raw
                 kiid_proto = _KIID_proto()
                 kiid_proto.value = kiid
-                items = raw_board.get_items_by_id([kiid_proto])
+                items = _get_items_by_id_or_empty(raw_board, [kiid_proto])
                 if not items:
                     return False
                 raw_board.remove_items(items[0])
@@ -1475,7 +1513,7 @@ class IpcBridge:
                 if kiid:
                     kiid_proto = _KIID_proto()
                     kiid_proto.value = kiid
-                    items = raw_board.get_items_by_id([kiid_proto])
+                    items = _get_items_by_id_or_empty(raw_board, [kiid_proto])
                     target_fp = items[0] if items else None
                 else:
                     for fp in raw_board.get_footprints():

@@ -15,6 +15,7 @@ kipy. El fake es cómplice de la spec, no del bug.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 from pathlib import Path
@@ -40,7 +41,7 @@ from kicad_mcp.bridge.ipc import (
 from kicad_mcp.errors import ErrorCode, KicadMcpError
 from kicad_mcp.gates import g1
 from kicad_mcp.logging_config import estimate_tokens
-from kicad_mcp.snapshots import get_default_store
+from kicad_mcp.snapshots import collect_project_mtimes, get_default_store
 from kicad_mcp.tools.pcb import register as register_pcb
 
 
@@ -327,6 +328,68 @@ async def test_save_board_busy_propagates_without_retry(
     # texto); lo que importa es que NO se reintentó ni se tragó el error.
     assert "KICAD_CLI_FAILED" in text and "ocupado" in text
     assert bridge.saved == 0
+
+
+# --- guard por mtime independiente de base_snap (P3.2, sesión 18) ------------
+
+
+@pytest.mark.unit
+async def test_save_board_external_edit_detected_without_base_snap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """P3.2: el guard corre AUNQUE el agente no pase ``base_snap`` — cierra el
+    hueco que ``tool-catalog.md`` documentaba como "sin verificación de
+    coherencia" cuando ``base_snap`` está ausente. Requiere que este proceso
+    ya haya registrado un snapshot de disco (el ancla); acá se simula con un
+    ``get_default_store().register(...)`` directo, como haría cualquier tool
+    de lectura previa (``get_world_context``, ``route_board``...)."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _FakeBridge(refs=["U1"], nets=["GND"], bbox=BBoxMm(Mm(0), Mm(0), Mm(100), Mm(100)))
+    mcp = _make_server(bridge)
+
+    from kicad_mcp.toon.schema import NormalizedState
+
+    pcb = project / "proj.kicad_pcb"
+    sch = project / "proj.kicad_sch"
+    get_default_store().register(
+        NormalizedState(kind="pcb", snap=0, components=()), collect_project_mtimes(sch)
+    )
+
+    # Edición externa silenciosa del .kicad_pcb — nadie de este proceso la
+    # registró.
+    st = pcb.stat()
+    os.utime(pcb, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("save_board", {})  # SIN base_snap
+
+    assert result.isError
+    text = _text(result)
+    assert "EXTERNAL_EDIT_DETECTED" in text
+    assert "reload_board_from_disk" in text
+    assert bridge.saved == 0  # el guard bloqueó ANTES de tocar el board
+
+
+@pytest.mark.unit
+async def test_save_board_proceeds_when_store_has_no_disk_anchor_yet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regresión: un store fresco (sin ningún snapshot de disco registrado
+    todavía en este proceso) NO debe bloquear — no hay ancla contra la cual
+    comparar (mismo criterio ya cubierto por
+    ``test_save_board_happy_registers_disk_snapshot_with_fresh_mtimes``, acá
+    explícito como contrato del guard P3.2)."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _FakeBridge(refs=["U1"], nets=["GND"], bbox=BBoxMm(Mm(0), Mm(0), Mm(100), Mm(100)))
+    mcp = _make_server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("save_board", {})
+
+    assert not result.isError, _text(result)
+    assert bridge.saved == 1
 
 
 # --- delete_track / delete_via (D-11.2) --------------------------------------

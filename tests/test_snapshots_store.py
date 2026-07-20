@@ -37,6 +37,7 @@ from kicad_mcp.errors import ErrorCode, KicadMcpError
 from kicad_mcp.gates import g1
 from kicad_mcp.snapshots import (
     SnapshotStore,
+    check_no_external_disk_edit,
     collect_project_mtimes,
     get_default_store,
     validate_base_snap,
@@ -239,6 +240,106 @@ def test_live_stale_flag_lifecycle() -> None:
     store.mark_live_stale(7)
     store.reset()
     assert store.is_live_stale() is False
+
+
+@pytest.mark.unit
+def test_latest_disk_mtimes_none_when_nothing_registered() -> None:
+    """Store fresco: sin ancla, ``latest_disk_mtimes`` es ``None`` (P3.2)."""
+    store = SnapshotStore()
+    assert store.latest_disk_mtimes is None
+
+
+@pytest.mark.unit
+def test_latest_disk_mtimes_tracks_most_recent_disk_registration() -> None:
+    """``register`` con ``mtimes`` reales actualiza el ancla; con ``None``
+    (snapshot vivo) NO la toca — el ancla sigue siendo el último disco
+    conocido, no se "olvida" por una mutación IPC intermedia (P3.2)."""
+    store = SnapshotStore()
+    store.register(_state(), mtimes={"/a": 1})
+    store.register(_state(), mtimes=None)  # snapshot vivo — no debe pisar el ancla
+    assert store.latest_disk_mtimes == {"/a": 1}
+    store.register(_state(), mtimes={"/a": 2})
+    assert store.latest_disk_mtimes == {"/a": 2}
+
+
+@pytest.mark.unit
+def test_latest_disk_mtimes_is_defensive_copy() -> None:
+    store = SnapshotStore()
+    store.register(_state(), mtimes={"/a": 1})
+    got = store.latest_disk_mtimes
+    assert got is not None
+    got["/a"] = 999
+    assert store.latest_disk_mtimes == {"/a": 1}
+
+
+@pytest.mark.unit
+def test_reset_clears_latest_disk_mtimes() -> None:
+    store = SnapshotStore()
+    store.register(_state(), mtimes={"/a": 1})
+    store.reset()
+    assert store.latest_disk_mtimes is None
+
+
+@pytest.mark.unit
+def test_check_no_external_disk_edit_skips_when_no_anchor(tmp_path: Path) -> None:
+    """Sin snapshot de disco registrado aún en este proceso: no hay ancla
+    contra la cual comparar, así que no se dispara nada (P3.2, mismo
+    criterio que ``mtimes=None`` de ``validate_base_snap``)."""
+    sch = tmp_path / "proj.kicad_sch"
+    sch.write_text("(kicad_sch)")
+    store = SnapshotStore()
+    check_no_external_disk_edit(store, sch)  # no debe levantar
+
+
+@pytest.mark.unit
+def test_check_no_external_disk_edit_passes_when_mtime_intact(tmp_path: Path) -> None:
+    sch = tmp_path / "proj.kicad_sch"
+    sch.write_text("(kicad_sch)")
+    store = SnapshotStore()
+    store.register(_state(), collect_project_mtimes(sch))
+    check_no_external_disk_edit(store, sch)  # no debe levantar
+
+
+@pytest.mark.unit
+def test_check_no_external_disk_edit_raises_when_disk_changed_silently(tmp_path: Path) -> None:
+    """P3.2 (sesión 18): el hueco que ``validate_base_snap`` deja sin
+    ``base_snap`` — acá el guard corre SIEMPRE, no sólo cuando el agente pasa
+    ``base_snap`` explícitamente."""
+    sch = tmp_path / "proj.kicad_sch"
+    sch.write_text("(kicad_sch)")
+    store = SnapshotStore()
+    store.register(_state(), collect_project_mtimes(sch))
+
+    # Edición externa silenciosa: nadie de este proceso registró un snapshot
+    # nuevo, pero el archivo cambió en disco.
+    st = sch.stat()
+    os.utime(sch, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        check_no_external_disk_edit(store, sch)
+    assert excinfo.value.code is ErrorCode.EXTERNAL_EDIT_DETECTED
+    assert "reload_board_from_disk" in excinfo.value.hint
+
+
+@pytest.mark.unit
+def test_check_no_external_disk_edit_updates_anchor_on_next_registration(tmp_path: Path) -> None:
+    """Tras un ``route_board``/``reload_board_from_disk`` que re-registra con
+    los mtimes FRESCOS, el guard vuelve a pasar sin exigir ninguna acción
+    extra — el ancla se movió con el registro, no hace falta "confirmar"."""
+    sch = tmp_path / "proj.kicad_sch"
+    sch.write_text("(kicad_sch)")
+    store = SnapshotStore()
+    store.register(_state(), collect_project_mtimes(sch))
+
+    st = sch.stat()
+    os.utime(sch, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
+    with pytest.raises(KicadMcpError):
+        check_no_external_disk_edit(store, sch)
+
+    # Una tool que re-lee y re-registra (p. ej. reload_board_from_disk) mueve
+    # el ancla a los mtimes actuales.
+    store.register(_state(), collect_project_mtimes(sch))
+    check_no_external_disk_edit(store, sch)  # ya no debe levantar
 
 
 @pytest.mark.unit

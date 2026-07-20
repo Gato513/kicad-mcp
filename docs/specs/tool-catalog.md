@@ -661,7 +661,9 @@ coordenadas pedidas (tolerancia 1e-3 mm). Divergencia → `KICAD_CLI_FAILED`
 
 Parámetro común `base_snap` (sesión 04 T4, aditivo):
 - Ausente → la mutación procede sin verificación de coherencia con el
-  estado que vio el agente (comportamiento pre-v0.3).
+  estado que vio el agente (comportamiento pre-v0.3) — **excepto** en
+  `save_board`/`add_track`/`add_via`/`delete_track`/`delete_via`, donde el
+  guard de mtime de P3.2 (abajo) corre igual, con o sin `base_snap`.
 - Presente y no está en el Snapshot Store → `SNAPSHOT_STALE`; el hint
   instruye pedir `get_world_context` de nuevo (retención = 10 snapshots
   por proceso servidor).
@@ -670,6 +672,24 @@ Parámetro común `base_snap` (sesión 04 T4, aditivo):
   editó fuera del agente y hay que re-sync antes de mutar.
 - Presente y todo coincide → la mutación procede; `snap_id` del confirm
   ecoa `base_snap`.
+
+**Guard de mtime sin `base_snap` (sesión 18, P3.2, red de seguridad
+complementaria a D-14.1).** `save_board`, `add_track`, `add_via`,
+`delete_track` y `delete_via` (las tools de mayor riesgo de pisar disco)
+comparan el mtime ACTUAL del `.kicad_pcb` contra el último snapshot de
+**disco** que cualquier tool de este proceso registró (`route_board`,
+`save_board`, `reload_board_from_disk`, `get_world_context`...) — corre
+SIEMPRE, no sólo cuando el agente pasa `base_snap` explícitamente. Si el
+proceso todavía no registró ningún snapshot de disco (nada contra qué
+comparar) el guard no hace nada — mismo criterio que un snapshot vivo
+(`mtimes=None`) en `validate_base_snap`. Divergencia → `EXTERNAL_EDIT_DETECTED`
+con hint "recargá el board vivo con `reload_board_from_disk()` (o
+File→Revert) y reintentá". Complementario, NO sustituto, del flag
+`live_stale`: ese flag vive en memoria de UN proceso y modela "sé que
+`route_board` dejó el vivo atrás"; este guard sobrevive a que la recarga
+automática de P3.1 falle algún día (bug de kipy, versión distinta de KiCad)
+y cubre ediciones externas silenciosas del `.kicad_pcb` que el flag no
+puede ver por sí solo.
 
 ## Nombres reservados (fases futuras — no implementar, no renombrar)
 

@@ -40,7 +40,12 @@ from ..bridge.state_builder import build_state_from_board, build_state_from_snap
 from ..errors import ErrorCode, KicadMcpError
 from ..gates.g1 import ensure_session_backup
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
-from ..snapshots import collect_project_mtimes, get_default_store, validate_base_snap
+from ..snapshots import (
+    check_no_external_disk_edit,
+    collect_project_mtimes,
+    get_default_store,
+    validate_base_snap,
+)
 from ..tools.world import _resolve_root_pcb, _resolve_root_schematic
 
 # Tolerancia por defecto del matching geométrico del borrado dirigido (D-11.2):
@@ -644,6 +649,9 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
     ) -> str:
         with tool_call_timer() as timer:
             _guard_live_stale()  # D-14.1
+            check_no_external_disk_edit(  # P3.2: red de seguridad, independiente de base_snap
+                get_default_store(), _resolve_root_schematic_or_pcb()
+            )
             root = _project_root()
             if base_snap is not None:
                 _check_base_snap(base_snap)
@@ -822,6 +830,9 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # escritura (D-07.1): add_via viaja por _supervise directo en el bridge.
         with tool_call_timer() as timer:
             _guard_live_stale()  # D-14.1
+            check_no_external_disk_edit(  # P3.2: red de seguridad, independiente de base_snap
+                get_default_store(), _resolve_root_schematic_or_pcb()
+            )
             root = _project_root()
             if base_snap is not None:
                 _check_base_snap(base_snap)
@@ -929,6 +940,9 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # en la escritura (D-07.1). busy → se propaga tal cual.
         with tool_call_timer() as timer:
             _guard_live_stale()  # D-14.1: no pisar el ruteo de disco con vivo viejo
+            check_no_external_disk_edit(  # P3.2: red de seguridad, independiente de base_snap
+                get_default_store(), _resolve_root_schematic_or_pcb()
+            )
             root = _project_root()
             if base_snap is not None:
                 _check_base_snap(base_snap)
@@ -1053,6 +1067,9 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         NormalizedState de footprints, patrón add_track/add_via).
         """
         _guard_live_stale()  # D-14.1
+        check_no_external_disk_edit(  # P3.2: red de seguridad, independiente de base_snap
+            get_default_store(), _resolve_root_schematic_or_pcb()
+        )
         root = _project_root()
         uses_id = track_id is not None
         uses_coords = net is not None or x_mm is not None or y_mm is not None

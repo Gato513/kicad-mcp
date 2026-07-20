@@ -73,6 +73,14 @@ class SnapshotStore:
         # tras recargar el board en KiCad (File→Revert).
         self._live_stale: bool = False
         self._live_stale_snap: SnapId | None = None
+        # P3.2 (sesión 18): último conjunto de mtimes de DISCO que este
+        # proceso conoce, actualizado por CUALQUIER registro con mtimes reales
+        # (route_board, save_board, reload_board_from_disk, get_world_context,
+        # ...). Es la referencia del guard "sin external edit silencioso" —
+        # independiente de ``base_snap`` (que el agente puede omitir) y del
+        # flag ``live_stale`` (que sólo modela el caso conocido de
+        # route_board). Ver ``snapshots/validation.py:check_no_external_disk_edit``.
+        self._latest_disk_mtimes: dict[str, int] | None = None
 
     def register(
         self,
@@ -88,7 +96,10 @@ class SnapshotStore:
 
         Cuando ``mtimes`` es un dict, se copia defensivamente para desacoplar
         al store de mutaciones externas. Si al insertar se supera la
-        retención, se evicta el más viejo (menor ``snap_id``).
+        retención, se evicta el más viejo (menor ``snap_id``); ``mtimes``
+        reales (no ``None``) también actualizan ``latest_disk_mtimes``
+        (P3.2), que NO se evicta con la retención — es un único puntero al
+        último estado de disco conocido, no una entrada de historial.
         """
         with self._lock:
             snap_id = self._next_id
@@ -98,7 +109,21 @@ class SnapshotStore:
             self._entries[snap_id] = entry
             while len(self._entries) > self._retention:
                 self._entries.popitem(last=False)
+            if stored_mtimes is not None:
+                self._latest_disk_mtimes = stored_mtimes
             return snap_id
+
+    @property
+    def latest_disk_mtimes(self) -> dict[str, int] | None:
+        """Último ``mtimes`` de DISCO registrado por cualquier tool (P3.2).
+
+        ``None`` si este proceso todavía no registró ningún snapshot con
+        mtimes reales (nada contra qué comparar todavía — mismo criterio que
+        ``mtimes=None`` en ``SnapshotEntry``: sin ancla, sin falso positivo).
+        Copia defensiva: el llamador no puede mutar el estado interno.
+        """
+        with self._lock:
+            return dict(self._latest_disk_mtimes) if self._latest_disk_mtimes is not None else None
 
     def get(self, snap_id: SnapId) -> SnapshotEntry | None:
         """Devuelve el snapshot o ``None`` si nunca existió / fue evictado."""
@@ -140,6 +165,7 @@ class SnapshotStore:
             self._next_id = 1
             self._live_stale = False
             self._live_stale_snap = None
+            self._latest_disk_mtimes = None
 
 
 # --- singleton por proceso servidor ------------------------------------------

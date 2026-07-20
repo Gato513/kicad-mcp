@@ -13,13 +13,14 @@ from .store import (
     collect_project_mtimes,
     get_default_store,
 )
-from .validation import validate_base_snap
+from .validation import check_no_external_disk_edit, validate_base_snap
 
 __all__ = [
     "Delta",
     "SnapId",
     "SnapshotEntry",
     "SnapshotStore",
+    "check_no_external_disk_edit",
     "collect_project_mtimes",
     "compute_delta",
     "get_default_store",

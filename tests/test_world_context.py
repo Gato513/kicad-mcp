@@ -383,6 +383,15 @@ async def test_world_context_pcb_against_real_board_202_refs() -> None:
         assert not full.isError, full
         toon_full = _toon(full)
 
+        # Guard (sesión 16b, Tarea 3): este test espera el fixture "video"
+        # (202 refs, U19/R5/C10) — si el board abierto es otro proyecto de
+        # prueba (p.ej. el despertador de la sesión 16, 24 refs sin U19), no
+        # es un fallo de tool ni de test: es la precondición equivocada.
+        # Chequear ANTES del focus_ref="U19" de abajo, que si no, erroraría
+        # sobre un board sin esa ref antes de llegar a las aserciones.
+        if "U19" not in toon_full:
+            pytest.skip("board abierto no es el fixture video de 202 refs; ver docs/pruebas-gui.md")
+
         # (2) Con focus r=20 en una ref conocida + budget que fuerza el nivel
         #     focus de la degradación §4 (sin budget, focus no se aplica: es
         #     una palanca, no un filtro incondicional). En un board de este

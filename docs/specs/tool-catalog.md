@@ -226,12 +226,13 @@ audit line JSONL por cada mutación aceptada o rechazada.
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
 | `move_footprint` | Mueve un footprint del PCB a (x_mm, y_mm) | `ref`, `x_mm`, `y_mm`, `base_snap?` | confirm | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
-| `add_track` | Track lineal entre dos puntos **o** entre dos pads (`REF.PAD`) | `net`, `start_x_mm?`, `start_y_mm?`, `end_x_mm?`, `end_y_mm?`, `from_pad?`, `to_pad?`, `width_mm?=0.25`, `layer?="F.Cu"`, `base_snap?` | confirm | `NET_NOT_FOUND`, `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
+| `add_track` | Track entre punto/pad y punto/pad (`REF.PAD`), mezclables por extremo | `net`, `start_x_mm?`, `start_y_mm?`, `end_x_mm?`, `end_y_mm?`, `from_pad?`, `to_pad?`, `width_mm?=0.25`, `layer?="F.Cu"`, `base_snap?` | confirm | `NET_NOT_FOUND`, `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
 | `add_via` | Via pasante en (x_mm, y_mm) asignada a un net | `x_mm`, `y_mm`, `net`, `size_mm?=0.8`, `drill_mm?=0.4`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
-| `delete_track` | Borra la track/arco de un net más cercana a un punto | `net`, `near_x_mm`, `near_y_mm`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
-| `delete_via` | Borra la via de un net más cercana a (x_mm, y_mm) | `net`, `x_mm`, `y_mm`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
+| `delete_track` | Borra track/arco por `id` (de `get_tracks`) o el más cercano a `(net, near_x_mm, near_y_mm)` | `id?`, `net?`, `near_x_mm?`, `near_y_mm?`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `TRACK_ID_STALE`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
+| `delete_via` | Borra una via por `id` (de `get_tracks`) o la más cercana a `(net, x_mm, y_mm)` | `id?`, `net?`, `x_mm?`, `y_mm?`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `TRACK_ID_STALE`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
 | `save_board` | Persiste el board vivo del PCB Editor a disco | `base_snap?` | confirm | `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `KICAD_CLI_FAILED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
 | `get_component_detail` | Detalle de un footprint: posición, rotación, bbox/courtyard y pads absolutos | `ref`, `kind?="pcb"` | detail | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
+| `get_tracks` | Lista tracks/vías filtrados por `net`/`bbox`/`layer`, con `id` estable | `net?`, `bbox?`, `layer?`, `max_tokens?` | detail | `NET_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 | `draw_board_outline` | Crea un contorno rectangular en Edge.Cuts | `x_mm`, `y_mm`, `width_mm`, `height_mm`, `base_snap?` | confirm | `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
 | `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO | `max_passes?`, `timeout_s?=600` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED` |
 
@@ -307,27 +308,105 @@ vivo convergen y la cadena de snapshots lo refleja. G1 aplica. Sin retry en la
 escritura (busy → se propaga). Confirm con ruta ABSOLUTA:
 `OK save_board video.kicad_pcb -> /ruta/abs/video.kicad_pcb [snap:N]`.
 
-**`delete_track` / `delete_via` (sesión 11, D-11.2, ADR-0010).** Borrado
-dirigido de cobre **sin Gate G2** (el cobre es re-agregable en un call y está
-protegido por G1+git; ver ADR-0010 para la asimetría con footprints). El
-target se identifica por **coincidencia geométrica + net**: `delete_track`
-borra la track/arco de ese net cuyo segmento pasa más cerca de
-`(near_x_mm, near_y_mm)`; `delete_via` la via de ese net más cercana a
-`(x_mm, y_mm)`. Tolerancia 0.5 mm. Ante **ambigüedad** (2+ candidatos dentro
-de tolerancia) → `INVALID_PARAMS` con los candidatos en `data.candidates`
-(posiciones/endpoints) para refinar — **nunca** se borra "el más cercano" a
-ciegas. Nada dentro de tolerancia → `INVALID_PARAMS`. El borrado usa
-`remove_items` sobre el KIID resuelto. Post-estado derivado del pre (el cobre
-no vive en `NormalizedState`, patrón `add_track`); confirm ≤50 tok con snap.
-Confirm: `OK delete_track GND @(150.0,80.0) [snap:N]`.
+**`delete_track` / `delete_via` (sesión 11, D-11.2, ADR-0010; ids sesión 16,
+D-16.2).** Borrado dirigido de cobre **sin Gate G2** (el cobre es re-agregable
+en un call y está protegido por G1+git; ver ADR-0010 para la asimetría con
+footprints). Dos formas mutuamente excluyentes de identificar el target:
 
-**`add_track` anclado a pads (sesión 11, D-11.4).** Parámetros alternativos
-`from_pad` / `to_pad` con formato `"REF.PAD"` (p. ej. `"U1.8"`), **mutuamente
-excluyentes** con las coordenadas crudas (`INVALID_PARAMS` si se mezclan, o si
-falta uno de los dos pads). La resolución pad→coordenada absoluta usa la misma
-lógica de `get_component_detail` (los pads ya vienen absolutos/rotados de
-kipy). `REF` inexistente → `COMPONENT_NOT_FOUND`; `PAD` inexistente en ese
-footprint → `INVALID_PARAMS` con los pads disponibles en el hint.
+1. **Por `id`** (sesión 16, preferida): el `id` de `get_tracks` — resuelve
+   directo por KIID, sin matching geométrico ni ambigüedad posible. `id`
+   inexistente, o de otro `kind` (p. ej. pasar un id de via a `delete_track`)
+   → `TRACK_ID_STALE` con hint "re-listá con get_tracks". Es también el error
+   si el ítem se borró por otra vía entre el `get_tracks` que emitió el id y
+   este call (borrado concurrente).
+2. **Por coordenadas** (D-11.2, compatibilidad): `delete_track` borra la
+   track/arco del net cuyo segmento pasa más cerca de
+   `(near_x_mm, near_y_mm)`; `delete_via` la via de ese net más cercana a
+   `(x_mm, y_mm)`. Tolerancia 0.5 mm. Ante **ambigüedad** (2+ candidatos
+   dentro de tolerancia) → `INVALID_PARAMS` con los candidatos en
+   `data.candidates` (posiciones/endpoints, **con su `id`** — sesión 16: antes
+   se prometía en el hint y no llegaba, ver el fix de `data` en la Taxonomía
+   más abajo) para refinar el punto **o** resolver por `id` — **nunca** se
+   borra "el más cercano" a ciegas. Nada dentro de tolerancia →
+   `INVALID_PARAMS`.
+
+Mezclar `id` con `net`/coordenadas → `INVALID_PARAMS`. Ambas formas convergen
+en el mismo cierre: `remove_items` sobre el KIID resuelto, post-estado
+derivado del pre (el cobre no vive en `NormalizedState`, patrón `add_track`),
+confirm ≤50 tok con snap. Confirm: `OK delete_track GND @(150.0,80.0) [snap:N]`
+(la posición y el net del confirm salen del ítem resuelto, sea cual sea la
+forma usada para identificarlo).
+
+**`add_track` — endpoints (sesión 11 D-11.4, mixtos sesión 16 D-16.3).**
+Parámetros alternativos `from_pad` / `to_pad` con formato `"REF.PAD"` (p. ej.
+`"U1.8"`). La exclusión pad↔coordenadas es **por endpoint**, no global: cada
+extremo (`start_x_mm`+`start_y_mm` vs. `from_pad`; `end_x_mm`+`end_y_mm` vs.
+`to_pad`) elige su propia forma independientemente. Mezclar pad y coordenadas
+crudas en el MISMO extremo → `INVALID_PARAMS`; combinar un extremo con pad y
+el otro con coordenadas es válido (caso real de reparación: `from_pad="U1.1",
+end_x_mm=.., end_y_mm=..` desde un pad hasta un punto en el cobre existente).
+La resolución pad→coordenada absoluta usa la misma lógica de
+`get_component_detail` (los pads ya vienen absolutos/rotados de kipy). `REF`
+inexistente → `COMPONENT_NOT_FOUND`; `PAD` inexistente en ese footprint →
+`INVALID_PARAMS` con los pads disponibles en el hint.
+
+**`add_track` — validación de colisiones (sesión 16, D-16.4).** Antes de
+mutar, rechaza el track si invade un pad de **otro net** en una capa aplicable
+(la del track, o `*.Cu` si el pad es pasante) — `INVALID_PARAMS` con
+`data.pad_net`/`data.pad_pos`/`data.clearance_mm`. Pads del MISMO net que el
+track se excluyen del chequeo (se espera que el track los toque: son los
+pads que conecta). Geometría: una única fórmula de rectángulo-con-esquinas-
+redondeadas (`r = ratio·min(w,h)`, ratio∈[0,0.5]) cubre rect (`ratio=0`),
+roundrect (`ratio` real del padstack) y circle/oval (`ratio=0.5`, degenera en
+círculo/estadio exactos) — soluciona la fricción del dogfooding donde un
+verificador casero trataba todo pad como rectángulo completo y sobre-rechazaba
+cerca de esquinas redondeadas (2 iteraciones DRC perdidas). **Aproximación
+documentada:** el clearance asumido es un piso fijo (`0.2 mm`, default clásico
+de KiCad) — el server no lee reglas de netclass todavía (no hay plumbing IPC
+para eso); es el fallback explícitamente aceptado si la vía completa (leer la
+regla real) resulta de costo alto. Fuente de pads: `Board.get_pads()` — una
+sola pasada IPC para todo el board, sin iterar footprint por footprint.
+
+**`get_tracks` (sesión 16, D-16.1).** Tool de **solo lectura** — visibilidad
+del cobre (P1 de la hoja de ruta v3, fricción más cara del dogfooding: ~50%
+de una sesión fue "cirugía a ciegas" parseando el `.kicad_pcb` con Python
+externo). **Al menos un filtro es obligatorio** (`net`, `bbox` o `layer`) —
+sin filtros, `INVALID_PARAMS` (una placa real puede tener cientos/miles de
+segmentos). `bbox=[min_x,min_y,max_x,max_y]` (mm); un segmento aparece si
+**cruza** el bbox (no sólo si un endpoint cae adentro — clipping Liang-Barsky).
+`layer` filtra por capa de cobre; una via pasante cuenta para cualquier capa
+de su span. No es TOON (F1 intacto): formato compacto propio, tool separada.
+
+Formato (cabecera + una línea por ítem; `T`=track, `A`=arco con punto medio,
+`V`=via):
+
+```
+TRACKS|v1|net:GND|3s|1v
+T <id> GND F.Cu w0.250 (10.000,10.000)->(20.000,10.000)
+A <id> GND F.Cu w0.250 (20.000,10.000)->(25.000,15.000)~(22.500,12.500)
+V <id> GND (50.000,50.000) d0.800/0.400 F.Cu-B.Cu
+```
+
+**Contrato de estabilidad del `id` (D-16.2, documentado acá — única fuente
+normativa).** `id` es el **KIID nativo de KiCad** (`str(item.id.value)` vía
+kipy), no un hash calculado por el server. Es determinista mientras el board
+no cambie. **Se invalida tras CUALQUIER mutación de cobre** (`add_track`,
+`add_via`, `delete_track`, `delete_via`, `route_board`) **o recarga del
+board** — el agente debe re-listar con `get_tracks` tras mutar antes de reusar
+un `id` en `delete_track(id=)`/`delete_via(id=)`. Un `id` que ya no resuelve
+→ `TRACK_ID_STALE`.
+
+Presupuesto de tokens: mismo mecanismo/default que `get_world_context`
+(D4, 800 tok si `max_tokens` no se pasa) — si el listado filtrado no entra,
+`CONTEXT_BUDGET_IMPOSSIBLE` con el mínimo estimado en el hint. A diferencia
+del TOON completo, `get_tracks` no aplica una cascada de degradación de
+niveles: al ser inherentemente recortable por `net`/`bbox`/`layer`, la
+recomendación del hint es achicar el filtro (documentado como simplificación
+deliberada frente al mecanismo de `encode()`). Sujeto al aviso `live_stale`
+como toda lectura de mundo (D-14.1): si `route_board` dejó el disco adelante
+del editor vivo, la salida lleva `[AVISO] editor vivo detras del disco
+(route_board)` — no bloquea, sólo avisa (patrón `get_world_context`, no el de
+las mutaciones).
 
 **`route_board` (sesión 14, D-14.1..D-14.4, ADR-0011).** Autorouting headless
 con **Freerouting** (jar, subprocess java) vía round-trip Specctra con `pcbnew`
@@ -547,6 +626,7 @@ catálogo para no prometer una superficie que no existe.
 | `BUDGET_EXCEEDED` | Gate G4: techo de sesión alcanzado | No | Requiere acción explícita del usuario |
 | `INVALID_PARAMS` | Parámetros no validan contra el schema | No | Nombrar el campo exacto y el valor recibido |
 | `PATH_OUTSIDE_PROJECT` | Ruta fuera de la raíz del proyecto | No | Mostrar la raíz permitida; jamás la ruta canónica del sistema |
+| `TRACK_ID_STALE` | El `id` de `get_tracks` no resuelve (board mutado/recargado) o apunta a otro `kind` | No | Instruir: re-listar con `get_tracks` y usar un id vigente |
 
 Reglas de la taxonomía: los códigos son SCREAMING_SNAKE en inglés (estables
 ante cambios de idioma de la UI); `message` y `hint` en el idioma de la
@@ -566,6 +646,20 @@ correlacionar el fallo con su plan sin parsear el mensaje. Reglas:
   del código o de la tool que las emite.
 - Los códigos no cambian por decidir emitir `data`. Cualquier código puede
   ganar un payload estructurado en una sesión futura sin quebrar F3.
+
+**Bug corregido en sesión 16: `data` no llegaba al agente.** `KicadMcpError`
+lleva `data` desde su creación, pero el SDK `mcp` vendorizado colapsa **toda**
+excepción de una tool a `str(e)` antes de responder (`ToolError`/
+`_make_error_result`) — `to_dict()` (que sí serializa `data`) nunca se
+invocaba en el camino real. El síntoma reportado en el dogfooding 2
+(`delete_track` prometía `data.candidates` en el hint y no llegaba) era en
+realidad un bug **de cualquier emisor de `data`**, no sólo de `delete_track`.
+Fix: `KicadMcpError.__init__` ahora embebe `data` como JSON al final del
+mensaje de la excepción (`... hint: <hint> data: {"clave": ...}`) — el único
+canal que de verdad cruza la frontera MCP hoy. No requirió tocar el SDK
+vendorizado (F5 intacta). Todo emisor de `data` preexistente (`SNAPSHOT_STALE`,
+`KICAD_CLI_FAILED`, los de `route_board`) se beneficia del fix sin cambios de
+código propio.
 
 Emisores actuales:
 
@@ -591,3 +685,12 @@ Emisores actuales:
   Los demás fallos IPC (incluido `ApiError` con código no distinguido) siguen
   emitiendo `KICAD_CLI_FAILED` sin `data.ipc_status`; el hint incluye el
   detalle sanitizado del mensaje original.
+- `INVALID_PARAMS` de `delete_track`/`delete_via` (ambigüedad por
+  coordenadas) → `data.candidates: list[{id, kind, net, pos|start/end, layer}]`
+  (sesión 11, D-11.2; `id` agregado en sesión 16, D-16.2). El agente resuelve
+  el candidato correcto con una segunda llamada `delete_track(id=...)` /
+  `delete_via(id=...)` en vez de refinar coordenadas a ciegas.
+- `INVALID_PARAMS` de `add_track` (colisión con pad de otro net) →
+  `data.pad_net: str | None`, `data.pad_pos: [x_mm, y_mm]`,
+  `data.clearance_mm: float` (sesión 16, D-16.4). El agente ubica el pad
+  ofensor sin volver a pedir `get_component_detail`.

@@ -35,6 +35,7 @@ from kicad_mcp.bridge.ipc import (
     FootprintPadData,
     IpcBridge,
     Mm,
+    PadGeom,
 )
 from kicad_mcp.errors import ErrorCode, KicadMcpError
 from kicad_mcp.gates import g1
@@ -101,6 +102,22 @@ class _FakeBridge(IpcBridge):
         self, board: BoardHandle, net: str
     ) -> tuple[CopperItem, ...]:
         return tuple(self._copper.get(net, []))
+
+    def list_all_copper(self, board: BoardHandle) -> tuple[CopperItem, ...]:  # type: ignore[override]
+        return tuple(it for items in self._copper.values() for it in items)
+
+    def get_copper_by_kiid(  # type: ignore[override]
+        self, board: BoardHandle, kiid: str
+    ) -> CopperItem | None:
+        for items in self._copper.values():
+            for it in items:
+                if it.kiid == kiid:
+                    return it
+        return None
+
+    def list_all_pads(self, board: BoardHandle) -> tuple[PadGeom, ...]:  # type: ignore[override]
+        # Sesión 16 D-16.4: sin pads simulados por default.
+        return tuple(getattr(self, "pads", ()))
 
     def remove_by_kiid(self, board: BoardHandle, kiid: str) -> bool:  # type: ignore[override]
         self.removed_kiids.append(kiid)

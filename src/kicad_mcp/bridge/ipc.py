@@ -198,6 +198,39 @@ class CopperItem:
     end_y_mm: Mm | None
     mid_x_mm: Mm | None
     mid_y_mm: Mm | None
+    # Sesión 16 (D-16.1, ``get_tracks``): geometría adicional para la vista de
+    # cobre. ``None`` cuando no aplica al ``kind`` (ancho para vías, tamaño/
+    # drill/capas para tracks). Default ``None`` por retrocompat: los tests
+    # existentes construyen ``CopperItem`` sin estos campos.
+    width_mm: Mm | None = None  # track / arc
+    size_mm: Mm | None = None  # via: diámetro
+    drill_mm: Mm | None = None  # via
+    via_layers: tuple[str, str] | None = None  # via: (capa_inicio, capa_fin)
+
+
+@dataclass(frozen=True)
+class PadGeom:
+    """Geometría de un pad para la validación de colisiones de ``add_track``
+    (D-16.4). Fuente: ``Board.get_pads()`` — UNA pasada IPC para todo el board
+    (mismo patrón de costo que ``list_all_copper``), sin iterar footprint por
+    footprint.
+
+    ``corner_ratio`` unifica la forma del pad como un rectángulo con esquinas
+    redondeadas (ver ``_pad_corner_ratio``): ``0.0`` para rect/trapezoid/custom
+    (aproximación conservadora: rectángulo completo), el ``roundrect_rratio``
+    real para roundrect, y ``0.5`` (máximo geométrico) para circle/oval — que
+    con la misma fórmula da círculo/estadio exactos. No lleva ``ref``: el
+    chequeo de colisión sólo necesita net (para excluir same-net) y geometría.
+    """
+
+    net_name: str | None
+    layer: str  # "F.Cu" | "B.Cu" | "*.Cu" (pasante)
+    x_mm: Mm
+    y_mm: Mm
+    w_mm: Mm
+    h_mm: Mm
+    rotation_deg: float
+    corner_ratio: float  # 0..0.5
 
 
 @dataclass(frozen=True)
@@ -284,6 +317,94 @@ def _pad_layer_str(pad: Any) -> str:
     if copper:
         return _layer_int_to_str(copper[0].layer)
     return "*.Cu"
+
+
+def _pad_corner_ratio(copper_layer: Any) -> float:
+    """``corner_ratio`` unificado (D-16.4) para el chequeo de colisiones.
+
+    Una única fórmula de rectángulo-con-esquinas-redondeadas cubre las formas
+    reales de KiCad: ``r = ratio * min(w_mm, h_mm)``, ``ratio`` acotado a
+    ``[0, 0.5]`` (el 0.5 es el máximo geométrico de KiCad — con ``w == h``
+    degenera en círculo exacto; con ``w != h``, en estadio/oval exacto).
+
+    - ``PSS_ROUNDRECT``: el ``corner_rounding_ratio`` real del padstack.
+    - ``PSS_CIRCLE`` / ``PSS_OVAL``: ``0.5`` — la misma fórmula da la forma
+      exacta (círculo u oval-estadio), sin código geométrico separado.
+    - ``PSS_RECTANGLE`` / ``PSS_TRAPEZOID`` / ``PSS_CHAMFEREDRECT`` /
+      ``PSS_CUSTOM``: ``0.0`` — aproximación conservadora (rectángulo
+      completo, sin recorte de esquina). Documentado como aproximación
+      deliberada (sesión 16): trapezoid/custom no tienen una forma
+      rectangular-redondeada equivalente exacta, y tratarlas como rectángulo
+      lleno nunca subestima el área ocupada por el pad (nunca dispara un
+      falso negativo, sólo puede sobre-rechazar en el caso raro de esas
+      formas — igual que antes de esta sesión, donde no había chequeo).
+    """
+    from kipy.proto.board.board_types_pb2 import PadStackShape as PSS
+
+    shape = copper_layer.shape
+    if shape == PSS.PSS_ROUNDRECT:
+        return max(0.0, min(0.5, float(copper_layer.corner_rounding_ratio)))
+    if shape in (PSS.PSS_CIRCLE, PSS.PSS_OVAL):
+        return 0.5
+    return 0.0
+
+
+def _is_copper_item(it: Any) -> bool:
+    """``True`` si ``it`` es un ``Track``/``ArcTrack``/``Via`` de kipy.
+
+    ``get_items``/``get_items_by_id`` pueden devolver otros tipos (p. ej. un
+    KIID que apunta a un footprint); el llamador filtra con esto antes de
+    convertir a ``CopperItem`` (D-16.1/D-16.2).
+    """
+    return type(it).__name__ in ("Track", "ArcTrack", "Via")
+
+
+def _kipy_copper_to_item(it: Any, net_name: str) -> CopperItem:
+    """Convierte un ``Track``/``ArcTrack``/``Via`` de kipy a ``CopperItem``.
+
+    Única fuente de la verdad de la conversión (D-16.1): la usan
+    ``list_net_copper``, ``list_all_copper`` y ``get_copper_by_kiid`` por
+    igual. Precondición: ``_is_copper_item(it)`` es ``True``.
+    """
+    tname = type(it).__name__
+    if tname == "Via":
+        p = it.position
+        drill = it.padstack.drill
+        return CopperItem(
+            kind="via",
+            kiid=str(it.id.value),
+            net_name=net_name,
+            layer=None,
+            start_x_mm=nm_to_mm(Nm(int(p.x))),
+            start_y_mm=nm_to_mm(Nm(int(p.y))),
+            end_x_mm=None,
+            end_y_mm=None,
+            mid_x_mm=None,
+            mid_y_mm=None,
+            size_mm=nm_to_mm(Nm(int(it.diameter))),
+            drill_mm=nm_to_mm(Nm(int(it.drill_diameter))),
+            via_layers=(
+                _layer_int_to_str(drill.start_layer),
+                _layer_int_to_str(drill.end_layer),
+            ),
+        )
+    s = it.start
+    e = it.end
+    is_arc = tname == "ArcTrack"
+    mid = it.mid if is_arc else None
+    return CopperItem(
+        kind="arc" if is_arc else "track",
+        kiid=str(it.id.value),
+        net_name=net_name,
+        layer=_layer_int_to_str(it.layer),
+        start_x_mm=nm_to_mm(Nm(int(s.x))),
+        start_y_mm=nm_to_mm(Nm(int(s.y))),
+        end_x_mm=nm_to_mm(Nm(int(e.x))),
+        end_y_mm=nm_to_mm(Nm(int(e.y))),
+        mid_x_mm=nm_to_mm(Nm(int(mid.x))) if mid is not None else None,
+        mid_y_mm=nm_to_mm(Nm(int(mid.y))) if mid is not None else None,
+        width_mm=nm_to_mm(Nm(int(it.width))),
+    )
 
 
 def _pad_to_detail(pad: Any) -> PadDetail:
@@ -573,6 +694,12 @@ _IDEMPOTENT_OPS: frozenset[str] = frozenset(
         "list_net_copper",
         # F-03: bbox del board + contorno Edge.Cuts para la cabecera TOON pcb.
         "board_outline",
+        # Sesión 16 (D-16.1/D-16.2/D-16.4): lecturas puras para ``get_tracks``,
+        # el borrado dirigido por id y la validación de colisiones de
+        # ``add_track``. Ninguna tiene efecto colateral en KiCad.
+        "list_all_copper",
+        "get_copper_by_kiid",
+        "list_all_pads",
     }
 )
 
@@ -1071,47 +1198,100 @@ class IpcBridge:
                 items = raw_board.get_items_by_net(
                     net_obj, [OT.KOT_PCB_TRACE, OT.KOT_PCB_ARC, OT.KOT_PCB_VIA]
                 )
-                out: list[CopperItem] = []
-                for it in items:
-                    tname = type(it).__name__
-                    if tname == "Via":
-                        p = it.position
-                        out.append(
-                            CopperItem(
-                                kind="via",
-                                kiid=str(it.id.value),
-                                net_name=net,
-                                layer=None,
-                                start_x_mm=nm_to_mm(Nm(int(p.x))),
-                                start_y_mm=nm_to_mm(Nm(int(p.y))),
-                                end_x_mm=None,
-                                end_y_mm=None,
-                                mid_x_mm=None,
-                                mid_y_mm=None,
-                            )
-                        )
-                    elif tname in ("Track", "ArcTrack"):
-                        s = it.start
-                        e = it.end
-                        is_arc = tname == "ArcTrack"
-                        mid = it.mid if is_arc else None
-                        out.append(
-                            CopperItem(
-                                kind="arc" if is_arc else "track",
-                                kiid=str(it.id.value),
-                                net_name=net,
-                                layer=_layer_int_to_str(it.layer),
-                                start_x_mm=nm_to_mm(Nm(int(s.x))),
-                                start_y_mm=nm_to_mm(Nm(int(s.y))),
-                                end_x_mm=nm_to_mm(Nm(int(e.x))),
-                                end_y_mm=nm_to_mm(Nm(int(e.y))),
-                                mid_x_mm=nm_to_mm(Nm(int(mid.x))) if mid is not None else None,
-                                mid_y_mm=nm_to_mm(Nm(int(mid.y))) if mid is not None else None,
-                            )
-                        )
-                return tuple(out)
+                return tuple(_kipy_copper_to_item(it, net) for it in items if _is_copper_item(it))
 
             return self._run_supervised_read("list_net_copper", _do)
+
+    def list_all_copper(self, board: BoardHandle) -> tuple[CopperItem, ...]:
+        """Todos los tracks/arcs/vias del board, sin filtrar por net (D-16.1).
+
+        Alimenta ``get_tracks(bbox=|layer=)`` sin ``net``: una única pasada
+        ``get_items`` (tipos TRACE/ARC/VIA) — mismo costo de un
+        ``list_net_copper`` sin el filtro server-side por net. El ``net_name``
+        de cada ítem sale de ``it.net.name`` (no lo tenemos de antemano, a
+        diferencia de ``list_net_copper``).
+        """
+        from kipy.proto.common.types import KiCadObjectType as OT
+
+        with self._lock:
+            self._detect_restart()
+
+            def _do() -> tuple[CopperItem, ...]:
+                raw_board = board.raw
+                items = raw_board.get_items(
+                    types=[OT.KOT_PCB_TRACE, OT.KOT_PCB_ARC, OT.KOT_PCB_VIA]
+                )
+                out: list[CopperItem] = []
+                for it in items:
+                    if not _is_copper_item(it):
+                        continue
+                    net = it.net
+                    net_name = str(net.name) if net is not None and net.name else ""
+                    out.append(_kipy_copper_to_item(it, net_name))
+                return tuple(out)
+
+            return self._run_supervised_read("list_all_copper", _do)
+
+    def get_copper_by_kiid(self, board: BoardHandle, kiid: str) -> CopperItem | None:
+        """Resuelve un ``CopperItem`` por KIID (D-16.2, borrado dirigido por id).
+
+        ``None`` si el KIID no existe (board mutado desde el ``get_tracks``
+        que lo emitió) o si existe pero no es cobre (p. ej. apunta a un
+        footprint). El llamador mapea ambos casos a ``TRACK_ID_STALE``.
+        """
+        from kipy.proto.common.types.base_types_pb2 import KIID as _KIID_proto
+
+        with self._lock:
+            self._detect_restart()
+
+            def _do() -> CopperItem | None:
+                raw_board = board.raw
+                kiid_proto = _KIID_proto()
+                kiid_proto.value = kiid
+                items = raw_board.get_items_by_id([kiid_proto])
+                if not items or not _is_copper_item(items[0]):
+                    return None
+                it = items[0]
+                net = it.net
+                net_name = str(net.name) if net is not None and net.name else ""
+                return _kipy_copper_to_item(it, net_name)
+
+            return self._run_supervised_read("get_copper_by_kiid", _do)
+
+    def list_all_pads(self, board: BoardHandle) -> tuple[PadGeom, ...]:
+        """Geometría de todos los pads del board, para colisiones de ``add_track``
+        (D-16.4). Una pasada ``Board.get_pads()`` — sin iterar footprint por
+        footprint (mismo espíritu de costo que ``list_all_copper``).
+        """
+        with self._lock:
+            self._detect_restart()
+
+            def _do() -> tuple[PadGeom, ...]:
+                raw_board = board.raw
+                out: list[PadGeom] = []
+                for pad in raw_board.get_pads():
+                    copper = pad.padstack.copper_layers
+                    if not copper:
+                        continue
+                    size = copper[0].size
+                    net = pad.net
+                    net_name = str(net.name) if net is not None and net.name else None
+                    pos = pad.position
+                    out.append(
+                        PadGeom(
+                            net_name=net_name,
+                            layer=_pad_layer_str(pad),
+                            x_mm=nm_to_mm(Nm(int(pos.x))),
+                            y_mm=nm_to_mm(Nm(int(pos.y))),
+                            w_mm=nm_to_mm(Nm(int(size.x))),
+                            h_mm=nm_to_mm(Nm(int(size.y))),
+                            rotation_deg=float(pad.padstack.angle.degrees),
+                            corner_ratio=_pad_corner_ratio(copper[0]),
+                        )
+                    )
+                return tuple(out)
+
+            return self._run_supervised_read("list_all_pads", _do)
 
     def board_outline(self, board: BoardHandle) -> tuple[BBoxMm, str]:
         """Bbox del board y estado del contorno Edge.Cuts (F-03).

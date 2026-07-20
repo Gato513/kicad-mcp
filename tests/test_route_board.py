@@ -49,6 +49,7 @@ class _FakeBridge(IpcBridge):
         open_board_path: str | None = None,
         refs: list[str] | None = None,
         raise_not_running: bool = False,
+        reload_error: Exception | None = None,
     ) -> None:
         self._client = None  # type: ignore[assignment]
         self._instance_token = None
@@ -56,7 +57,9 @@ class _FakeBridge(IpcBridge):
         self._open_board_path = open_board_path
         self._refs = list(refs or ["U1", "R1"])
         self._raise_not_running = raise_not_running
+        self._reload_error = reload_error
         self.saved: list[str] = []
+        self.reload_calls = 0
 
     def get_open_board(self) -> BoardHandle | None:  # type: ignore[override]
         if self._raise_not_running:
@@ -76,6 +79,12 @@ class _FakeBridge(IpcBridge):
 
     def save_board(self, board: BoardHandle) -> None:  # type: ignore[override]
         self.saved.append(self._open_board_path or "")
+
+    def reload_board_from_disk(self, board: BoardHandle) -> tuple[int, int]:  # type: ignore[override]
+        self.reload_calls += 1
+        if self._reload_error is not None:
+            raise self._reload_error
+        return (0, 0)
 
     def read_board_context(self, board: BoardHandle) -> BoardContext:  # type: ignore[override]
         fps = tuple(
@@ -351,13 +360,78 @@ async def test_route_board_confirm_flag_and_counts(
     assert isinstance(payload["snap"], int)
     assert payload["session_dsn"].endswith("route.dsn")
     assert payload["session_ses"].endswith("route.ses")
-    # Flag activo tras el ruteo.
-    assert get_default_store().is_live_stale() is True
+    # P3.1 (sesión 18, D-V3.1): con el board abierto == target, route_board
+    # recarga automáticamente el editor vivo — el flag D-14.1 NI LLEGA a
+    # activarse (gate de cierre: 0 contactos humanos de recarga).
+    assert payload["reloaded"] is True
+    assert bridge.reload_calls == 1
+    assert get_default_store().is_live_stale() is False
     # save_board implícito corrió (board abierto == target).
     assert bridge.saved == [str(project / "proj.kicad_pcb")]
     # El .kicad_pcb fue reemplazado por el ruteado.
     assert (project / "proj.kicad_pcb").read_text() == "(kicad_pcb routed)"
     assert calls["drc"] == 2
+
+
+@pytest.mark.unit
+async def test_route_board_reload_failure_falls_back_to_live_stale(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Si la recarga automática falla (busy/timeout/kipy roto), route_board NO
+    aborta: el ruteo ya está en disco y es válido. Cae al viejo guard
+    ``live_stale`` como red de seguridad (P3.1)."""
+    from kicad_mcp.errors import KicadMcpError
+
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    _patch_pipeline(
+        monkeypatch,
+        drc_sequence=[_drc(64), _drc(0)],
+        result=_result(project),
+    )
+    reload_error = KicadMcpError(
+        code=ErrorCode.KICAD_CLI_FAILED,
+        message="KiCad está ocupado durante reload_board_from_disk.",
+        hint="reintentá en unos segundos.",
+        data={"ipc_status": "busy"},
+    )
+    bridge = _FakeBridge(open_board_path=str(project / "proj.kicad_pcb"), reload_error=reload_error)
+    mcp = _server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("route_board", {})
+
+    # route_board sigue reportando éxito: el ruteo en disco es válido pese a
+    # que la recarga automática del editor vivo no pudo completarse.
+    assert not result.isError
+    payload = _json(result)
+    assert payload["reloaded"] is False
+    assert bridge.reload_calls == 1
+    assert get_default_store().is_live_stale() is True
+
+
+@pytest.mark.unit
+async def test_route_board_skips_reload_when_no_editor_open(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    _patch_pipeline(
+        monkeypatch,
+        drc_sequence=[_drc(5), _drc(0)],
+        result=_result(project, ruteables=5, routed=5),
+    )
+    bridge = _FakeBridge(raise_not_running=True)  # KiCad cerrado
+    mcp = _server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("route_board", {})
+
+    assert not result.isError
+    payload = _json(result)
+    assert payload["reloaded"] == "skipped_editor_closed"
+    assert bridge.reload_calls == 0
+    assert get_default_store().is_live_stale() is True
 
 
 @pytest.mark.unit
@@ -453,6 +527,10 @@ async def test_route_board_skips_save_cross_project(
     payload = _json(result)
     assert payload["nets"]["total"] == 10
     assert bridge.saved == []  # no se tocó el board vivo de otro proyecto
+    # P3.1: tampoco se intenta la recarga automática — el board abierto NO es
+    # el target ruteado, igual que el save implícito.
+    assert payload["reloaded"] is False
+    assert bridge.reload_calls == 0
     assert get_default_store().is_live_stale() is True
 
 

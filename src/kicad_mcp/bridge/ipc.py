@@ -1406,6 +1406,42 @@ class IpcBridge:
             with self._supervise("save_board"):
                 board.raw.save()
 
+    def reload_board_from_disk(self, board: BoardHandle) -> tuple[int, int]:
+        """Recarga el board vivo desde el ``.kicad_pcb`` de disco (P3.1, sesión 18).
+
+        kipy expone la recarga como ``Board.revert()`` (``kipy/board.py:304-308``):
+        envía ``RevertDocument`` sobre el mismo socket IPC que ``save()``.
+        D-12.4 (sesión 12) había descartado la recarga programática evaluando
+        sólo el documento **schematic** (IPC de KiCad 11, ``no handler
+        available`` en KiCad 10.0.4); nunca se probó ``Board.revert()`` del
+        PCB Editor, que sí tiene IPC completo en KiCad 10.
+
+        Verificado en vivo contra KiCad 10.0.4 (sesión 18,
+        ``docs/investigacion/18-recarga-ipc.md``): descarta el estado vivo no
+        persistido y re-lee exactamente los bytes actuales del disco —
+        agnóstico del origen del diff (edición IPC no guardada o reemplazo
+        externo del archivo como hace ``route_board`` con ``os.replace``,
+        ``pcb.py``). Es idempotente (llamarlo dos veces no falla ni cambia el
+        resultado) y NO invalida el ``BoardHandle``: el mismo objeto ``Board``
+        de kipy sigue usable después.
+
+        ESCRITURA: supervisada directa, sin retry (D-07.1) — un ``AS_BUSY``
+        se propaga tal cual, igual que ``save_board``.
+
+        Devuelve ``(n_tracks, n_vias)`` releídos tras la recarga (incluye
+        arcos en el conteo de tracks, como ``Board.get_tracks()`` de kipy) —
+        el llamador los usa para el contrato JSON de
+        ``reload_board_from_disk`` (tool).
+        """
+        with self._lock:
+            self._detect_restart()
+            with self._supervise("reload_board_from_disk"):
+                raw_board = board.raw
+                raw_board.revert()
+                n_tracks = len(list(raw_board.get_tracks()))
+                n_vias = len(list(raw_board.get_vias()))
+                return (n_tracks, n_vias)
+
     def draw_board_outline(
         self,
         board: BoardHandle,

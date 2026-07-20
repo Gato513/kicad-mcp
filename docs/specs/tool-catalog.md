@@ -231,20 +231,52 @@ audit line JSONL por cada mutación aceptada o rechazada.
 | `delete_track` | Borra track/arco por `id` (de `get_tracks`) o el más cercano a `(net, near_x_mm, near_y_mm)` | `id?`, `net?`, `near_x_mm?`, `near_y_mm?`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `TRACK_ID_STALE`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
 | `delete_via` | Borra una via por `id` (de `get_tracks`) o la más cercana a `(net, x_mm, y_mm)` | `id?`, `net?`, `x_mm?`, `y_mm?`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `TRACK_ID_STALE`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
 | `save_board` | Persiste el board vivo del PCB Editor a disco | `base_snap?` | confirm | `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `KICAD_CLI_FAILED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
+| `reload_board_from_disk` | Fuerza al PCB Editor vivo a re-leer el `.kicad_pcb` de disco (descarta el estado vivo no guardado) | — | JSON | `RELOAD_FAILED`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `KICAD_CLI_FAILED` |
 | `get_component_detail` | Detalle de un footprint: posición, rotación, bbox/courtyard y pads absolutos | `ref`, `kind?="pcb"` | detail | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 | `get_tracks` | Lista tracks/vías filtrados por `net`/`bbox`/`layer`, con `id` estable | `net?`, `bbox?`, `layer?`, `max_tokens?` | detail | `NET_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 | `draw_board_outline` | Crea un contorno rectangular en Edge.Cuts | `x_mm`, `y_mm`, `width_mm`, `height_mm`, `base_snap?` | confirm | `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
 | `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO — devuelve JSON estructurado (sesión 17, P2.2), no un confirm de texto | `max_passes?`, `timeout_s?=600` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED` |
 
-**Flag `live_stale` (sesión 14, D-14.1).** Mientras `route_board` haya dejado un
-ruteo en disco que el editor vivo no refleja, `move_footprint`, `add_track`,
-`add_via`, `delete_track`, `delete_via` y `save_board` FALLAN con
-`EXTERNAL_EDIT_DETECTED` (código existente, F3 intacta: el disco cambió por
-fuera del editor vivo). Hint fijo: "el disco tiene el ruteo y el editor vivo no;
-recargá el board en KiCad (File→Revert) y confirmá con
-`get_world_context(kind='pcb', confirm_reloaded=true)`". El destrabe es ese
-`confirm_reloaded=true`. Las tools de DISCO (`run_drc`, `export_*`, tools `sch`)
-NO se bloquean: leen el estado correcto. Ver ADR-0011.
+**Flag `live_stale` (sesión 14, D-14.1; recarga automática sesión 18, P3.1,
+D-V3.1).** Mientras `route_board` haya dejado un ruteo en disco que el editor
+vivo no refleja, `move_footprint`, `add_track`, `add_via`, `delete_track`,
+`delete_via` y `save_board` FALLAN con `EXTERNAL_EDIT_DETECTED` (código
+existente, F3 intacta: el disco cambió por fuera del editor vivo). Desde la
+sesión 18, `route_board` intenta destrabar el flag **automáticamente**
+llamando a `reload_board_from_disk()` justo después de escribir el ruteo (ver
+más abajo) — en el camino feliz (editor abierto sobre el mismo `.kicad_pcb`
+que se ruteó) el flag ni llega a activarse y no hace falta ningún contacto
+humano. Sólo si esa recarga automática no aplica o falla (editor cerrado,
+proyecto distinto abierto, IPC caído) el flag se activa como antes y el
+destrabe vuelve a ser manual: hint fijo "el disco tiene el ruteo y el editor
+vivo no; recargá el board en KiCad (File→Revert) y confirmá con
+`get_world_context(kind='pcb', confirm_reloaded=true)`", o llamar
+`reload_board_from_disk()` directamente si el editor sigue abierto (mismo
+efecto que el File→Revert manual, sin salir de la sesión del agente). Las
+tools de DISCO (`run_drc`, `export_*`, tools `sch`) NO se bloquean: leen el
+estado correcto. Ver ADR-0011.
+
+**`reload_board_from_disk` (sesión 18, P3.1, D-V3.1).** Fuerza al PCB Editor
+vivo a re-leer el `.kicad_pcb` de disco vía `Board.revert()` de kipy (comando
+IPC `RevertDocument`) — descarta cualquier estado vivo no guardado y hace
+converger el editor exactamente con los bytes actuales del disco.
+Verificado en vivo contra KiCad 10.0.4
+(`docs/investigacion/18-recarga-ipc.md`): idempotente, no invalida el board
+handle, agnóstico del origen del diff (sirve tanto para el caso de
+`route_board` como para cualquier edición externa futura del `.kicad_pcb`).
+Corrige el alcance de D-12.4 (sesión 12), que había descartado la recarga
+programática evaluando sólo el documento *schematic* (IPC de KiCad 11) — el
+PCB Editor sí la soporta en KiCad 10. Devuelve JSON:
+`{"reloaded": true, "snap_id": N, "tracks": T, "vias": V}` (`tracks` incluye
+arcos, como `Board.get_tracks()` de kipy). Idempotente a nivel tool: llamarla
+dos veces seguidas no falla. Limpia el flag `live_stale` (D-14.1) y registra
+un snapshot de **disco** con `mtimes` frescos (mismo patrón que `save_board`:
+tras la recarga, vivo y disco convergen). Si no hay PCB Editor abierto →
+`RELOAD_FAILED` con hint accionable ("no hay board abierto; abrí el
+`.kicad_pcb` en KiCad y reintentá, o hacé File→Revert manualmente"). Otros
+fallos IPC (busy/timeout/reinicio) propagan su código propio
+(`KICAD_CLI_FAILED`/`KICAD_TIMEOUT`/`KICAD_RESTARTED`) sin reenvolver — ya son
+accionables por sí mismos.
 
 Respuestas de éxito son confirmaciones cortas (≤ 50 tokens, ADR-0004),
 p. ej. `OK move_footprint R5 -> (102.5, 44.0) [snap:12]`.
@@ -452,7 +484,8 @@ Resultado: **JSON estructurado**, no un confirm de texto (rompe el límite de
     "por_tipo": {}
   },
   "tracks_added": 640, "vias_added": 42, "snap": 17,
-  "session_dsn": ".../route.dsn", "session_ses": ".../route.ses"
+  "session_dsn": ".../route.dsn", "session_ses": ".../route.ses",
+  "reloaded": true
 }
 ```
 
@@ -478,6 +511,15 @@ Resultado: **JSON estructurado**, no un confirm de texto (rompe el límite de
 - `drc.por_tipo`: sólo violaciones de severidad `error` del reporte
   post-route, agrupadas por `rule` — el desglose que permite verificar "0
   violaciones sistemáticas de `copper_edge_clearance`" sin parsear texto.
+- `reloaded` (sesión 18, P3.1, D-V3.1): `true` si `route_board` logró
+  recargar automáticamente el editor vivo tras escribir el ruteo (vía
+  `reload_board_from_disk()` interno — ver arriba); `false` si el intento
+  falló (busy/timeout/kipy roto — el flag `live_stale` se activa como red de
+  seguridad); `"skipped_editor_closed"` si no había PCB Editor abierto sobre
+  el mismo archivo (tampoco hubo `save_board` implícito — ver `live_saved`
+  en el audit log). Con `reloaded=true`, `get_tracks` inmediatamente después
+  ve el cobre nuevo sin ningún paso manual — ese es el gate de cierre de la
+  sesión 18 (D-V3.1).
 
 Errores tipados (D-14.4, F3 — cero códigos nuevos en la ruta de fallo del
 pipeline): jar/java/`pcbnew` ausentes → `KICAD_CLI_MISSING`; export DSN falla
@@ -635,13 +677,23 @@ v0.2: `place_footprint`, `add_zone` (los ya implementados —`move_footprint`,
 `add_track`, `add_via`, `add_symbol`, `set_value`, `set_footprint`,
 `connect_pins`, `draw_board_outline`— se mueven a las secciones `pcb` y `sch`).
 
-`reload_in_gui` — **no factible en KiCad 10 (diferido a KiCad 11).** La IPC de
-esquemático (documento + `revert()`) es `versionadded 0.7.0 (KiCad 11)`; el
-objeto `KiCad` de esta versión no expone reload agnóstico del editor y KiCad
-10.0.4 responde `no handler available` a peticiones de documento de tipo
-schematic (spike sesión 12, D-12.4). El hazard "tras mutar el sch con KiCad
-abierto, el humano acepta el aviso de recarga" queda documentado
-(`docs/guia-paleta.md`); no se construye nada.
+`reload_in_gui` — **sigue no factible para el Schematic Editor en KiCad 10
+(diferido a KiCad 11).** La IPC de esquemático (documento + `revert()`) es
+`versionadded 0.7.0 (KiCad 11)`; el objeto `KiCad` de esta versión no expone
+reload agnóstico del editor y KiCad 10.0.4 responde `no handler available` a
+peticiones de documento de tipo schematic (spike sesión 12, D-12.4). El
+hazard "tras mutar el sch con KiCad abierto, el humano acepta el aviso de
+recarga" queda documentado (`docs/guia-paleta.md`); no se construye nada para
+`sch`.
+
+**Corrección de alcance (sesión 18, P3.0):** D-12.4 nunca se probó contra el
+**PCB Editor**, que sí tiene IPC completo en KiCad 10 — `Board.revert()` (a
+diferencia de `Schematic.revert()`) NO es `versionadded 0.7.0` y funciona
+verificado en vivo contra KiCad 10.0.4
+(`docs/investigacion/18-recarga-ipc.md`). Esa mitad del problema quedó
+resuelta con la tool `reload_board_from_disk` (categoría `pcb`, ver arriba) —
+`reload_in_gui` como nombre reservado queda acotado exclusivamente al caso
+`sch`, que sigue sin solución programática en KiCad 10.
 v0.3: `get_session_summary`, `checkpoint` (el ya implementado
 `get_context_delta` se mueve a la categoría `world`).
 v0.4: `suggest_positions`. (`route_with_freerouting` se realizó como
@@ -687,6 +739,7 @@ catálogo para no prometer una superficie que no existe.
 | `PATH_OUTSIDE_PROJECT` | Ruta fuera de la raíz del proyecto | No | Mostrar la raíz permitida; jamás la ruta canónica del sistema |
 | `TRACK_ID_STALE` | El `id` de `get_tracks` no resuelve (board mutado/recargado) o apunta a otro `kind` | No | Instruir: re-listar con `get_tracks` y usar un id vigente |
 | `ROUTE_NET_BLOCKED` | Sesión 17, P2.2. Net que `route_board` no pudo rutear (0 wires en el `.ses`) | Sí, tras cambios manuales | **Informativo, nunca se lanza como excepción** — viaja embebido en `route_board`'s `nets.bloqueadas[].code`/`causa` (mínimo honesto: "sin camino aparente; revisar manualmente", sin identificar el bloqueador concreto — diferido a 17b) |
+| `RELOAD_FAILED` | Sesión 18, P3.1. `reload_board_from_disk()` no pudo recargar el PCB Editor vivo (típicamente: no hay board abierto) | Sí, tras abrir el editor / reintentar | Instruir: abrir el `.kicad_pcb` en KiCad y reintentar, o hacer File→Revert manualmente si ya estaba abierto |
 
 Reglas de la taxonomía: los códigos son SCREAMING_SNAKE en inglés (estables
 ante cambios de idioma de la UI); `message` y `hint` en el idioma de la

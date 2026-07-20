@@ -723,6 +723,91 @@ def test_mutation_add_via_does_not_retry_on_busy() -> None:
     )
 
 
+class _FakeRevertBoard:
+    """Board fake para ``reload_board_from_disk`` (P3.1, sesión 18).
+
+    Imita el subset de ``kipy.Board`` que el método consume: ``revert()``
+    (sin retorno, como ``Board.revert()`` real) + ``get_tracks()``/
+    ``get_vias()`` para el conteo post-recarga.
+    """
+
+    def __init__(self, tracks: list[Any], vias: list[Any]) -> None:
+        self._tracks = tracks
+        self._vias = vias
+        self.revert_calls = 0
+
+    def revert(self) -> None:
+        self.revert_calls += 1
+
+    def get_tracks(self) -> list[Any]:
+        return self._tracks
+
+    def get_vias(self) -> list[Any]:
+        return self._vias
+
+
+@pytest.mark.unit
+def test_reload_board_from_disk_calls_revert_and_counts_tracks_vias() -> None:
+    """``reload_board_from_disk`` envuelve ``Board.revert()`` y devuelve
+    ``(n_tracks, n_vias)`` releídos tras la recarga (P3.1, D-V3.1)."""
+    raw = _FakeRevertBoard(tracks=[object(), object(), object()], vias=[object()])
+    board = BoardHandle(_raw=raw)
+    bridge = IpcBridge(client_factory=_factory(_FakeClient(board=raw)))
+
+    n_tracks, n_vias = bridge.reload_board_from_disk(board)
+
+    assert raw.revert_calls == 1
+    assert (n_tracks, n_vias) == (3, 1)
+
+
+@pytest.mark.unit
+def test_reload_board_from_disk_is_idempotent_at_bridge_level() -> None:
+    """Llamar ``reload_board_from_disk`` dos veces seguidas no falla (P3.1).
+
+    Verificado también en vivo contra KiCad 10.0.4
+    (``docs/investigacion/18-recarga-ipc.md``): ``Board.revert()`` es
+    idempotente y no invalida el handle.
+    """
+    raw = _FakeRevertBoard(tracks=[], vias=[])
+    board = BoardHandle(_raw=raw)
+    bridge = IpcBridge(client_factory=_factory(_FakeClient(board=raw)))
+
+    bridge.reload_board_from_disk(board)
+    n_tracks, n_vias = bridge.reload_board_from_disk(board)
+
+    assert raw.revert_calls == 2
+    assert (n_tracks, n_vias) == (0, 0)
+
+
+@pytest.mark.unit
+def test_reload_board_from_disk_does_not_retry_on_busy() -> None:
+    """AS_BUSY en la recarga ⇒ error INMEDIATO, exactamente 1 llamada a
+    ``revert()``. Es ESCRITURA (D-07.1): no viaja por ``_run_supervised_read``,
+    mismo patrón que ``move_footprint``/``add_via``."""
+
+    class _BusyRevertBoard:
+        def __init__(self) -> None:
+            self.revert_calls = 0
+
+        def revert(self) -> None:
+            self.revert_calls += 1
+            raise _kipy_busy()
+
+    busy_board = _BusyRevertBoard()
+    board = BoardHandle(_raw=busy_board)
+    bridge = IpcBridge(client_factory=_factory(_FakeClient(board=busy_board)))
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        bridge.reload_board_from_disk(board)
+
+    assert excinfo.value.code is ErrorCode.KICAD_CLI_FAILED
+    assert excinfo.value.data == {"ipc_status": "busy"}
+    assert busy_board.revert_calls == 1, (
+        "una mutación NO se reintenta ante AS_BUSY (D-07.1); "
+        f"hubo {busy_board.revert_calls} invocaciones"
+    )
+
+
 @pytest.mark.unit
 def test_run_supervised_read_rejects_non_idempotent_op_name() -> None:
     """``_run_supervised_read`` con un op fuera de la whitelist ⇒ AssertionError.

@@ -960,6 +960,71 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         )
         return confirmation
 
+    @mcp.tool(
+        name="reload_board_from_disk",
+        description=(
+            "Fuerza al PCB Editor vivo a re-leer el .kicad_pcb de disco "
+            "(descarta el estado vivo no guardado)"
+        ),
+    )
+    def reload_board_from_disk() -> dict[str, Any]:
+        # P3.1 (sesión 18, D-V3.1): reemplaza el File→Revert manual que exigía
+        # D-14.1 tras route_board. ``bridge.reload_board_from_disk`` envuelve
+        # ``Board.revert()`` de kipy (verificado en vivo contra KiCad 10.0.4,
+        # docs/investigacion/18-recarga-ipc.md): re-lee disco, descarta lo no
+        # guardado, es idempotente. NO pasa por ``_guard_live_stale`` — esta
+        # tool es precisamente el mecanismo que lo destraba.
+        #
+        # Nota de diseño: sólo la ausencia de editor abierto (``_resolve_board``
+        # → PROJECT_NOT_FOUND) se remapea a RELOAD_FAILED aquí, tal como pide
+        # el contrato ("si el editor no está abierto ... RELOAD_FAILED"). Los
+        # demás fallos IPC (busy/timeout/restarted) ya tienen taxonomía propia
+        # y accionable (KICAD_CLI_FAILED/KICAD_TIMEOUT/KICAD_RESTARTED) — se
+        # propagan sin reenvolver para no perder esa señal.
+        with tool_call_timer() as timer:
+            root = _project_root()
+            try:
+                board = _resolve_board(bridge)
+            except KicadMcpError as exc:
+                if exc.code is ErrorCode.PROJECT_NOT_FOUND:
+                    raise KicadMcpError(
+                        code=ErrorCode.RELOAD_FAILED,
+                        message="No hay PCB Editor abierto para recargar.",
+                        hint=(
+                            "KiCad no expuso el método esperado (no hay board abierto); "
+                            "abrí el .kicad_pcb del proyecto en KiCad y reintentá, o "
+                            "hacé File→Revert manualmente si ya lo tenías abierto."
+                        ),
+                    ) from exc
+                raise
+            n_tracks, n_vias = bridge.reload_board_from_disk(board)
+            # Tras el revert, vivo == disco: mismo patrón de snapshot fresco
+            # que save_board (mtimes reales, no ``None``).
+            new_state = build_state_from_board(bridge, board)
+            mtimes = collect_project_mtimes(_resolve_root_schematic_or_pcb())
+            snap_id = get_default_store().register(new_state, mtimes)
+            get_default_store().clear_live_stale()  # D-14.1: destraba el guard
+            audit_record(
+                root,
+                tool="reload_board_from_disk",
+                params={},
+                result={"snap": snap_id, "tracks": n_tracks, "vias": n_vias},
+            )
+            payload: dict[str, Any] = {
+                "reloaded": True,
+                "snap_id": snap_id,
+                "tracks": n_tracks,
+                "vias": n_vias,
+            }
+        log_tool_call(
+            tool_name="reload_board_from_disk",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(json.dumps(payload, ensure_ascii=False)),
+            snap_id=snap_id,
+            extra={"tracks": n_tracks, "vias": n_vias},
+        )
+        return payload
+
     def _delete_copper(
         *,
         tool_name: str,
@@ -1383,15 +1448,24 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             # board abierto es el target y NO hay un ruteo de disco pendiente de
             # recargar (si live_stale ya está activo, el vivo está detrás del
             # disco y guardar lo PISARÍA — se salta).
+            #
+            # ``is_target_open`` se calcula una sola vez y sirve TAMBIÉN para
+            # la recarga automática post-route (P3.1, más abajo): ambos pasos
+            # necesitan saber si el board abierto en KiCad es el mismo archivo
+            # que se está por rutear.
+            open_board = _open_board_or_none(bridge)
+            open_path: Path | None = (
+                bridge.get_open_board_path(open_board) if open_board is not None else None
+            )
+            is_target_open = open_path is not None and open_path.resolve() == pcb_path.resolve()
+
             live_saved = False
             pre_footprints: tuple[FootprintData, ...] = ()
-            open_board = _open_board_or_none(bridge)
-            if open_board is not None and not store.is_live_stale():
-                open_path = bridge.get_open_board_path(open_board)
-                if open_path is not None and open_path.resolve() == pcb_path.resolve():
-                    bridge.save_board(open_board)  # baja live→disco
-                    live_saved = True
-                    pre_footprints = bridge.read_board_context(open_board).footprints
+            if is_target_open and not store.is_live_stale():
+                assert open_board is not None  # is_target_open lo implica
+                bridge.save_board(open_board)  # baja live→disco
+                live_saved = True
+                pre_footprints = bridge.read_board_context(open_board).footprints
 
             # DRC pre-route: sólo para drc.err_preexistentes (P2.2). El
             # denominador de nets YA NO sale de acá (F-09).
@@ -1423,11 +1497,33 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
 
             # Snapshot de DISCO: el ruteo no mueve footprints, se deriva de los
             # leídos pre-route (o vacío si el board no estaba abierto/coincidía;
-            # el agente re-sincroniza con confirm_reloaded tras recargar).
+            # el agente re-sincroniza con confirm_reloaded o reload_board_from_disk
+            # tras recargar).
             new_state = build_state_from_snapshot(pre_footprints)
             mtimes = collect_project_mtimes(_resolve_root_schematic_or_pcb())
             snap_id = store.register(new_state, mtimes)
-            store.mark_live_stale(snap_id)  # D-14.1: disco adelante del vivo
+
+            # P3.1 (sesión 18, D-V3.1): recarga automática del editor vivo
+            # post-route — reemplaza el File→Revert manual de D-14.1 cuando es
+            # posible. Sólo se intenta si el board abierto ES el target recién
+            # ruteado (mismo chequeo que el save implícito de arriba).
+            # Best-effort: si la recarga falla (busy/timeout/kipy roto), NO
+            # tumba route_board — el ruteo YA está en disco y es válido; se cae
+            # al viejo guard ``live_stale`` como red de seguridad (reforzada
+            # por mtime en P3.2).
+            reloaded: bool | str
+            if is_target_open:
+                assert open_board is not None  # is_target_open lo implica
+                try:
+                    bridge.reload_board_from_disk(open_board)
+                    reloaded = True
+                    store.clear_live_stale()
+                except KicadMcpError:
+                    reloaded = False
+                    store.mark_live_stale(snap_id)  # D-14.1: disco adelante del vivo
+            else:
+                reloaded = "skipped_editor_closed" if open_board is None else False
+                store.mark_live_stale(snap_id)  # D-14.1: disco adelante del vivo
 
             tracks_added = result.tracks_after - result.tracks_before
             vias_added = result.vias_after - result.vias_before
@@ -1459,6 +1555,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 "snap": snap_id,
                 "session_dsn": result.dsn_path,
                 "session_ses": result.ses_path,
+                "reloaded": reloaded,
             }
 
             audit_record(
@@ -1476,6 +1573,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                     "nets_bloqueadas": len(blocked_nets),
                     "drc_err_post": post_err,
                     "live_saved": live_saved,
+                    "reloaded": reloaded,
                 },
             )
         log_tool_call(
@@ -1489,6 +1587,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 "import_ms": round(result.import_ms, 3),
                 "live_saved": live_saved,
                 "drc_err_post": post_err,
+                "reloaded": reloaded,
             },
         )
         return payload

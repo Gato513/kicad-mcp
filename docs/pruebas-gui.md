@@ -229,11 +229,11 @@ el store marca `live_stale=True` y `route_board` bloquea toda mutación IPC y
 **pisaría el ruteo con cobre viejo**. Protocolo para volver a un editor
 consistente:
 
-1. **Verificá el confirm** de `route_board`
-   (`OK route_board X/X nets +NNN tracks +NN vias drc_err=0 [snap:N]`). El
-   ruteo YA está en disco y es correcto; el DRC de disco lo confirma
-   (`run_drc`, `export_render pcb_png`, `export_manufacturing` leen el estado
-   ruteado sin bloquearse).
+1. **Verificá el JSON** de `route_board` (sesión 17, P2.2 — ya no es un
+   confirm de texto): `nets.ruteadas == nets.ruteables` y `drc.err_post`
+   bajo/en 0. El ruteo YA está en disco y es correcto; el DRC de disco lo
+   confirma (`run_drc`, `export_render pcb_png`, `export_manufacturing` leen
+   el estado ruteado sin bloquearse).
 2. **Recargá el board en KiCad**: en el PCB Editor, **File → Revert**
    (`Ctrl+…` según binding) para descartar el estado vivo viejo y cargar el
    `.kicad_pcb` de disco (con el ruteo). Alternativa equivalente: cerrar el
@@ -259,3 +259,58 @@ Dura ~2–3 min (dominado por el router). Correr AISLADO:
 sistema (Java ≥17, `KICAD_MCP_FREEROUTING_JAR`, `pcbnew` del sistema) — se
 salta si falta alguno. Simula el paso 2 con `confirm_reloaded=true` (no recarga
 KiCad de verdad, sólo verifica el destrabe del flag).
+
+**Hallazgo de entorno (sesión 17): Freerouting se cuelga con `gui.enabled=true`.**
+Si el round-trip de `route_board` completa el ruteo (se ve en el log de
+Freerouting: "Auto-routing was completed"/"Optimization was completed") pero
+igual revienta con `KICAD_TIMEOUT`, la causa es la config persistente de
+Freerouting (`$TMPDIR/freerouting/freerouting.json` o
+`~/.config/freerouting/freerouting.json`) con `gui.enabled=true` (default de
+instalación): el batch mode (`-de/-do -host KiCad`) nunca llega a escribir el
+`.ses`. `route_board` ya fuerza `gui.enabled=false` automáticamente antes de
+cada invocación (`_ensure_freerouting_headless_config`, `bridge/autoroute.py`)
+— no debería hacer falta tocar nada a mano. Si aparece igual (jar/versión
+distinta de Freerouting), revisar esa config manualmente.
+
+## Fixture `despertador-routed` (sesión 17)
+
+`tests/fixtures/despertador-routed/` es una copia del proyecto despertador
+**con contorno Edge.Cuts y ruteo real** (313 tracks, 21 vías, 0 violaciones de
+`copper_edge_clearance` con la regla real de 0.5mm) generada por dogfood de
+`route_board` en sesión 17. Existe para que los tests e/f de sesión 16
+(`test_add_track_pad_to_point_does_not_worsen_drc`,
+`test_f13_scenario_gap_visible_and_repaired_without_external_parsing` en
+`tests/test_pcb_session16_gui.py`) ejerciten colisión real contra cobre denso
+— la sesión 16b los corrió contra un board vacío porque el proyecto de
+prueba del usuario todavía no tenía ruteo.
+
+Ver `tests/fixtures/despertador-routed/README.md` para el detalle completo
+(estado del ruteo, advertencia de defectos eléctricos conocidos, protocolo de
+regeneración).
+
+**Protocolo (mismo patrón genérico de §Protocolo arriba, con este fixture
+en vez de `004_real`):**
+
+```bash
+cp -r tests/fixtures/despertador-routed /tmp/despertador-routed-test
+```
+
+Abrir `/tmp/despertador-routed-test/despertador_inteligente.kicad_pro` en
+KiCad (PCB Editor). En terminal:
+
+```bash
+export KICAD_MCP_GUI_TEST=1
+export KICAD_MCP_PROJECT=/tmp/despertador-routed-test
+export KICAD_API_SOCKET="ipc:///tmp/kicad/api.sock"   # si hace falta
+uv run pytest -m integration_gui -k "pad_to_point_does_not_worsen_drc or f13_scenario" -v
+```
+
+Los tests `_guard()`/`_pcb_path()` de `test_pcb_session16_gui.py` ya leen
+`KICAD_MCP_PROJECT` genéricamente — no hace falta tocar código, sólo apuntar
+el env var a la copia de este fixture en vez del proyecto de trabajo del
+usuario. `_pick_free_stub` va a encontrar candidatos de stub más difíciles
+(cobre denso real alrededor), ejercitando la lógica de evitar colisión de
+verdad — no trivialmente como contra un board vacío.
+
+Al terminar: cerrar KiCad y borrar `/tmp/despertador-routed-test` — el
+fixture original queda intacto (nunca se muta in-place).

@@ -93,6 +93,31 @@ def _iter_drc_violations(payload: dict[str, Any]) -> Iterable[dict[str, Any]]:
         yield {**v, "severity": v.get("severity", "warning")}
 
 
+# Ítems cuyo ``desc`` contiene esto describen el borde del board (el gráfico
+# Edge.Cuts), no el cobre ofensor — ver ``_reorder_edge_clearance_items``.
+_EDGE_CUTS_MARKER: Final = "Edge.Cuts"
+
+
+def _reorder_edge_clearance_items(rule: str, items: tuple[Item, ...]) -> tuple[Item, ...]:
+    """En ``copper_edge_clearance``, KiCad siempre reporta el ítem Edge.Cuts
+    PRIMERO (sesión 17, P2.5 — verificado con ``kicad-cli pcb drc`` real: el
+    primer ítem es ``"Segment on Edge.Cuts"`` con la posición de un punto del
+    borde — NO necesariamente ``[0,0]``, pero siempre inútil para ubicar el
+    cobre real; el segundo ítem, ``"Track [...] on F.Cu"``/``"Pad ... of
+    U1"``, sí trae la posición del ofensor). Los consumidores (p. ej.
+    ``tools/validate.py::_sample_of``) toman ``items[0].pos`` como
+    representativo de la violación, así que reordenamos acá — en el origen —
+    para que el primer ítem sea siempre el cobre real, no el borde.
+    """
+    if rule != "copper_edge_clearance":
+        return items
+    non_edge = [it for it in items if not (it.desc and _EDGE_CUTS_MARKER in it.desc)]
+    if not non_edge:
+        return items
+    edge = [it for it in items if it.desc and _EDGE_CUTS_MARKER in it.desc]
+    return tuple(non_edge + edge)
+
+
 def _build_report(
     payload: dict[str, Any], iterator: Iterable[dict[str, Any]], *, unconnected: int = 0
 ) -> RulesReport:
@@ -101,10 +126,12 @@ def _build_report(
     for v in iterator:
         severity = str(v.get("severity", "warning"))
         counts[severity] = counts.get(severity, 0) + 1
+        rule = str(v.get("type", "unknown"))
         items = tuple(_extract_item(i) for i in v.get("items", []))
+        items = _reorder_edge_clearance_items(rule, items)
         violations.append(
             Violation(
-                rule=str(v.get("type", "unknown")),
+                rule=rule,
                 severity=severity,
                 message=str(v.get("description", "")),
                 items=items,

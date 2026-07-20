@@ -586,3 +586,52 @@ async def test_route_board_propagates_error_without_setting_flag(
     # El pipeline abortó antes de tocar el flag y sin pisar el .kicad_pcb.
     assert get_default_store().is_live_stale() is False
     assert (project / "proj.kicad_pcb").read_text() == "(kicad_pcb original)"
+
+
+# --- P3.3 (sesión 18): unit test del guard combinado route_board→save_board --
+
+
+@pytest.mark.unit
+async def test_route_board_then_save_board_does_not_clobber_disk_when_reload_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Reproduce en unit el escenario de la corrida A (sesión 17,
+    ``docs/CONTEXT.md §5``): ``route_board`` escribe el ruteo a disco pero la
+    recarga automática (P3.1) no está disponible (editor cerrado) — el flag
+    ``live_stale`` (D-14.1) queda activo y un ``save_board`` posterior en el
+    MISMO proceso NO debe pisar el ruteo con el estado vivo viejo.
+
+    (La corrida A real cruzaba dos PROCESOS distintos —route_board corrido
+    aparte del test que llamó save_board—, un caso que ningún guard
+    in-memory de un solo proceso puede prevenir por diseño; ver
+    ``docs/investigacion/18-recarga-ipc.md``. Este test verifica la mitad
+    del problema que SÍ es alcanzable desde un único proceso: que el guard
+    D-14.1 + P3.2 sigue intacto cuando la recarga automática no aplica.)
+    """
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    _patch_pipeline(
+        monkeypatch,
+        drc_sequence=[_drc(10), _drc(0)],
+        result=_result(project, ruteables=10, routed=10),
+    )
+    bridge = _FakeBridge(raise_not_running=True)  # editor cerrado: sin reload posible
+    mcp = _server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        routed = await client.call_tool("route_board", {})
+        assert not routed.isError, _text(routed)
+        payload = _json(routed)
+        assert payload["reloaded"] == "skipped_editor_closed"
+        assert get_default_store().is_live_stale() is True
+
+        routed_disk_content = (project / "proj.kicad_pcb").read_text()
+        assert routed_disk_content == "(kicad_pcb routed)"  # el ruteo SÍ llegó a disco
+
+        blocked = await client.call_tool("save_board", {})
+
+    assert blocked.isError
+    assert "EXTERNAL_EDIT_DETECTED" in _text(blocked)
+    assert bridge.saved == []  # save_board nunca llegó a ejecutarse
+    # El ruteo en disco sigue intacto — NO fue pisado por el save bloqueado.
+    assert (project / "proj.kicad_pcb").read_text() == routed_disk_content

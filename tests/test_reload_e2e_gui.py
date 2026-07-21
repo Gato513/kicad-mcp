@@ -7,17 +7,37 @@ automáticamente — P3.1) → ``get_tracks`` inmediatamente después ve el cobr
 NUEVO, sin ``[AVISO]`` de ``live_stale`` y sin ningún File→Revert humano.
 Tres iteraciones. Cierre: ``save_board`` persiste el estado final.
 
-Corre contra una COPIA de ``tests/fixtures/despertador-routed/`` (313 tracks,
-21 vías, fixture ya ruteado de sesión 17 — no se lee directamente al
-contexto del agente de desarrollo, sólo se copia y se procesa por código,
-regla de ``CLAUDE.md``).
+**Corre DIRECTO sobre el proyecto que ``KICAD_MCP_PROJECT`` apunta — el
+mismo que debe estar YA ABIERTO en el PCB Editor de KiCad.** NO copia el
+fixture a un tmp_path aislado: ``get_tracks``/``delete_track`` mutan por IPC
+lo que sea que esté abierto en KiCad (ignoran ``KICAD_MCP_PROJECT``),
+mientras que ``route_board`` opera sobre el archivo que ``KICAD_MCP_PROJECT``
+resuelve — si apuntaran a archivos DISTINTOS, el propio test reproduciría el
+split-brain que existe para probar que no pasa (descubierto empíricamente:
+la primera corrida real de este test, con ``KICAD_MCP_PROJECT`` apuntando a
+una copia aislada, borró un track del board VIVO vía IPC y nunca lo
+re-ruteó, porque ``route_board`` ruteó la copia — no lo que KiCad tenía
+abierto). ``_preflight_same_board_open`` verifica esa coincidencia ANTES de
+mutar nada; si no coincide, salta con un mensaje accionable en vez de
+mutar a ciegas.
+
+Usar `tests/fixtures/despertador-routed/` como base del proyecto que se deja
+abierto en KiCad (fuera de este test — protocolo manual, ver
+``docs/pruebas-gui.md``); no se lee directo al contexto del agente de
+desarrollo (regla de ``CLAUDE.md``), sólo lo abre el humano en KiCad.
 
 Requisitos de SISTEMA (D-14.5, mismos que ``test_route_board_gui_slow.py``):
-``KICAD_MCP_GUI_TEST=1``, Java ≥17, ``KICAD_MCP_FREEROUTING_JAR`` al jar,
-``pcbnew`` en el python del sistema, KiCad con el PCB Editor abierto sobre
-la copia. Se salta si falta cualquier requisito — 3 ruteos completos contra
-un board denso (313 tracks) son más lentos que el spike de 24 fp de sesión
-14; correr AISLADO (contención IPC D-12.7).
+``KICAD_MCP_GUI_TEST=1``, ``KICAD_MCP_PROJECT`` apuntando al proyecto
+YA ABIERTO en KiCad, Java ≥17, ``KICAD_MCP_FREEROUTING_JAR`` al jar,
+``pcbnew`` en el python del sistema. Se salta si falta cualquier requisito
+— 3 ruteos completos contra un board denso (313+ tracks) son más lentos que
+el spike de 24 fp de sesión 14: corridas reales de sesión 18 contra este
+mismo board fueron de 235 s a 925 s (15.4 min) por ruteo — **el test
+completo puede tardar entre 15 y 90 min**, altamente variable
+(nondeterminismo de Freerouting ya documentado en sesión 17/D2); correr
+AISLADO (contención IPC D-12.7). **Muta de forma permanente y real el
+ruteo del proyecto abierto** — no es una copia descartable como en otros
+tests GUI.
 """
 
 from __future__ import annotations
@@ -32,16 +52,16 @@ from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult, TextContent
 
 from kicad_mcp.bridge.autoroute import _JAR_ENV, _SYSTEM_PYTHON_DEFAULT
+from kicad_mcp.bridge.ipc import IpcBridge
 from kicad_mcp.gates import g1
 from kicad_mcp.snapshots import get_default_store
-
-_FIXTURE_SRC = Path(__file__).parent / "fixtures" / "despertador-routed"
+from kicad_mcp.tools.world import _resolve_root_pcb
 
 # GND es el net universal de cualquier board con alimentación — apuesta segura
 # sin necesitar leer el fixture al contexto (regla de CLAUDE.md: los fixtures
-# se procesan por código, nunca se leen directo). Si algún día el fixture
-# cambia y GND deja de existir, el test falla con un mensaje explícito (no
-# un skip silencioso) en el primer ``get_tracks``.
+# se procesan por código, nunca se leen directo). Si algún día el proyecto
+# abierto cambia y GND deja de existir, el test falla con un mensaje
+# explícito (no un skip silencioso) en el primer ``get_tracks``.
 _NET = "GND"
 
 
@@ -54,8 +74,11 @@ def _text(result: CallToolResult) -> str:
 def _guard() -> None:
     if os.environ.get("KICAD_MCP_GUI_TEST") != "1":
         pytest.skip("KICAD_MCP_GUI_TEST != 1; ver docs/pruebas-gui.md")
-    if not _FIXTURE_SRC.is_dir():
-        pytest.skip(f"falta {_FIXTURE_SRC} (fixture despertador-routed)")
+    if not os.environ.get("KICAD_MCP_PROJECT"):
+        pytest.skip(
+            "KICAD_MCP_PROJECT no seteada — debe apuntar al proyecto YA "
+            "ABIERTO en el PCB Editor de KiCad"
+        )
     jar = os.environ.get(_JAR_ENV)
     if not jar or not Path(jar).is_file():
         pytest.skip(f"{_JAR_ENV} no seteada o inexistente (requisito de ruteo)")
@@ -63,6 +86,25 @@ def _guard() -> None:
         pytest.skip("java no está en PATH (requisito de ruteo)")
     if not Path(_SYSTEM_PYTHON_DEFAULT).exists():
         pytest.skip(f"{_SYSTEM_PYTHON_DEFAULT} ausente (pcbnew del sistema)")
+
+
+def _preflight_same_board_open(pcb_path: Path) -> None:
+    """Verifica que ``KICAD_MCP_PROJECT`` coincide con el board VIVO abierto
+    en KiCad antes de mutar nada — ver docstring del módulo (hallazgo real
+    de la primera corrida). Lectura pura (``get_open_board``/
+    ``get_open_board_path``), sin efectos colaterales."""
+    bridge = IpcBridge()
+    board = bridge.get_open_board()
+    if board is None:
+        pytest.skip("no hay PCB Editor abierto en KiCad")
+    open_path = bridge.get_open_board_path(board)
+    if open_path is None or open_path.resolve() != pcb_path.resolve():
+        pytest.skip(
+            f"KICAD_MCP_PROJECT ({pcb_path}) no coincide con el board abierto "
+            f"en KiCad ({open_path}) — abrí ESE proyecto en KiCad antes de "
+            "correr este test (evita el split-brain descubierto en la "
+            "primera corrida real, ver docstring del módulo)"
+        )
 
 
 def _server():  # type: ignore[no-untyped-def]
@@ -84,15 +126,11 @@ def _parse_track_ids(tracks_text: str) -> list[str]:
 
 
 @pytest.mark.integration_gui_slow
-async def test_iterative_routing_zero_human_reload_touches(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+async def test_iterative_routing_zero_human_reload_touches() -> None:
     """3 iteraciones delete_track→route_board→get_tracks, 0 File→Revert (D-V3.1)."""
     _guard()
-    dst = tmp_path / "despertador"
-    shutil.copytree(_FIXTURE_SRC, dst)
-    pcb_path = next(dst.glob("*.kicad_pcb"))
-    monkeypatch.setenv("KICAD_MCP_PROJECT", str(dst))
+    pcb_path = _resolve_root_pcb()
+    _preflight_same_board_open(pcb_path)
     g1.reset_session_state()
     get_default_store().reset()
 
@@ -116,7 +154,12 @@ async def test_iterative_routing_zero_human_reload_touches(
 
             # 3. Re-rutea. route_board escribe a disco Y recarga el editor
             # vivo automáticamente (P3.1) — CERO contactos humanos.
-            routed = await client.call_tool("route_board", {})
+            # timeout_s=1800 (no el default de 600): corrida real de sesión
+            # 18 contra este mismo board confirmó que Freerouting necesita
+            # hasta ~925 s (15.4 min) para completar el ratsnest tras un
+            # delete_track — 600 s no alcanza de forma consistente
+            # (nondeterminismo ya documentado en sesión 17/D2).
+            routed = await client.call_tool("route_board", {"timeout_s": 1800})
             assert not routed.isError, f"iteración {iteration}: {_text(routed)}"
             payload = json.loads(_text(routed))
             reload_flags.append(payload["reloaded"])

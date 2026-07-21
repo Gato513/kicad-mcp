@@ -11,19 +11,26 @@ asumía D-14.1), y la sesión 17 confirmó empíricamente el bug con la corrida
 A del fixture (`docs/CONTEXT.md §5`). El gate de cierre: una sesión de
 ruteo iterativo con **cero** contactos humanos de recarga.
 
-**Resultado: gate alcanzado por la vía más barata del ranking.** La
-investigación P3.0 encontró que `Board.revert()` de kipy 0.7.1 —nunca
-probado antes— recarga el PCB Editor vivo en KiCad 10.0.4 sin intervención
-humana. D-12.4 (sesión 12) había descartado la recarga programática, pero
-evaluando sólo el documento **schematic** (IPC de KiCad 11); nunca se probó
-el lado **PCB**, que sí tiene IPC completo en KiCad 10. El fallback
-documentado en el prompt de sesión (ADR-0013, batching) **no hizo falta**.
+**Resultado: gate alcanzado por la vía más barata del ranking, y confirmado
+en vivo contra KiCad real.** La investigación P3.0 encontró que
+`Board.revert()` de kipy 0.7.1 —nunca probado antes— recarga el PCB Editor
+vivo en KiCad 10.0.4 sin intervención humana. D-12.4 (sesión 12) había
+descartado la recarga programática, pero evaluando sólo el documento
+**schematic** (IPC de KiCad 11); nunca se probó el lado **PCB**, que sí
+tiene IPC completo en KiCad 10. El fallback documentado en el prompt de
+sesión (ADR-0013, batching) **no hizo falta**. Tras la implementación, una
+corrida real de `route_board` (Freerouting real, 925 s) contra el proyecto
+abierto del usuario devolvió `"reloaded": true` — GND (con un track borrado
+adrede para simular una edición) quedó reconectada sin ningún File→Revert
+manual. El detalle de esa corrida, incluyendo dos bugs reales encontrados y
+corregidos en el camino, está en "Test E2E de P3.3" más abajo.
 
 Suites: `pytest -m "not integration"` **279 passed, 24 skipped, 22
 deselected** (era 259 passed al cierre de sesión 17 — +20 tests nuevos:
 7 P3.0/P3.1 bridge, 4 P3.1 tool, 4 P3.1 route_board, 10 P3.2 store/guard,
-1 P3.3 unit, 1 P3.3 E2E `integration_gui_slow` — self-skip, ver abajo).
-`ruff check` / `ruff format --check` / `mypy src/`: limpios.
+1 P3.3 unit, 1 P3.3 E2E `integration_gui_slow` — self-skip en CI, corrido
+en vivo aparte, ver abajo). `ruff check` / `ruff format --check` /
+`mypy src/`: limpios.
 
 ## Reporte P3.0 (investigación completa)
 
@@ -71,7 +78,7 @@ pedido por el prompt de sesión).
 | P3.0 (investigación + verificación en vivo) | `docs/investigacion/18-recarga-ipc.md` (nuevo) | Cerrada |
 | P3.1 (`reload_board_from_disk` + integración `route_board`) | `bridge/ipc.py`, `tools/pcb.py`, `errors.py` | Cerrada |
 | P3.2 (guard de mtime independiente de `base_snap`) | `snapshots/store.py`, `snapshots/validation.py`, `tools/pcb.py` | Cerrada |
-| P3.3 (test E2E del gate + unit del guard combinado) | `tests/test_reload_e2e_gui.py` (nuevo), `tests/test_route_board.py` | Cerrada — E2E escrito, no ejecutado end-to-end (falta `KICAD_MCP_FREEROUTING_JAR` en este entorno) |
+| P3.3 (test E2E del gate + unit del guard combinado) | `tests/test_reload_e2e_gui.py` (nuevo), `tests/test_route_board.py` | Cerrada — mecanismo validado en vivo con `route_board` real (`reloaded=true`); el test automatizado de 3 iteraciones quedó escrito y corregido pero no completó una corrida limpia (ver detalle abajo) |
 | Docs | `docs/specs/tool-catalog.md` | Actualizado en el mismo alcance de cada tarea (excepción F1) |
 
 ```
@@ -156,42 +163,104 @@ silenciosa dentro del mismo proceso — documentado así en
 `docs/specs/tool-catalog.md` para que la próxima sesión no lo confunda con
 una solución completa al split-brain cross-proceso.
 
-## Test E2E de P3.3: resultado
+## Test E2E de P3.3: resultado (corrido en vivo tras el reporte inicial)
 
-`tests/test_reload_e2e_gui.py::test_iterative_routing_zero_human_reload_touches`
-(marca `integration_gui_slow`): 3 iteraciones `delete_track` → `route_board`
-→ `get_tracks` contra copia de `tests/fixtures/despertador-routed/`,
-verificando `reloaded=true`, `live_stale` limpio y ausencia de `[AVISO]` en
-cada vuelta, cierre con `save_board`.
+El humano proveyó `KICAD_MCP_FREEROUTING_JAR` y pidió correr el E2E de
+verdad. Tres intentos, dos bugs reales encontrados y corregidos, y una
+confirmación final positiva del mecanismo:
 
-**No ejecutado end-to-end en esta sesión**: `KICAD_MCP_FREEROUTING_JAR` no
-está configurada en este entorno (WARN ya señalado por
-`verificar_entorno.py` en la Fase 0). Verificado que el test SÍ colecta y
-llega correctamente hasta ese chequeo (`KICAD_MCP_GUI_TEST=1` → skip en el
-guard del jar, no antes) — la lógica de guards está bien conectada, falta
-sólo el binario del humano para correrlo real. Instrucción para el humano:
-`export KICAD_MCP_FREEROUTING_JAR=<ruta al jar>` y `KICAD_MCP_GUI_TEST=1
-uv run pytest -m integration_gui_slow -k test_iterative_routing`.
+**Intento 1 — bug de diseño del propio test (split-brain dentro del test).**
+`test_iterative_routing_zero_human_reload_touches` copiaba el fixture a un
+`tmp_path` aislado y hacía `monkeypatch.setenv("KICAD_MCP_PROJECT", tmp_copy)`.
+Pero `get_tracks`/`delete_track` mutan por IPC lo que sea que esté abierto
+en KiCad **ignorando `KICAD_MCP_PROJECT`**, mientras `route_board` opera
+sobre el archivo que `KICAD_MCP_PROJECT` resuelve. Resultado: `delete_track`
+borró un track del board VIVO real (`/tmp/gui-test-project`, 313→312
+tracks), pero `route_board` ruteó la copia aislada — nunca tocó el archivo
+real, `reloaded=false`/`live_saved=false` (correctos: los paths NO
+coincidían, el guard hizo lo correcto). El propio test reprodujo el
+split-brain que existe para probar que no pasa. Corregido: el test ahora
+opera DIRECTO sobre `KICAD_MCP_PROJECT` (sin copia aislada) con un
+preflight (`_preflight_same_board_open`) que compara el path resuelto
+contra el board realmente abierto en KiCad y salta con mensaje accionable
+si no coinciden — para que este bug no se repita. **Reparación:**
+`board.revert()` directo restauró el track borrado (313 tracks) porque el
+disco nunca se había tocado.
 
-El mecanismo que el E2E ejercitaría (recarga automática tras `route_board`
-real) **sí** quedó verificado en vivo durante P3.0 (revert descarta estado
-no guardado, es idempotente, no invalida el handle) — lo que falta
-verificar end-to-end es específicamente la integración con un ruteo REAL de
-Freerouting, no el mecanismo de recarga en sí.
+**Intento 2 — timeout real de Freerouting.** Con el test corregido, el
+preflight pasó, `delete_track` corrió, y `route_board` esta vez SÍ operó
+sobre el board real — pero Freerouting excedió el `timeout_s=600` por
+defecto (nondeterminismo de timing ya documentado en sesión 17/D2: "1
+timeout a 600s; con 1800s ok"). Verificado que el proyecto quedó
+**consistente, no corrupto**: vivo y disco coincidían (312 tracks ambos —
+`route_board` sí alcanzó a hacer el save implícito D-14.3 antes de que
+Freerouting timeeara), sólo con el ratsnest de GND incompleto (2
+unconnected items, DRC confirmado con `kicad-cli` offline). Ajustado
+`timeout_s` del test a 1800 (con justificación empírica en el comentario).
+
+**Validación final — `route_board` manual con `timeout_s=1800` contra el
+board real.** Corrida directa (no vía pytest, para no re-esperar las otras
+2 iteraciones): Freerouting tardó **925.7 s (15.4 min)** esta vez, pero
+completó. Resultado real:
+
+```json
+{
+  "reloaded": true,
+  "live_saved": true,
+  "nets": {"total": 41, "ruteables": 10, "ruteadas": 10, "parciales": [], "bloqueadas": []},
+  "tracks_added": 56,
+  "drc": {"err_preexistentes": 17, "err_post": 16, "err_introducidos": -1}
+}
+```
+
+**`reloaded: true` — el gate D-V3.1 confirmado end-to-end contra KiCad real,
+no un fake de test.** GND (el net cuyo track se había borrado) quedó
+reconectado (verificado: `get_items_by_net` devolvió 97 ítems de GND
+post-ruteo, vs. la ambigüedad de antes). `err_introducidos: -1` — el
+ruteo mejoró el DRC, no lo empeoró; los 17 errores preexistentes son
+acumulación de sesiones GUI previas sobre esta copia de scratch
+(`/tmp/gui-test-project`), ya documentado en sesión 17 como artefacto
+conocido, no algo introducido acá.
+
+**Por qué el test automatizado de 3 iteraciones no corrió completo:** dado
+el timing real observado (235 s a 925 s por ruteo, altamente variable), las
+3 iteraciones completas hubieran costado entre 15 y 90 minutos adicionales
+de Freerouting real sin garantía de terminar limpio. El humano, con la
+evidencia de la corrida manual exitosa en mano, decidió aceptarla como
+validación end-to-end suficiente en vez de re-correr el test completo
+ahora. `test_iterative_routing_zero_human_reload_touches` queda **escrito,
+corregido (preflight + timeout 1800s) y listo para correr** cuando se
+quiera la confirmación de las 3 iteraciones encadenadas — comando:
+`KICAD_MCP_GUI_TEST=1 KICAD_MCP_FREEROUTING_JAR=<jar> KICAD_MCP_PROJECT=<proyecto abierto en KiCad>
+uv run pytest -m integration_gui_slow -k test_iterative_routing -v`.
+
+**Higiene de la sesión en vivo:** ambas veces que `delete_track` dejó el
+board vivo con un track de menos sin re-rutear (intentos 1 y 2), se verificó
+el estado (tracks/vías, DRC) y se restauró antes de continuar — nunca se
+dejó el proyecto real del usuario en un estado peor del que se encontró. Al
+cierre, el board terminó con 368 tracks/21 vías, 10/10 nets ruteables
+completas, DRC mejor que al empezar.
 
 ## Comparación empírica: nuevo mecanismo vs. simulación del flujo del D2
 
-| | D2 real (sesión previa a v3) | Sesión 18 (mecanismo nuevo) |
+| | D2 real (sesión previa a v3) | Sesión 18 (mecanismo nuevo, corrida real) |
 |---|---|---|
-| Reverts manuales por sesión de ruteo | 3 | **0** (camino feliz: `reloaded=true`) |
+| Reverts manuales (File→Revert en la GUI) por sesión de ruteo | 3 | **0** — confirmado con `route_board` real, `reloaded=true`, GND reconectado |
 | Acción humana tras `route_board` | File→Revert + confirmar en KiCad | Ninguna |
 | Fallback si la recarga falla | N/A (siempre manual) | Guard `live_stale` (mismo que antes) — 1 recarga manual o `reload_board_from_disk()` explícito |
 
-**Contactos humanos reales de esta sesión:** 1 — la confirmación de
-seguridad antes de ejecutar `board.revert()` contra el proyecto real
-abierto en KiCad del usuario (pregunta de `AskUserQuestion`, no una acción
-GUI). No hubo ningún File→Revert manual durante el desarrollo ni la
-verificación.
+**Contactos humanos reales de esta sesión:** cero File→Revert en la GUI de
+KiCad (la métrica que D-V3.1 pide) en las **dos** corridas reales de
+`route_board` contra el board vivo (la que excedió el timeout y la que
+completó con `reloaded=true`). Sí hubo varios checkpoints de confirmación
+por texto (`AskUserQuestion`) — antes de tocar `board.revert()` la primera
+vez, sobre qué opción implementar, y sobre cómo proceder tras cada fallo de
+timing de Freerouting — apropiados dado que se estaba operando contra el
+proyecto real del usuario, pero categóricamente distintos de la acción GUI
+manual que D-V3.1 buscaba eliminar. Ninguno fue reemplazable por
+automatización: eran decisiones que requerían al humano (autorización para
+mutar su proyecto real, tolerancia a tiempo/costo de reintentos), no pasos
+mecánicos del flujo de ruteo.
 
 ## Bugs / hallazgos reales encontrados
 
@@ -205,6 +274,24 @@ verificación.
    completitud, no usado (más frágil que `Board.revert()`).
 3. Ningún bug de kipy/KiCad encontrado durante la verificación en vivo —
    `Board.revert()` se comportó exactamente como su docstring promete.
+4. **Bug real en el diseño del test E2E (no en el código de producción):**
+   `test_iterative_routing_zero_human_reload_touches` copiaba el fixture a
+   un `tmp_path` aislado y redirigía `KICAD_MCP_PROJECT` ahí, pero
+   `get_tracks`/`delete_track` operan por IPC sobre lo que sea que esté
+   abierto en KiCad — ignoran esa variable. El propio test terminó
+   reproduciendo el split-brain que existe para probar que no pasa
+   (`delete_track` mutó el board real; `route_board` ruteó una copia
+   inerte). Corregido con un preflight que verifica la coincidencia antes
+   de mutar nada. Ver detalle completo en "Test E2E de P3.3" arriba.
+5. **Freerouting necesitó hasta 925 s (15.4 min) para completar el ratsnest
+   de este board** tras una sola desconexión — muy por encima del
+   `timeout_s=600` por defecto de `route_board`, confirmando en la práctica
+   el nondeterminismo ya reportado en sesión 17/D2 ("1 timeout a 600s; con
+   1800s ok"). No es un bug nuevo, pero sí la primera vez que se mide un
+   valor concreto tan alto contra el board real (no el spike de 24 fp).
+   Recomendación para 17b/19: considerar subir el `timeout_s` por defecto
+   de `route_board`, o documentarlo más explícitamente en el hint de
+   `KICAD_TIMEOUT`.
 
 ## Definition of Done
 
@@ -223,9 +310,15 @@ verificación.
 - Sesión 19 (P4, zonas).
 - Sesión 19b (corrección de sch del despertador).
 - Sesión 20 (Dogfooding 3, meta ≥8/10) — correrá con el mecanismo de
-  recarga automática activo; si el gate D-V3.1 se sostiene en una sesión
-  real de dogfooding, es la confirmación final de que 0 reverts es el
-  comportamiento normal, no sólo el de los tests unit con fakes.
-- Pendiente para quien la retome: correr `test_iterative_routing_zero_human_reload_touches`
-  con el jar de Freerouting configurado, contra KiCad real — es la única
-  pieza de P3.3 que quedó sin ejecutar en esta sesión.
+  recarga automática activo, ya confirmado en vivo esta sesión. El gate
+  D-V3.1 debería sostenerse como comportamiento normal, no sólo el de los
+  tests unit con fakes.
+- Pendiente opcional para quien la retome: correr las 3 iteraciones
+  encadenadas de `test_iterative_routing_zero_human_reload_touches` de
+  punta a punta (la validación de esta sesión cubrió 1 ciclo completo
+  delete→route→reload con éxito, más 1 intento que confirmó el manejo
+  seguro de un timeout de Freerouting — no las 3 iteraciones consecutivas
+  del test automatizado, por costo de tiempo real de Freerouting en este
+  board denso, 15-90 min).
+- Considerar (17b o 19) subir el `timeout_s` por defecto de `route_board`
+  o mejorar el hint de `KICAD_TIMEOUT` dado el 925 s medido esta sesión.

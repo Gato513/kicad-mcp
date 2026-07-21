@@ -50,6 +50,7 @@ class _FakeBridge(IpcBridge):
         refs: list[str] | None = None,
         raise_not_running: bool = False,
         reload_error: Exception | None = None,
+        n_zones: int = 0,
     ) -> None:
         self._client = None  # type: ignore[assignment]
         self._instance_token = None
@@ -58,8 +59,10 @@ class _FakeBridge(IpcBridge):
         self._refs = list(refs or ["U1", "R1"])
         self._raise_not_running = raise_not_running
         self._reload_error = reload_error
+        self._n_zones = n_zones  # P4 (sesión 19): zonas pre-route fakeadas
         self.saved: list[str] = []
         self.reload_calls = 0
+        self.refill_calls = 0
 
     def get_open_board(self) -> BoardHandle | None:  # type: ignore[override]
         if self._raise_not_running:
@@ -85,6 +88,17 @@ class _FakeBridge(IpcBridge):
         if self._reload_error is not None:
             raise self._reload_error
         return (0, 0)
+
+    def list_zones(self, board: BoardHandle) -> tuple[Any, ...]:  # type: ignore[override]
+        # P4 (sesión 19): route_board cuenta zonas pre-route. 0 por default —
+        # la mayoría de estos tests no ejercitan el plano GND (ver
+        # test_pcb_zones.py para las tools add_zone/get_zones/etc. y el test
+        # dedicado más abajo para el campo "zones" de route_board).
+        return tuple(range(self._n_zones))
+
+    def refill_zones(self, board: BoardHandle) -> int:  # type: ignore[override]
+        self.refill_calls += 1
+        return self._n_zones
 
     def read_board_context(self, board: BoardHandle) -> BoardContext:  # type: ignore[override]
         fps = tuple(
@@ -371,6 +385,63 @@ async def test_route_board_confirm_flag_and_counts(
     # El .kicad_pcb fue reemplazado por el ruteado.
     assert (project / "proj.kicad_pcb").read_text() == "(kicad_pcb routed)"
     assert calls["drc"] == 2
+    # P4 (sesión 19): sin zonas en el board, el campo nuevo es todo-cero y
+    # NO se llama a refill_zones (nada que refillear).
+    assert payload["zones"] == {"existentes": 0, "refilladas": 0, "fill_ms": 0.0}
+    assert bridge.refill_calls == 0
+
+
+@pytest.mark.unit
+async def test_route_board_refills_zones_when_present_and_reloaded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """P4.3 (sesión 19): con zonas preexistentes y recarga automática exitosa,
+    route_board refillea post-route y lo reporta en ``payload["zones"]``."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    _patch_pipeline(
+        monkeypatch,
+        drc_sequence=[_drc(64), _drc(0, errors=0)],
+        result=_result(project),
+    )
+    bridge = _FakeBridge(open_board_path=str(project / "proj.kicad_pcb"), n_zones=2)
+    mcp = _server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("route_board", {})
+
+    assert not result.isError, _text(result)
+    payload = _json(result)
+    assert payload["reloaded"] is True
+    assert payload["zones"]["existentes"] == 2
+    assert payload["zones"]["refilladas"] == 2
+    assert payload["zones"]["fill_ms"] >= 0.0
+    assert bridge.refill_calls == 1
+
+
+@pytest.mark.unit
+async def test_route_board_refill_false_skips_fill(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``refill=False`` difiere el fill — el agente puede llamar ``fill_zones``
+    manualmente después (P4.3)."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    _patch_pipeline(
+        monkeypatch,
+        drc_sequence=[_drc(64), _drc(0, errors=0)],
+        result=_result(project),
+    )
+    bridge = _FakeBridge(open_board_path=str(project / "proj.kicad_pcb"), n_zones=2)
+    mcp = _server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("route_board", {"refill": False})
+
+    assert not result.isError, _text(result)
+    payload = _json(result)
+    assert payload["zones"] == {"existentes": 2, "refilladas": 0, "fill_ms": 0.0}
+    assert bridge.refill_calls == 0
 
 
 @pytest.mark.unit

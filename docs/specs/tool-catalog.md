@@ -235,7 +235,12 @@ audit line JSONL por cada mutación aceptada o rechazada.
 | `get_component_detail` | Detalle de un footprint: posición, rotación, bbox/courtyard y pads absolutos | `ref`, `kind?="pcb"` | detail | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 | `get_tracks` | Lista tracks/vías filtrados por `net`/`bbox`/`layer`, con `id` estable | `net?`, `bbox?`, `layer?`, `max_tokens?` | detail | `NET_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 | `draw_board_outline` | Crea un contorno rectangular en Edge.Cuts | `x_mm`, `y_mm`, `width_mm`, `height_mm`, `base_snap?` | confirm | `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
-| `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO — devuelve JSON estructurado (sesión 17, P2.2), no un confirm de texto | `max_passes?`, `timeout_s?=600` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED` |
+| `add_zone` | Crea una zona de cobre conectada a un net en una capa (sesión 19, P4.1) — devuelve JSON `{zone_id, filled, area_mm2, snap_id}` | `net`, `layer`, `bbox?`, `polygon?`, `priority?=0`, `fill?=true`, `base_snap?` | JSON | `NET_NOT_FOUND`, `INVALID_ZONE_GEOMETRY`, `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
+| `add_keepout_zone` | Crea una zona keepout (rule area, sin net) que bloquea tracks/vías/pours/footprints (sesión 19, P4.2) — devuelve JSON `{zone_id, keepout_flags, area_mm2, snap_id}` | `layer` (o `"all"`), `bbox?`, `polygon?`, `no_tracks?=true`, `no_vias?=true`, `no_pours?=true`, `no_footprints?=false`, `base_snap?` | JSON | `INVALID_ZONE_GEOMETRY`, `INVALID_PARAMS`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
+| `get_zones` | Lista zonas de cobre y keepouts filtradas por `layer`/`net`/`kind`, con `id` estable (sesión 19, P4.1) | `layer?`, `net?`, `kind?="copper"\|"keepout"`, `max_tokens?` | detail | `NET_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
+| `fill_zones` | Refill de TODAS las zonas de cobre del board; `zone_id?` sólo valida existencia, no acota el refill (kipy no tiene fill selectivo — sesión 19, P4.3) — devuelve JSON `{zones_filled, duration_ms, snap_id}` | `zone_id?`, `base_snap?` | JSON | `ZONE_ID_STALE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
+| `delete_zone` | Borra una zona (cobre o keepout) por `id` (de `get_zones`) — sesión 19, P4.4 | `id`, `base_snap?` | confirm | `ZONE_ID_STALE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
+| `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO — devuelve JSON estructurado (sesión 17, P2.2; campo `zones` añadido sesión 19, P4.3), no un confirm de texto | `max_passes?`, `timeout_s?=600`, `refill?=true` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED` |
 
 **Flag `live_stale` (sesión 14, D-14.1; recarga automática sesión 18, P3.1,
 D-V3.1).** Mientras `route_board` haya dejado un ruteo en disco que el editor
@@ -529,6 +534,68 @@ vacío, import SES falla → `KICAD_CLI_FAILED`; Freerouting timeout →
 **informativo, no aborta**: viaja embebido en `nets.bloqueadas[].code`, nunca
 como excepción — ver Taxonomía de errores más abajo.
 
+**Campo `zones` de `route_board` (sesión 19, P4.3).** Añadido al payload JSON
+sin romper el contrato existente (campos previos intactos):
+`{"existentes": N, "refilladas": M, "fill_ms": T}`. `existentes` = zonas
+(cobre + keepout) del board **antes** de rutear — sólo se puede leer vía IPC
+(kipy), así que es `0` si el editor no tenía el board target abierto (mismo
+best-effort que `pre_footprints`). `refilladas` = zonas de **cobre**
+recalculadas post-route (las keepout no tienen fill) — sólo ocurre si
+`refill=true` (default), había ≥1 zona, y la recarga automática post-route
+(P3.1) tuvo éxito (`reloaded=true`); si el editor estaba cerrado o la recarga
+falló, `refilladas=0` y `fill_ms=0.0` (no hay board vivo sobre el cual llamar
+`refill_zones()`). **No se inyecta nada al DSN para esto** — investigación
+P4.0 (`docs/investigacion/19-zonas-ipc.md` §2) confirmó empíricamente que
+Freerouting 2.1.0 respeta nativamente el `(plane <net> ...)` que
+`pcbnew.ExportSpecctraDSN` emite del outline de cada zona de cobre (test
+decisivo: pads dentro del plano quedan sin ruteo explícito — 0 vías vs 1 vía
+del control sin plano). El refill post-route existe porque los **tracks
+nuevos** pueden requerir recalcular el fill (clearance contra el cobre recién
+agregado), no porque Freerouting ignore las zonas.
+
+**`add_zone` / `add_keepout_zone` / `get_zones` / `fill_zones` / `delete_zone`
+(sesión 19, P4.1-P4.4, investigación `docs/investigacion/19-zonas-ipc.md`).**
+Zonas de cobre (plano GND, típicamente) y keepouts (rule areas sin net) sobre
+el board vivo, vía `kipy.board_types.Zone` (un solo tipo cubre ambos —
+distinguidos por `Zone.type`: `ZT_COPPER` vs `ZT_RULE_AREA`). Geometría: MVP
+soporta **una capa de cobre por zona**, polígono simple (no auto-intersectante)
+de 3 a 20 vértices, o `bbox=[min_x,min_y,max_x,max_y]` como atajo para el caso
+rectangular común (se expande a 4 vértices internamente — mismo formato que
+`get_zones` reconoce al decidir si imprime `bbox=` o `verts=N`). Un círculo
+(p. ej. keepout ~15mm bajo una antena) se aproxima con 12-16 vértices.
+
+- `add_zone(net, layer, bbox=|polygon=, priority?=0, fill?=true, base_snap?)`:
+  refill automático por defecto (`fill=true` — caso común "quiero un plano
+  funcional ya"); `fill=false` difiere el costo (`refill_zones()` de kipy es
+  **bloqueante con polling**, hasta 30s). Devuelve JSON `{zone_id, filled,
+  area_mm2, snap_id}`.
+- `add_keepout_zone(layer, bbox=|polygon=, no_tracks?=true, no_vias?=true,
+  no_pours?=true, no_footprints?=false, base_snap?)`: `layer="all"` aplica a
+  todas las capas de cobre habilitadas del stackup (no asume 2 capas fijas).
+  Devuelve JSON `{zone_id, keepout_flags, area_mm2, snap_id}`.
+- `get_zones(layer?, net?, kind?, max_tokens?)`: al menos un filtro
+  obligatorio (mismo patrón D-16.1 que `get_tracks`), mismo presupuesto de
+  tokens. Formato compacto propio (NO TOON, F1 intacto):
+  `ZONES|v1|<filtro>|N` + una línea `Z <id> <kind> <net|-> <layer> bbox=...|verts=N area=... filled=0|1`
+  por zona. `kind` distingue `"copper"`/`"keepout"` en la salida.
+- `fill_zones(zone_id?, base_snap?)`: **kipy 0.7.1 no tiene fill selectivo por
+  zona** (`Board.refill_zones()` siempre recalcula TODAS las zonas de cobre
+  del board — confirmado en la investigación P4.0 §3). `zone_id`, si se pasa,
+  sólo **valida que exista** (`ZONE_ID_STALE` si no) — no acota qué se
+  refillea. Idempotente. Devuelve JSON `{zones_filled, duration_ms, snap_id}`.
+- `delete_zone(id, base_snap?)`: simétrico a `delete_track`/`delete_via` pero
+  **sólo por id** — a diferencia del cobre, una zona no tiene un "punto
+  cercano" natural para matching geométrico ambiguo. `ZONE_ID_STALE` si el
+  KIID no resuelve.
+
+Las 4 mutaciones (`add_zone`, `add_keepout_zone`, `fill_zones`, `delete_zone`)
+pasan por el guard reforzado `check_no_external_disk_edit` (P3.2) — mismo
+tratamiento que `add_track`/`add_via`/`save_board` (ver más abajo). Fuera de
+alcance del MVP (defaults de KiCad, sin lógica propia): pad connection style
+(solid/thermal/none), clearance override por zona, prioridad de resolución
+entre zonas superpuestas (se expone `priority` pero sin árbitro propio),
+zonas multi-capa en una sola llamada, polígonos >20 vértices o con huecos.
+
 **`get_component_detail` (sesión 11, D-11.3).** Detalle geométrico de un
 footprint **bajo demanda** (sale de reservados; ver más abajo). Devuelve, en
 TOON compacto: posición y rotación del footprint, bbox (courtyard si el
@@ -674,9 +741,11 @@ Parámetro común `base_snap` (sesión 04 T4, aditivo):
   ecoa `base_snap`.
 
 **Guard de mtime sin `base_snap` (sesión 18, P3.2, red de seguridad
-complementaria a D-14.1).** `save_board`, `add_track`, `add_via`,
-`delete_track` y `delete_via` (las tools de mayor riesgo de pisar disco)
-comparan el mtime ACTUAL del `.kicad_pcb` contra el último snapshot de
+complementaria a D-14.1; extendido sesión 19 P4 a las tools de zonas).**
+`save_board`, `add_track`, `add_via`, `delete_track`, `delete_via` y —desde
+la sesión 19— `add_zone`, `add_keepout_zone`, `fill_zones`, `delete_zone`
+(las tools de mayor riesgo de pisar disco) comparan el mtime ACTUAL del
+`.kicad_pcb` contra el último snapshot de
 **disco** que cualquier tool de este proceso registró (`route_board`,
 `save_board`, `reload_board_from_disk`, `get_world_context`...) — corre
 SIEMPRE, no sólo cuando el agente pasa `base_snap` explícitamente. Si el
@@ -693,9 +762,12 @@ puede ver por sí solo.
 
 ## Nombres reservados (fases futuras — no implementar, no renombrar)
 
-v0.2: `place_footprint`, `add_zone` (los ya implementados —`move_footprint`,
+v0.2: `place_footprint` (los ya implementados —`move_footprint`,
 `add_track`, `add_via`, `add_symbol`, `set_value`, `set_footprint`,
 `connect_pins`, `draw_board_outline`— se mueven a las secciones `pcb` y `sch`).
+`add_zone` SALIÓ de reservados en la sesión 19 (P4.1) — implementado en la
+categoría `pcb` junto con `add_keepout_zone`, `get_zones`, `fill_zones` y
+`delete_zone` (ver arriba y `docs/investigacion/19-zonas-ipc.md`).
 
 `reload_in_gui` — **sigue no factible para el Schematic Editor en KiCad 10
 (diferido a KiCad 11).** La IPC de esquemático (documento + `revert()`) es
@@ -760,6 +832,8 @@ catálogo para no prometer una superficie que no existe.
 | `TRACK_ID_STALE` | El `id` de `get_tracks` no resuelve (board mutado/recargado) o apunta a otro `kind` | No | Instruir: re-listar con `get_tracks` y usar un id vigente |
 | `ROUTE_NET_BLOCKED` | Sesión 17, P2.2. Net que `route_board` no pudo rutear (0 wires en el `.ses`) | Sí, tras cambios manuales | **Informativo, nunca se lanza como excepción** — viaja embebido en `route_board`'s `nets.bloqueadas[].code`/`causa` (mínimo honesto: "sin camino aparente; revisar manualmente", sin identificar el bloqueador concreto — diferido a 17b) |
 | `RELOAD_FAILED` | Sesión 18, P3.1. `reload_board_from_disk()` no pudo recargar el PCB Editor vivo (típicamente: no hay board abierto) | Sí, tras abrir el editor / reintentar | Instruir: abrir el `.kicad_pcb` en KiCad y reintentar, o hacer File→Revert manualmente si ya estaba abierto |
+| `INVALID_ZONE_GEOMETRY` | Sesión 19, P4.1. `bbox`/`polygon` de `add_zone`/`add_keepout_zone` inválidos: ni uno ni el otro, ambos, polígono con <3 o >20 vértices, o auto-intersectante | No | Especialización de `INVALID_PARAMS` para geometría de zonas; nombrar el problema concreto (conteo de vértices, min>max, etc.) |
+| `ZONE_ID_STALE` | Sesión 19, P4.4. El `id`/`zone_id` de `get_zones` no resuelve (`delete_zone`, `fill_zones(zone_id=)`) — board mutado/recargado desde el `get_zones` que lo emitió | No | Instruir: re-listar con `get_zones` y usar un id vigente (espejo de `TRACK_ID_STALE`) |
 
 Reglas de la taxonomía: los códigos son SCREAMING_SNAKE en inglés (estables
 ante cambios de idioma de la UI); `message` y `hint` en el idioma de la

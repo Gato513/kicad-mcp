@@ -61,8 +61,10 @@ def check_no_external_disk_edit(store: SnapshotStore, schematic: Path) -> None:
     ausente, "la mutación procede sin verificación de coherencia" (contrato
     documentado en ``tool-catalog.md``). Ese hueco es justo el que este guard
     cierra para las tools de mayor riesgo de pisar disco: ``save_board``,
-    ``add_track``, ``add_via``, ``delete_track``, ``delete_via`` — compara el
-    mtime ACTUAL de los archivos del proyecto contra
+    ``add_track``, ``add_via``, ``delete_track``, ``delete_via`` y, desde la
+    sesión 19 (P4), ``add_zone``, ``add_keepout_zone``, ``fill_zones``,
+    ``delete_zone`` — compara el mtime ACTUAL de los archivos del proyecto
+    contra
     ``store.latest_disk_mtimes`` (el último snapshot de DISCO que *cualquier*
     tool de este proceso registró: ``route_board``, ``save_board``,
     ``reload_board_from_disk``, ``get_world_context``...).

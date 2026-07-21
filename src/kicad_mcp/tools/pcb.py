@@ -33,6 +33,7 @@ from ..bridge.ipc import (
     IpcBridge,
     Mm,
     PadGeom,
+    ZoneItem,
 )
 from ..bridge.rules import run_drc
 from ..bridge.rules_reader import load_project_rules
@@ -354,6 +355,196 @@ def _copper_on_layer(item: CopperItem, layer: str) -> bool:
     if item.kind == "via":
         return item.via_layers is not None and layer in item.via_layers
     return item.layer == layer
+
+
+def _segments_intersect(
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    p3: tuple[float, float],
+    p4: tuple[float, float],
+) -> bool:
+    """``True`` si el segmento ``p1-p2`` cruza (propiamente o tocando) ``p3-p4``.
+
+    Test de orientación estándar (Cormen et al.) — usado por
+    ``_polygon_is_simple`` (P4, sesión 19) para rechazar polígonos
+    auto-intersectantes en ``add_zone``/``add_keepout_zone``.
+    """
+
+    def orientation(a: tuple[float, float], b: tuple[float, float], c: tuple[float, float]) -> int:
+        val = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+        if abs(val) < 1e-9:
+            return 0
+        return 1 if val > 0 else 2
+
+    def on_segment(a: tuple[float, float], b: tuple[float, float], c: tuple[float, float]) -> bool:
+        return (
+            min(a[0], b[0]) - 1e-9 <= c[0] <= max(a[0], b[0]) + 1e-9
+            and min(a[1], b[1]) - 1e-9 <= c[1] <= max(a[1], b[1]) + 1e-9
+        )
+
+    o1 = orientation(p1, p2, p3)
+    o2 = orientation(p1, p2, p4)
+    o3 = orientation(p3, p4, p1)
+    o4 = orientation(p3, p4, p2)
+    if o1 != o2 and o3 != o4:
+        return True
+    if o1 == 0 and on_segment(p1, p2, p3):
+        return True
+    if o2 == 0 and on_segment(p1, p2, p4):
+        return True
+    if o3 == 0 and on_segment(p3, p4, p1):
+        return True
+    return bool(o4 == 0 and on_segment(p3, p4, p2))
+
+
+def _polygon_is_simple(vertices: list[tuple[float, float]]) -> bool:
+    """``True`` si ningún par de lados NO adyacentes del polígono se cruza (P4).
+
+    O(n²) — aceptable para el techo de 20 vértices del MVP. Lados adyacentes
+    (comparten un vértice, incluido el cierre último→primero) se excluyen del
+    chequeo: tocarse en el vértice compartido es la topología normal de un
+    polígono, no una auto-intersección.
+    """
+    n = len(vertices)
+    if n < 3:
+        return False
+    edges = [(vertices[i], vertices[(i + 1) % n]) for i in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if j == i + 1:
+                continue  # comparten vértice j (fin de i, inicio de j)
+            if i == 0 and j == n - 1:
+                continue  # cierre: último lado y primero comparten vértice 0
+            if _segments_intersect(edges[i][0], edges[i][1], edges[j][0], edges[j][1]):
+                return False
+    return True
+
+
+def _validate_zone_geometry(
+    bbox: list[float] | None, polygon: list[list[float]] | None
+) -> list[tuple[float, float]]:
+    """Resuelve ``bbox`` XOR ``polygon`` a una lista de vértices (P4, sesión 19).
+
+    ``INVALID_ZONE_GEOMETRY`` (código nuevo, F3: se añade, no se renombra
+    nada) si: se pasan ambos o ninguno, el polígono tiene <3 o >20 vértices,
+    o es auto-intersectante. Un ``bbox`` se expande a un rectángulo de 4
+    vértices en sentido horario — mismo convención que
+    ``docs/investigacion/19-zonas-ipc.md`` §2.3 (el rectángulo del test
+    decisivo de Freerouting).
+    """
+    if (bbox is None) == (polygon is None):
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_ZONE_GEOMETRY,
+            message="Pasá exactamente uno de bbox o polygon, no ambos ni ninguno.",
+            hint=(
+                "bbox=[min_x,min_y,max_x,max_y] para rectángulos, o "
+                "polygon=[[x,y],...] (3-20 vértices) para formas arbitrarias."
+            ),
+        )
+    if bbox is not None:
+        if len(bbox) != 4:
+            raise KicadMcpError(
+                code=ErrorCode.INVALID_ZONE_GEOMETRY,
+                message=(
+                    f"bbox debe tener 4 valores [min_x,min_y,max_x,max_y] (recibió {len(bbox)})."
+                ),
+                hint="Ejemplo: bbox=[10.0, 10.0, 50.0, 40.0].",
+            )
+        min_x, min_y, max_x, max_y = bbox
+        if min_x > max_x or min_y > max_y:
+            raise KicadMcpError(
+                code=ErrorCode.INVALID_ZONE_GEOMETRY,
+                message=f"bbox inválido (min > max): {bbox}.",
+                hint="Formato [min_x,min_y,max_x,max_y] con min <= max en cada eje.",
+            )
+        return [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)]
+
+    assert polygon is not None
+    if not (3 <= len(polygon) <= 20):
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_ZONE_GEOMETRY,
+            message=f"polygon debe tener entre 3 y 20 vértices (recibió {len(polygon)}).",
+            hint="Usá bbox=[...] para rectángulos, o un polígono de 3-20 vértices.",
+        )
+    vertices: list[tuple[float, float]] = []
+    for i, v in enumerate(polygon):
+        if len(v) != 2:
+            raise KicadMcpError(
+                code=ErrorCode.INVALID_ZONE_GEOMETRY,
+                message=f"Vértice {i} debe ser [x, y] (recibió {v!r}).",
+                hint="Cada vértice de polygon es un par [x_mm, y_mm].",
+            )
+        vertices.append((float(v[0]), float(v[1])))
+    if not _polygon_is_simple(vertices):
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_ZONE_GEOMETRY,
+            message="El polígono es auto-intersectante (no simple).",
+            hint="Los lados no pueden cruzarse entre sí; revisá el orden de los vértices.",
+        )
+    return vertices
+
+
+def _zone_is_axis_aligned_rect(vertices: tuple[tuple[Mm, Mm], ...]) -> bool:
+    """``True`` si los 4 vértices son exactamente las esquinas de un rectángulo
+    alineado a los ejes (P4) — determina si ``get_zones`` imprime ``bbox=``
+    (más compacto, caso común de ``add_zone(bbox=...)``) o ``verts=N`` (conteo,
+    para polígonos arbitrarios). No requiere recordar el modo de creación
+    original: se detecta puramente de la geometría leída."""
+    if len(vertices) != 4:
+        return False
+    xs = sorted({round(float(v[0]), 6) for v in vertices})
+    ys = sorted({round(float(v[1]), 6) for v in vertices})
+    if len(xs) != 2 or len(ys) != 2:
+        return False
+    expected = {(xs[0], ys[0]), (xs[1], ys[0]), (xs[1], ys[1]), (xs[0], ys[1])}
+    got = {(round(float(v[0]), 6), round(float(v[1]), 6)) for v in vertices}
+    return got == expected
+
+
+def _zones_filter_desc(layer: str | None, net: str | None, kind: str | None) -> str:
+    """Cabecera legible del filtro aplicado a ``get_zones`` (P4, espejo de
+    ``_tracks_filter_desc``)."""
+    parts = []
+    if layer is not None:
+        parts.append(f"layer:{layer}")
+    if net is not None:
+        parts.append(f"net:{net}")
+    if kind is not None:
+        parts.append(f"kind:{kind}")
+    return "|".join(parts)
+
+
+def _encode_zones(items: tuple[ZoneItem, ...], filter_desc: str) -> str:
+    """Serializa zonas a un formato compacto propio (P4, sesión 19).
+
+    NO es TOON (F1 intacto, mismo criterio que ``_encode_tracks``). Formato
+    (cabecera + una línea por zona)::
+
+        ZONES|v1|layer:B.Cu|2
+        Z <id> copper GND B.Cu bbox=10.000,10.000;50.000,40.000 area=1200.00 filled=1
+        Z <id> keepout - F.Cu verts=12 area=706.86 filled=0
+
+    ``bbox=`` para rectángulos alineados a ejes (4 vértices, el caso común de
+    ``add_zone(bbox=...)``); ``verts=N`` (sólo el conteo, no las coordenadas)
+    para polígonos arbitrarios — el agente que las necesite las tiene desde
+    la llamada que las creó.
+    """
+    header = f"ZONES|v1|{filter_desc}|{len(items)}" if filter_desc else f"ZONES|v1|{len(items)}"
+    lines = [header]
+    for z in items:
+        net = z.net_name or "-"
+        if _zone_is_axis_aligned_rect(z.vertices_mm):
+            geom = (
+                f"bbox={float(z.bbox_min_x):.3f},{float(z.bbox_min_y):.3f};"
+                f"{float(z.bbox_max_x):.3f},{float(z.bbox_max_y):.3f}"
+            )
+        else:
+            geom = f"verts={len(z.vertices_mm)}"
+        lines.append(
+            f"Z {z.kiid} {z.kind} {net} {z.layer} {geom} "
+            f"area={z.area_mm2:.2f} filled={1 if z.filled else 0}"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _rounded_rect_sdf(px: float, py: float, hw: float, hh: float, r: float) -> float:
@@ -1434,10 +1625,379 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         return confirmation
 
     @mcp.tool(
+        name="add_zone",
+        description="Crea una zona de cobre conectada a un net en una capa (bbox o polygon)",
+    )
+    def add_zone(
+        net: str,
+        layer: str,
+        bbox: list[float] | None = None,
+        polygon: list[list[float]] | None = None,
+        priority: int = 0,
+        fill: bool = True,
+        base_snap: int | None = None,
+    ) -> dict[str, Any]:
+        # P4.1 (sesión 19): plano de cobre. Devuelve JSON estructurado (no un
+        # confirm de texto) — spec explícito de la sesión, a diferencia de
+        # add_track/add_via. Refill automático por defecto (fill=True): el
+        # caso común es "quiero un plano GND funcional ya"; fill=false difiere
+        # el costo (refill_zones() es bloqueante con polling, ver bridge).
+        with tool_call_timer() as timer:
+            _guard_live_stale()  # D-14.1
+            check_no_external_disk_edit(  # P3.2
+                get_default_store(), _resolve_root_schematic_or_pcb()
+            )
+            root = _project_root()
+            if base_snap is not None:
+                _check_base_snap(base_snap)
+
+            raw_params: dict[str, Any] = {
+                "net": net,
+                "layer": layer,
+                "bbox": bbox,
+                "polygon": polygon,
+                "priority": priority,
+                "fill": fill,
+            }
+            try:
+                vertices = _validate_zone_geometry(bbox, polygon)
+            except KicadMcpError as exc:
+                _audit_error(root, "add_zone", raw_params, exc.code)
+                raise
+
+            board = _resolve_board(bridge)
+            nets = bridge.list_net_names(board)
+            if net not in nets:
+                similars = _similars(net, nets)
+                hint = "nets similares: " + ", ".join(similars) if similars else "sin sugerencias"
+                _audit_error(root, "add_zone", raw_params, ErrorCode.NET_NOT_FOUND)
+                raise KicadMcpError(
+                    code=ErrorCode.NET_NOT_FOUND,
+                    message=f"Net {net} no existe en el board.",
+                    hint=hint,
+                )
+
+            # Snapshot pre para derivar el post — una zona no altera el
+            # NormalizedState de footprints (patrón add_track/add_via).
+            ctx = bridge.read_board_context(board)
+            backup_info = ensure_session_backup(root)  # Gate G1
+            zone_id, filled, area_mm2 = bridge.add_zone(
+                board,
+                net=net,
+                layer=layer,
+                vertices_mm=tuple(vertices),
+                priority=priority,
+                fill=fill,
+            )
+            new_state = build_state_from_snapshot(ctx.footprints)
+            snap_id = get_default_store().register(new_state, mtimes=None)
+            raw_params["base_snap"] = base_snap
+            audit_record(
+                root,
+                tool="add_zone",
+                params=raw_params,
+                result={"snap": snap_id, "backup": backup_info.get("backup"), "zone_id": zone_id},
+            )
+            payload: dict[str, Any] = {
+                "zone_id": zone_id,
+                "filled": filled,
+                "area_mm2": round(area_mm2, 3),
+                "snap_id": snap_id,
+            }
+        log_tool_call(
+            tool_name="add_zone",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(json.dumps(payload, ensure_ascii=False)),
+            snap_id=snap_id,
+            extra={"net": net, "layer": layer, "base_snap": base_snap, "zone_id": zone_id},
+        )
+        return payload
+
+    @mcp.tool(
+        name="add_keepout_zone",
+        description="Crea una zona keepout (bloquea tracks/vias/pours/footprints) en una capa",
+    )
+    def add_keepout_zone(
+        layer: str,
+        bbox: list[float] | None = None,
+        polygon: list[list[float]] | None = None,
+        no_tracks: bool = True,
+        no_vias: bool = True,
+        no_pours: bool = True,
+        no_footprints: bool = False,
+        base_snap: int | None = None,
+    ) -> dict[str, Any]:
+        # P4.2 (sesión 19): keepout — estructuralmente una zona (ZT_RULE_AREA)
+        # sin net. Caso de uso canónico: keepout circular ~15mm bajo ANT1 del
+        # despertador (polígono de 12-16 vértices aproxima el círculo, MVP).
+        with tool_call_timer() as timer:
+            _guard_live_stale()  # D-14.1
+            check_no_external_disk_edit(  # P3.2
+                get_default_store(), _resolve_root_schematic_or_pcb()
+            )
+            root = _project_root()
+            if base_snap is not None:
+                _check_base_snap(base_snap)
+
+            raw_params: dict[str, Any] = {
+                "layer": layer,
+                "bbox": bbox,
+                "polygon": polygon,
+                "no_tracks": no_tracks,
+                "no_vias": no_vias,
+                "no_pours": no_pours,
+                "no_footprints": no_footprints,
+            }
+            try:
+                vertices = _validate_zone_geometry(bbox, polygon)
+            except KicadMcpError as exc:
+                _audit_error(root, "add_keepout_zone", raw_params, exc.code)
+                raise
+
+            board = _resolve_board(bridge)
+            ctx = bridge.read_board_context(board)
+            backup_info = ensure_session_backup(root)  # Gate G1
+            zone_id, area_mm2 = bridge.add_keepout_zone(
+                board,
+                layer=layer,
+                vertices_mm=tuple(vertices),
+                no_tracks=no_tracks,
+                no_vias=no_vias,
+                no_pours=no_pours,
+                no_footprints=no_footprints,
+            )
+            new_state = build_state_from_snapshot(ctx.footprints)
+            snap_id = get_default_store().register(new_state, mtimes=None)
+            raw_params["base_snap"] = base_snap
+            audit_record(
+                root,
+                tool="add_keepout_zone",
+                params=raw_params,
+                result={"snap": snap_id, "backup": backup_info.get("backup"), "zone_id": zone_id},
+            )
+            payload: dict[str, Any] = {
+                "zone_id": zone_id,
+                "keepout_flags": {
+                    "no_tracks": no_tracks,
+                    "no_vias": no_vias,
+                    "no_pours": no_pours,
+                    "no_footprints": no_footprints,
+                },
+                "area_mm2": round(area_mm2, 3),
+                "snap_id": snap_id,
+            }
+        log_tool_call(
+            tool_name="add_keepout_zone",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(json.dumps(payload, ensure_ascii=False)),
+            snap_id=snap_id,
+            extra={"layer": layer, "base_snap": base_snap, "zone_id": zone_id},
+        )
+        return payload
+
+    @mcp.tool(
+        name="get_zones",
+        description="Lista zonas de cobre y keepouts (layer y/o net y/o kind) con id estable",
+    )
+    def get_zones(
+        layer: str | None = None,
+        net: str | None = None,
+        kind: str | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        # P4.1 (sesión 19): paralela a get_tracks (D-16.1) — al menos un
+        # filtro obligatorio, mismo presupuesto de tokens (D-V3.2). Devuelve
+        # copper Y keepout con kind distintivo.
+        with tool_call_timer() as timer:
+            if layer is None and net is None and kind is None:
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message="get_zones requiere al menos un filtro.",
+                    hint=(
+                        "Pasá layer, net o kind ('copper'|'keepout') — un board real "
+                        "puede tener varias zonas."
+                    ),
+                )
+            if kind is not None and kind not in ("copper", "keepout"):
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message=f"kind={kind!r} inválido.",
+                    hint="Usá kind='copper' o kind='keepout'.",
+                )
+
+            board = _resolve_board(bridge)
+            if net is not None:
+                nets = bridge.list_net_names(board)
+                if net not in nets:
+                    similars = _similars(net, nets)
+                    hint = (
+                        "nets similares: " + ", ".join(similars) if similars else "sin sugerencias"
+                    )
+                    raise KicadMcpError(
+                        code=ErrorCode.NET_NOT_FOUND,
+                        message=f"Net {net} no existe en el board.",
+                        hint=hint,
+                    )
+
+            items = bridge.list_zones(board)
+            if layer is not None:
+                items = tuple(z for z in items if z.layer == layer)
+            if net is not None:
+                items = tuple(z for z in items if z.net_name == net)
+            if kind is not None:
+                items = tuple(z for z in items if z.kind == kind)
+
+            budget = max_tokens if max_tokens is not None else _TRACKS_DEFAULT_BUDGET
+            filter_desc = _zones_filter_desc(layer, net, kind)
+            out = _encode_zones(items, filter_desc)
+            if estimate_tokens(out) > budget * _TRACKS_BUDGET_SAFETY:
+                raise KicadMcpError(
+                    code=ErrorCode.CONTEXT_BUDGET_IMPOSSIBLE,
+                    message=f"El listado no cabe en {budget} tokens.",
+                    hint=(
+                        f"presupuesto mínimo estimado ≈ {estimate_tokens(out)} tokens; "
+                        "achicá con layer/net/kind o subí max_tokens"
+                    ),
+                )
+            if get_default_store().is_live_stale():
+                out = "[AVISO] editor vivo detras del disco (route_board)\n" + out
+        log_tool_call(
+            tool_name="get_zones",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(out),
+            extra={
+                "layer": layer,
+                "net": net,
+                "kind": kind,
+                "max_tokens": budget,
+                "n_items": len(items),
+            },
+        )
+        return out
+
+    @mcp.tool(
+        name="fill_zones",
+        description="Refill de todas las zonas de cobre del board (o valida zone_id si se pasa)",
+    )
+    def fill_zones(zone_id: str | None = None, base_snap: int | None = None) -> dict[str, Any]:
+        # P4.3 (sesión 19): kipy 0.7.1 no tiene fill selectivo por zona
+        # (docs/investigacion/19-zonas-ipc.md §1/§3) — refill_zones() SIEMPRE
+        # recalcula TODAS las zonas de cobre del board. zone_id, si se pasa,
+        # sólo VALIDA que exista (ZONE_ID_STALE si no) — no acota el refill.
+        # Idempotente: llamarla dos veces seguidas no rompe nada (mismo fill).
+        with tool_call_timer() as timer:
+            _guard_live_stale()  # D-14.1
+            check_no_external_disk_edit(  # P3.2
+                get_default_store(), _resolve_root_schematic_or_pcb()
+            )
+            root = _project_root()
+            if base_snap is not None:
+                _check_base_snap(base_snap)
+            board = _resolve_board(bridge)
+
+            if zone_id is not None:
+                item = bridge.get_zone_by_kiid(board, zone_id)
+                if item is None:
+                    _audit_error(root, "fill_zones", {"zone_id": zone_id}, ErrorCode.ZONE_ID_STALE)
+                    raise KicadMcpError(
+                        code=ErrorCode.ZONE_ID_STALE,
+                        message=f"El id {zone_id} no existe (board mutado).",
+                        hint="Re-listá con get_zones y usá un id vigente.",
+                    )
+
+            ctx = bridge.read_board_context(board)
+            backup_info = ensure_session_backup(root)  # Gate G1
+            fill_start = time.perf_counter()
+            zones_filled = bridge.refill_zones(board)
+            duration_ms = (time.perf_counter() - fill_start) * 1000
+            new_state = build_state_from_snapshot(ctx.footprints)
+            snap_id = get_default_store().register(new_state, mtimes=None)
+            audit_record(
+                root,
+                tool="fill_zones",
+                params={"zone_id": zone_id, "base_snap": base_snap},
+                result={
+                    "snap": snap_id,
+                    "backup": backup_info.get("backup"),
+                    "zones_filled": zones_filled,
+                },
+            )
+            payload: dict[str, Any] = {
+                "zones_filled": zones_filled,
+                "duration_ms": round(duration_ms, 3),
+                "snap_id": snap_id,
+            }
+        log_tool_call(
+            tool_name="fill_zones",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(json.dumps(payload, ensure_ascii=False)),
+            snap_id=snap_id,
+            extra={"zone_id": zone_id, "base_snap": base_snap, "zones_filled": zones_filled},
+        )
+        return payload
+
+    @mcp.tool(
+        name="delete_zone",
+        description="Borra una zona (cobre o keepout) por id (de get_zones)",
+    )
+    def delete_zone(id: str, base_snap: int | None = None) -> str:
+        # P4.4 (sesión 19): CRUD completo, simétrico con delete_track/delete_via
+        # (sesión 16) — pero sólo por id: a diferencia del cobre, una zona no
+        # tiene un "punto cercano" natural para matching geométrico ambiguo.
+        with tool_call_timer() as timer:
+            _guard_live_stale()  # D-14.1
+            check_no_external_disk_edit(  # P3.2
+                get_default_store(), _resolve_root_schematic_or_pcb()
+            )
+            root = _project_root()
+            if base_snap is not None:
+                _check_base_snap(base_snap)
+            board = _resolve_board(bridge)
+
+            item = bridge.get_zone_by_kiid(board, id)
+            if item is None:
+                _audit_error(root, "delete_zone", {"id": id}, ErrorCode.ZONE_ID_STALE)
+                raise KicadMcpError(
+                    code=ErrorCode.ZONE_ID_STALE,
+                    message=f"El id {id} no existe o no es una zona (board mutado).",
+                    hint="Re-listá con get_zones y usá un id vigente.",
+                )
+
+            ctx = bridge.read_board_context(board)
+            backup_info = ensure_session_backup(root)  # Gate G1
+            removed = bridge.remove_by_kiid(board, item.kiid)
+            if not removed:
+                _audit_error(root, "delete_zone", {"id": id}, ErrorCode.ZONE_ID_STALE)
+                raise KicadMcpError(
+                    code=ErrorCode.ZONE_ID_STALE,
+                    message="La zona objetivo ya no está en el board (borrado concurrente).",
+                    hint="Re-listá con get_zones y reintentá.",
+                )
+            new_state = build_state_from_snapshot(ctx.footprints)
+            snap_id = get_default_store().register(new_state, mtimes=None)
+            audit_record(
+                root,
+                tool="delete_zone",
+                params={"id": id, "base_snap": base_snap},
+                result={"snap": snap_id, "backup": backup_info.get("backup"), "kiid": item.kiid},
+            )
+            confirmation = f"OK delete_zone {item.kind} @{item.layer} [snap:{snap_id}]"
+        log_tool_call(
+            tool_name="delete_zone",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(confirmation),
+            snap_id=snap_id,
+            extra={"kind": item.kind, "base_snap": base_snap},
+        )
+        return confirmation
+
+    @mcp.tool(
         name="route_board",
         description="Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a disco",
     )
-    def route_board(max_passes: int | None = None, timeout_s: int = 600) -> dict[str, Any]:
+    def route_board(
+        max_passes: int | None = None, timeout_s: int = 600, refill: bool = True
+    ) -> dict[str, Any]:
         # D-14.2/D-14.3: mutación masiva de cobre SIN gate interactivo (es cobre
         # re-ruteable; G1 + git protegen). Pipeline: save_board implícito
         # (live→disco, sólo si el board abierto ES el target) → DRC pre-route
@@ -1478,11 +2038,17 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
 
             live_saved = False
             pre_footprints: tuple[FootprintData, ...] = ()
+            # P4.3 (sesión 19): conteo de zonas pre-route. Sólo se puede leer
+            # vía IPC (kipy), no del archivo — best-effort: 0 si el board no
+            # está abierto (mismo criterio que ``pre_footprints``, ambos
+            # dependen de ``is_target_open``).
+            zones_existentes = 0
             if is_target_open and not store.is_live_stale():
                 assert open_board is not None  # is_target_open lo implica
                 bridge.save_board(open_board)  # baja live→disco
                 live_saved = True
                 pre_footprints = bridge.read_board_context(open_board).footprints
+                zones_existentes = len(bridge.list_zones(open_board))
 
             # DRC pre-route: sólo para drc.err_preexistentes (P2.2). El
             # denominador de nets YA NO sale de acá (F-09).
@@ -1542,6 +2108,23 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 reloaded = "skipped_editor_closed" if open_board is None else False
                 store.mark_live_stale(snap_id)  # D-14.1: disco adelante del vivo
 
+            # P4.3 (sesión 19, D-19.1 — ver docs/investigacion/19-zonas-ipc.md
+            # §2.4): el ruteo NO necesita tocar el DSN para zonas (Freerouting
+            # respeta nativamente el ``(plane)`` que ``ExportSpecctraDSN``
+            # emite del outline) — pero los tracks nuevos pueden requerir
+            # recalcular el fill (thermal reliefs, clearance contra el cobre
+            # recién agregado). Sólo se puede refillear si la recarga (arriba)
+            # dejó el board vivo reflejando el archivo recién ruteado —
+            # ``reload_board_from_disk`` no tiene contraparte para el caso
+            # "editor cerrado" (best-effort, igual que ``pre_footprints``).
+            zones_refilladas = 0
+            fill_ms = 0.0
+            if refill and zones_existentes > 0 and reloaded is True:
+                assert open_board is not None  # reloaded=True lo implica
+                fill_start = time.perf_counter()
+                zones_refilladas = bridge.refill_zones(open_board)
+                fill_ms = (time.perf_counter() - fill_start) * 1000
+
             tracks_added = result.tracks_after - result.tracks_before
             vias_added = result.vias_after - result.vias_before
 
@@ -1573,12 +2156,17 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 "session_dsn": result.dsn_path,
                 "session_ses": result.ses_path,
                 "reloaded": reloaded,
+                "zones": {
+                    "existentes": zones_existentes,
+                    "refilladas": zones_refilladas,
+                    "fill_ms": round(fill_ms, 3),
+                },
             }
 
             audit_record(
                 root,
                 tool="route_board",
-                params={"max_passes": max_passes, "timeout_s": timeout_s},
+                params={"max_passes": max_passes, "timeout_s": timeout_s, "refill": refill},
                 result={
                     "snap": snap_id,
                     "backup": backup_info.get("backup"),
@@ -1591,6 +2179,8 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                     "drc_err_post": post_err,
                     "live_saved": live_saved,
                     "reloaded": reloaded,
+                    "zones_existentes": zones_existentes,
+                    "zones_refilladas": zones_refilladas,
                 },
             )
         log_tool_call(

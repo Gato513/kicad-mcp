@@ -209,6 +209,33 @@ class CopperItem:
 
 
 @dataclass(frozen=True)
+class ZoneItem:
+    """Zona de cobre o keepout (rule area) de un board, con KIID (P4, sesión 19).
+
+    Un único tipo cubre ambos ``kind`` — igual que ``kipy.board_types.Zone``,
+    que modela cobre/gráfico/rule-area con la misma clase Python
+    (``docs/investigacion/19-zonas-ipc.md`` §1). ``net_name`` es ``None`` para
+    keepouts (no se conectan a un net). ``vertices_mm`` es el polígono del
+    outline **de diseño** (no el resultado del fill — confirmado en la
+    investigación que el DSN de Freerouting también usa el outline, no
+    ``filled_polygons``); ``bbox_*``/``area_mm2`` se derivan de esos mismos
+    vértices (fórmula shoelace), consistentes entre sí.
+    """
+
+    kind: str  # "copper" | "keepout"
+    kiid: str
+    net_name: str | None
+    layer: str  # primera capa de cobre de la zona (MVP: una capa por zona)
+    bbox_min_x: Mm
+    bbox_min_y: Mm
+    bbox_max_x: Mm
+    bbox_max_y: Mm
+    area_mm2: float
+    filled: bool
+    vertices_mm: tuple[tuple[Mm, Mm], ...]
+
+
+@dataclass(frozen=True)
 class PadGeom:
     """Geometría de un pad para la validación de colisiones de ``add_track``
     (D-16.4). Fuente: ``Board.get_pads()`` — UNA pasada IPC para todo el board
@@ -404,6 +431,135 @@ def _kipy_copper_to_item(it: Any, net_name: str) -> CopperItem:
         mid_x_mm=nm_to_mm(Nm(int(mid.x))) if mid is not None else None,
         mid_y_mm=nm_to_mm(Nm(int(mid.y))) if mid is not None else None,
         width_mm=nm_to_mm(Nm(int(it.width))),
+    )
+
+
+def _polygon_area_mm2(vertices_mm: tuple[tuple[Mm, Mm], ...]) -> float:
+    """Área de un polígono simple por la fórmula shoelace (P4, sesión 19).
+
+    Se calcula sobre los vértices del ``outline`` de diseño, no sobre el
+    resultado del fill (que puede encogerse por clearance) — consistente con
+    el hallazgo de la investigación de que Freerouting también respeta el
+    outline, no el fill. Válido para polígonos simples (no auto-intersectantes,
+    ya garantizado por ``_polygon_is_simple`` en el tool antes de crear la zona).
+    """
+    n = len(vertices_mm)
+    if n < 3:
+        return 0.0
+    total = 0.0
+    for i in range(n):
+        x0, y0 = float(vertices_mm[i][0]), float(vertices_mm[i][1])
+        x1, y1 = float(vertices_mm[(i + 1) % n][0]), float(vertices_mm[(i + 1) % n][1])
+        total += x0 * y1 - x1 * y0
+    return abs(total) / 2.0
+
+
+def _copper_layer_values(raw_board: Any) -> list[int]:
+    """Todas las capas de cobre HABILITADAS del board (P4, ``add_keepout_zone``
+    con ``layer="all"``). Filtra por nombre ``BL_*_Cu`` sobre las capas
+    habilitadas — funciona para cualquier stackup (2 capas o N internas), sin
+    asumir un conteo fijo.
+    """
+    from kipy.proto.board.board_types_pb2 import BoardLayer
+
+    out = []
+    for layer_value in raw_board.get_enabled_layers():
+        if str(BoardLayer.Name(layer_value)).endswith("_Cu"):
+            out.append(layer_value)
+    return out
+
+
+def _zone_layer_value(layer: str) -> int:
+    """Resuelve un nombre de capa de cobre (``"F.Cu"``, ``"In1.Cu"``…) al enum
+    ``BoardLayer`` de kipy. Rechaza capas no-cobre (Edge.Cuts, F.SilkS…) con
+    ``INVALID_PARAMS`` — las zonas del MVP (copper o keepout) son siempre de
+    cobre (P4: "layer debe ser capa de cobre válida").
+    """
+    from kipy.proto.board.board_types_pb2 import BoardLayer
+
+    if not layer.endswith(".Cu"):
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_PARAMS,
+            message=f"Layer {layer!r} no es una capa de cobre.",
+            hint="Usá F.Cu, B.Cu, o una interna (In1.Cu, …).",
+        )
+    try:
+        return int(BoardLayer.Value(f"BL_{layer.replace('.', '_')}"))
+    except ValueError as exc:
+        raise KicadMcpError(
+            code=ErrorCode.INVALID_PARAMS,
+            message=f"Layer {layer!r} no reconocido por KiCad.",
+            hint="Valores esperados: F.Cu, B.Cu, In1.Cu, …",
+        ) from exc
+
+
+def _build_zone_outline(vertices_mm: tuple[tuple[float, float], ...]) -> Any:
+    """Construye el ``PolygonWithHoles`` (outline, sin huecos) de una zona a
+    partir de vértices en mm (P4). Único punto de conversión mm→nm para
+    geometría de zonas — espejo de ``Vector2.from_xy(mm_to_nm(...))`` que usan
+    ``add_track``/``draw_board_outline``.
+    """
+    from kipy.geometry import PolygonWithHoles, PolyLine, PolyLineNode
+
+    outline = PolyLine()
+    outline.closed = True
+    for x_mm, y_mm in vertices_mm:
+        outline.append(PolyLineNode.from_xy(int(mm_to_nm(Mm(x_mm))), int(mm_to_nm(Mm(y_mm)))))
+    poly = PolygonWithHoles()
+    poly.outline = outline
+    return poly
+
+
+def _kipy_zone_to_item(z: Any) -> ZoneItem:
+    """Convierte un ``kipy.board_types.Zone`` a ``ZoneItem`` (P4, D-16.1-like).
+
+    Única fuente de la verdad de la conversión — la usan ``list_zones`` y
+    ``get_zone_by_kiid`` por igual (mismo patrón que ``_kipy_copper_to_item``).
+    Sólo soporta outlines de vértices rectos (sin arcos) — precondición
+    garantizada porque el MVP sólo CREA zonas así; una zona con arcos en su
+    outline (creada a mano en KiCad, fuera del control del agente) sale con
+    los nodos-arco simplemente omitidos del cálculo de vértices/área/bbox
+    (aproximación honesta, no falla).
+    """
+    from kipy.proto.board.board_types_pb2 import ZoneType
+
+    is_keepout = z.type == ZoneType.ZT_RULE_AREA
+    net_name: str | None = None
+    if not is_keepout:
+        net_obj = z.net
+        net_name = str(net_obj.name) if net_obj is not None and net_obj.name else None
+    layers = [_layer_int_to_str(layer_value) for layer_value in z.layers]
+    layer_str = layers[0] if layers else ""
+
+    vertices_mm: list[tuple[Mm, Mm]] = []
+    for node in z.outline.outline:
+        if node.has_point:
+            vertices_mm.append(
+                (
+                    nm_to_mm(Nm(int(node.point.x))),
+                    nm_to_mm(Nm(int(node.point.y))),
+                )
+            )
+    if vertices_mm:
+        xs = [float(v[0]) for v in vertices_mm]
+        ys = [float(v[1]) for v in vertices_mm]
+        bbox = (min(xs), min(ys), max(xs), max(ys))
+    else:
+        bbox = (0.0, 0.0, 0.0, 0.0)
+    area_mm2 = _polygon_area_mm2(tuple(vertices_mm))
+
+    return ZoneItem(
+        kind="keepout" if is_keepout else "copper",
+        kiid=str(z.id.value),
+        net_name=net_name,
+        layer=layer_str,
+        bbox_min_x=Mm(bbox[0]),
+        bbox_min_y=Mm(bbox[1]),
+        bbox_max_x=Mm(bbox[2]),
+        bbox_max_y=Mm(bbox[3]),
+        area_mm2=area_mm2,
+        filled=bool(z.filled),
+        vertices_mm=tuple(vertices_mm),
     )
 
 
@@ -738,6 +894,11 @@ _IDEMPOTENT_OPS: frozenset[str] = frozenset(
         "list_all_copper",
         "get_copper_by_kiid",
         "list_all_pads",
+        # P4 (sesión 19): lecturas puras de zonas para ``get_zones`` y la
+        # resolución por KIID de ``delete_zone``/``fill_zones(zone_id=)`` —
+        # mismo criterio que ``list_all_copper``/``get_copper_by_kiid``.
+        "list_zones",
+        "get_zone_by_kiid",
     }
 )
 
@@ -1330,6 +1491,167 @@ class IpcBridge:
                 return tuple(out)
 
             return self._run_supervised_read("list_all_pads", _do)
+
+    def list_zones(self, board: BoardHandle) -> tuple[ZoneItem, ...]:
+        """Todas las zonas (cobre + keepout) del board (P4, ``get_zones``).
+
+        ``Board.get_zones()`` de kipy — verificado en vivo contra KiCad
+        10.0.4 (``docs/investigacion/19-zonas-ipc.md`` §1): round-trips por
+        IPC, una sola pasada, sin filtro server-side por capa/net/kind (el
+        tool filtra en Python, mismo patrón que ``list_all_copper``).
+        """
+        with self._lock:
+            self._detect_restart()
+
+            def _do() -> tuple[ZoneItem, ...]:
+                raw_board = board.raw
+                return tuple(_kipy_zone_to_item(z) for z in raw_board.get_zones())
+
+            return self._run_supervised_read("list_zones", _do)
+
+    def get_zone_by_kiid(self, board: BoardHandle, kiid: str) -> ZoneItem | None:
+        """Resuelve una ``ZoneItem`` por KIID (P4, espejo de ``get_copper_by_kiid``).
+
+        ``None`` si el KIID no existe o si existe pero no es una zona. El
+        llamador (``delete_zone``/``fill_zones``) mapea ambos casos a
+        ``ZONE_ID_STALE``.
+        """
+        from kipy.proto.common.types.base_types_pb2 import KIID as _KIID_proto
+
+        with self._lock:
+            self._detect_restart()
+
+            def _do() -> ZoneItem | None:
+                raw_board = board.raw
+                kiid_proto = _KIID_proto()
+                kiid_proto.value = kiid
+                items = _get_items_by_id_or_empty(raw_board, [kiid_proto])
+                if not items or type(items[0]).__name__ != "Zone":
+                    return None
+                return _kipy_zone_to_item(items[0])
+
+            return self._run_supervised_read("get_zone_by_kiid", _do)
+
+    def add_zone(
+        self,
+        board: BoardHandle,
+        *,
+        net: str,
+        layer: str,
+        vertices_mm: tuple[tuple[float, float], ...],
+        priority: int = 0,
+        fill: bool = True,
+    ) -> tuple[str, bool, float]:
+        """Crea una zona de cobre conectada a ``net`` en ``layer`` (P4, ``add_zone``).
+
+        Precondición: el llamador ya validó que ``net`` existe y que el
+        polígono es simple con 3-20 vértices (``INVALID_ZONE_GEOMETRY`` se
+        levanta ahí, no acá — mismo reparto de responsabilidades que
+        ``add_track``: el tool valida con hints ricos, el bridge re-chequea
+        ``net`` por las dudas de una carrera entre validación y mutación).
+
+        Si ``fill``, llama ``Board.refill_zones()`` tras crear la zona — es
+        **bloqueante con polling** (``docs/investigacion/19-zonas-ipc.md``
+        §1/§3), no hay fill selectivo por zona en kipy 0.7.1: refilla TODAS
+        las zonas del board (idempotente, sin efecto adverso si ya estaban
+        rellenas). Devuelve ``(kiid, filled, area_mm2)``.
+        """
+        from kipy.board_types import Zone
+
+        with self._lock:
+            self._detect_restart()
+            with self._supervise("add_zone"):
+                raw_board = board.raw
+                net_obj = next(
+                    (n for n in raw_board.get_nets() if str(n.name) == net),
+                    None,
+                )
+                if net_obj is None:
+                    raise KicadMcpError(
+                        code=ErrorCode.NET_NOT_FOUND,
+                        message=f"Net {net} no está en el board (post-validación).",
+                        hint="Snapshot del board cambió entre la validación y la mutación.",
+                    )
+                layer_value = _zone_layer_value(layer)
+                zone = Zone()  # nace ZT_COPPER por default (kipy)
+                zone.layers = [layer_value]  # type: ignore[list-item]
+                zone.outline = _build_zone_outline(vertices_mm)
+                zone.net = net_obj
+                zone.priority = priority
+                created = raw_board.create_items(zone)
+                kiid = str(created[0].id.value) if created else ""
+                if fill:
+                    raw_board.refill_zones()
+                area_mm2 = _polygon_area_mm2(tuple((Mm(x), Mm(y)) for x, y in vertices_mm))
+                return kiid, fill, area_mm2
+
+    def add_keepout_zone(
+        self,
+        board: BoardHandle,
+        *,
+        layer: str,
+        vertices_mm: tuple[tuple[float, float], ...],
+        no_tracks: bool,
+        no_vias: bool,
+        no_pours: bool,
+        no_footprints: bool,
+    ) -> tuple[str, float]:
+        """Crea una zona keepout (rule area) sin net (P4, ``add_keepout_zone``).
+
+        ``layer="all"`` resuelve a TODAS las capas de cobre habilitadas
+        (``_copper_layer_values``); si no, una sola capa de cobre específica.
+        Los flags ``keepout_*`` viven en ``rule_area_settings`` del proto — la
+        wrapper ``Zone`` de kipy no los expone como propiedades Python
+        (``docs/investigacion/19-zonas-ipc.md`` §1), así que se escriben
+        directo sobre ``zone.proto.rule_area_settings`` (``Wrapper.proto``
+        devuelve la misma instancia interna, sin copia — la escritura es
+        efectiva antes de ``create_items``). No requiere fill (una keepout no
+        tiene cobre). Devuelve ``(kiid, area_mm2)``.
+        """
+        from kipy.board_types import Zone
+        from kipy.proto.board.board_types_pb2 import ZoneType
+
+        with self._lock:
+            self._detect_restart()
+            with self._supervise("add_keepout_zone"):
+                raw_board = board.raw
+                layer_values = (
+                    _copper_layer_values(raw_board)
+                    if layer == "all"
+                    else [_zone_layer_value(layer)]
+                )
+                zone = Zone()
+                zone.type = ZoneType.ZT_RULE_AREA
+                zone.layers = layer_values  # type: ignore[assignment]
+                zone.outline = _build_zone_outline(vertices_mm)
+                zone.proto.rule_area_settings.keepout_tracks = no_tracks
+                zone.proto.rule_area_settings.keepout_vias = no_vias
+                zone.proto.rule_area_settings.keepout_copper = no_pours
+                zone.proto.rule_area_settings.keepout_footprints = no_footprints
+                created = raw_board.create_items(zone)
+                kiid = str(created[0].id.value) if created else ""
+                area_mm2 = _polygon_area_mm2(tuple((Mm(x), Mm(y)) for x, y in vertices_mm))
+                return kiid, area_mm2
+
+    def refill_zones(self, board: BoardHandle) -> int:
+        """Refill de TODAS las zonas de cobre del board (P4, ``fill_zones``).
+
+        kipy 0.7.1 no expone fill selectivo por zona (``Board.refill_zones()``
+        no toma una lista de KIIDs — verificado en la investigación P4.0):
+        esta llamada SIEMPRE recalcula el fill de todas las zonas de cobre,
+        sin importar si el tool pidió un ``zone_id`` específico. Bloqueante
+        con polling (hasta 30s default de kipy). Idempotente. Devuelve la
+        cantidad de zonas de COBRE del board (las keepout no tienen fill).
+        """
+        from kipy.proto.board.board_types_pb2 import ZoneType
+
+        with self._lock:
+            self._detect_restart()
+            with self._supervise("refill_zones"):
+                raw_board = board.raw
+                raw_board.refill_zones()
+                zones = raw_board.get_zones()
+                return sum(1 for z in zones if z.type != ZoneType.ZT_RULE_AREA)
 
     def board_outline(self, board: BoardHandle) -> tuple[BBoxMm, str]:
         """Bbox del board y estado del contorno Edge.Cuts (F-03).

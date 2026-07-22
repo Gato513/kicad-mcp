@@ -1,5 +1,39 @@
 # Fixture `despertador-routed`
 
+## ⚠️ STALE (sesión 19b, 2026-07-22)
+
+El esquemático fuente de este fixture (el de la advertencia más abajo, con
+SCL↔INT_SENS y NSS↔MOSI fusionadas) fue **corregido en sesión 19b**
+(`docs/sesiones/19b-reporte.md`). El fix cambia la topología de red de forma
+sustancial — no es un ajuste cosmético:
+
+- `/INT_SENS` y `/SCL` dejan de existir fusionadas: U2.INT y U3.~INT pasan a
+  No-Connect (polling por I2C en vez de interrupción por hardware); `/SCL`
+  queda como red única y limpia.
+- `/MOSI` y `/NSS` dejan de existir fusionadas: NSS se reasigna a U1.PB5
+  (pin que **antes era RESET/ICSP** — ver reporte 19b, el ICSP en vivo vía
+  J1 deja de funcionar con programación estándar tras este cambio).
+- R3 (pull-up) se mueve de la red fusionada a `/NSS` — antes no cumplía su
+  función documentada de pull-up de RESET (defecto no documentado hallado
+  en 19b).
+- U3.pin10 (VLED+) pasa a No-Connect explícito (placeholder — pendiente
+  diseño real de alimentación LED, no resuelto en 19b).
+
+**Este fixture (los 4 archivos `.kicad_*`) sigue siendo el esquemático
+VIEJO** — no fue regenerado esta sesión (decisión: Opción B, marcar STALE en
+vez de regenerar, dado que el server no tiene IPC disponible en el momento
+de 19b). Los dos tests que lo consumen
+(`tests/test_zones_e2e_gui.py`, `tests/test_reload_e2e_gui.py`, ambos
+`integration_gui_slow`) sólo verifican presencia de ANT1 y cobre/DRC
+genérico — no assertan sobre nombres de red específicos ni sobre R3, así que
+siguen siendo válidos para ejercitar colisión de cobre denso. **No usar este
+fixture como fuente de verdad sobre el esquemático real del despertador** —
+para eso, ver el proyecto vivo o `docs/sesiones/19b-reporte.md`.
+
+**Regenerar antes de sesión 20** (Dogfooding 3) siguiendo el protocolo de
+"Regenerar el fixture" más abajo, ahora partiendo del sch corregido.
+
+
 Copia del proyecto "despertador inteligente" (24 footprints) **con contorno
 Edge.Cuts y ruteo real** generados por dogfood de `route_board` en sesión 17
 (P2.1/P2.2). Existe para que los tests `integration_gui` de sesión 16

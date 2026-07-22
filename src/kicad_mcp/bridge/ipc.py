@@ -854,6 +854,62 @@ def _get_items_by_id_or_empty(raw_board: Any, kiids: list[Any]) -> list[Any]:
         raise
 
 
+def _verify_created_net_or_revert(
+    raw_board: Any,
+    kiid_protos: list[Any],
+    created_item: Any,
+    requested_net: str,
+    at_mm: list[float],
+) -> None:
+    """Releé el net real de un ítem de cobre recién creado y revierte si KiCad
+    lo reasignó (sesión 19d, ``NET_ASSIGNMENT_MISMATCH``).
+
+    Causa raíz confirmada en vivo (19c Bloque 1 para ``add_via``, 19d.0 para
+    ``add_track``): KiCad reasigna un track/via al net del cobre físico bajo
+    su geometría al crearlo, sin relación con el net pedido por el caller —
+    el objeto ``created_item`` en memoria sigue mostrando el net pedido, así
+    que la verificación exige una relectura fresca vía ``get_items_by_id``.
+
+    No toma ``self._lock`` (no es un método de instancia): se invoca desde
+    dentro del bloque ``with self._lock`` ya adquirido por ``add_via``/
+    ``add_track`` — ``self._lock`` es un ``threading.Lock`` NO reentrante,
+    así que releer con ``get_copper_by_kiid`` (que sí toma el lock) causaría
+    deadlock. Por eso esta función es kipy-agnóstica: recibe ``raw_board``
+    y los ``KIID`` proto ya construidos, no importa ``kipy`` — testeable con
+    un ``raw_board`` fake en unit tests (kipy no es importable offline).
+
+    Si el ítem ya no está (borrado concurrente), no hay nada que verificar.
+    Si el net coincide (o no se pudo leer un net con nombre), no hace nada.
+    Si difiere, borra el ítem recién creado (``remove_items``) y lanza
+    ``NET_ASSIGNMENT_MISMATCH`` con ``data.requested_net``/``data.actual_net``/
+    ``data.at``.
+    """
+    reread = _get_items_by_id_or_empty(raw_board, kiid_protos)
+    if not reread:
+        return
+    net = reread[0].net
+    actual_net = str(net.name) if net is not None and net.name else ""
+    if actual_net and actual_net != requested_net:
+        raw_board.remove_items(created_item)
+        raise KicadMcpError(
+            code=ErrorCode.NET_ASSIGNMENT_MISMATCH,
+            message=(
+                f"KiCad asignó el net {actual_net!r} en vez del {requested_net!r} "
+                "pedido: el punto/trazado pisa cobre de otro net."
+            ),
+            hint=(
+                "el punto solicitado pisa cobre de otro net; verificá "
+                "coordenadas con get_tracks(bbox=...) o borrá cobre ajeno "
+                "primero"
+            ),
+            data={
+                "requested_net": requested_net,
+                "actual_net": actual_net,
+                "at": at_mm,
+            },
+        )
+
+
 # --- Retry acotado para lecturas idempotentes (D-07.1) ------------------------
 
 # Whitelist EXPLÍCITA de operaciones a las que se les puede aplicar retry ante
@@ -1826,6 +1882,34 @@ class IpcBridge:
                 raw_board.remove_items(items[0])
                 return True
 
+    def remove_many_by_kiid(self, board: BoardHandle, kiids: list[str]) -> int:
+        """Borra varios ítems de board por KIID en un solo round-trip IPC
+        (sesión 19d, ``delete_tracks_bulk``).
+
+        Un ``get_items_by_id`` batch + un ``remove_items`` en bloque — evita
+        el costo de N round-trips que tenía ``delete_track``/``delete_via``
+        llamado en loop (266 llamadas en 19c Bloque 3 para vaciar el cobre
+        del board). KIIDs stale (borrado concurrente entre el ``get_tracks``
+        que los emitió y esta llamada) se ignoran silenciosamente — el
+        conteo devuelto refleja lo que efectivamente se borró, no lo pedido.
+        """
+        from kipy.proto.common.types.base_types_pb2 import KIID as _KIID_proto
+
+        with self._lock:
+            self._detect_restart()
+            with self._supervise("remove_many_by_kiid"):
+                raw_board = board.raw
+                kiid_protos = []
+                for kiid in kiids:
+                    kiid_proto = _KIID_proto()
+                    kiid_proto.value = kiid
+                    kiid_protos.append(kiid_proto)
+                items = _get_items_by_id_or_empty(raw_board, kiid_protos)
+                if not items:
+                    return 0
+                raw_board.remove_items(items)
+                return len(items)
+
     def move_footprint(
         self,
         board: BoardHandle,
@@ -1901,7 +1985,7 @@ class IpcBridge:
         layer: str,
         *,
         timings: dict[str, float] | None = None,
-    ) -> None:
+    ) -> str:
         """Agrega un track lineal entre ``start`` y ``end`` en ``layer``.
 
         Precondición: net y layer válidos, coordenadas dentro del bbox.
@@ -1911,12 +1995,21 @@ class IpcBridge:
         Si ``timings`` es un dict, se rellena ``timings["lookup_ms"]`` con
         la latencia de la búsqueda O(nets) del net por nombre (sesión 07
         T5, D-07.5).
+
+        Sesión 19d (19d.0): confirmado en vivo que este método tiene el
+        mismo comportamiento de reasignación de net que ``add_via`` (H2 de
+        19c) — KiCad reasigna el track ENTERO al net del cobre que cruza,
+        no sólo el punto de intersección. Verificamos el net real
+        post-creación y revertimos en mismatch (``NET_ASSIGNMENT_MISMATCH``).
+        Por eso ahora devuelve el KIID del track creado, simétrico a
+        ``add_via`` (antes descartaba el retorno de ``create_items``).
         """
         # Import perezoso de tipos de kipy: mantiene el bridge testable
         # con fakes sin pagar el costo cuando kipy no se usa.
         from kipy.board_types import Track
         from kipy.geometry import Vector2
         from kipy.proto.board.board_types_pb2 import BoardLayer
+        from kipy.proto.common.types.base_types_pb2 import KIID as _KIID_proto
 
         with self._lock:
             self._detect_restart()
@@ -1952,7 +2045,19 @@ class IpcBridge:
                 track.width = int(mm_to_nm(width_mm))
                 track.layer = layer_value
                 track.net = net_obj
-                raw_board.create_items(track)
+                created = raw_board.create_items(track)
+                if not created:
+                    return ""
+                kiid_proto = _KIID_proto()
+                kiid_proto.value = str(created[0].id.value)
+                _verify_created_net_or_revert(
+                    raw_board,
+                    [kiid_proto],
+                    created[0],
+                    net,
+                    [float(start_mm[0]), float(start_mm[1]), float(end_mm[0]), float(end_mm[1])],
+                )
+                return str(created[0].id.value)
 
     def add_via(
         self,
@@ -1979,9 +2084,17 @@ class IpcBridge:
         Si ``timings`` es un dict, se rellena ``timings["lookup_ms"]`` con la
         latencia de la búsqueda O(nets) del net por nombre (paralelo a
         ``add_track``).
+
+        Sesión 19c (Bloque 1, H2) confirmó en vivo que KiCad reasigna la via
+        al net del cobre físico bajo el punto de colocación, sin relación con
+        lo pedido — la confirmación de texto de la tool seguía mostrando el
+        net pedido pese a la reasignación silenciosa. Sesión 19d cierra ese
+        hueco: verificamos el net real post-creación y revertimos en
+        mismatch (``NET_ASSIGNMENT_MISMATCH``).
         """
         from kipy.board_types import Via
         from kipy.geometry import Vector2
+        from kipy.proto.common.types.base_types_pb2 import KIID as _KIID_proto
 
         with self._lock:
             self._detect_restart()
@@ -2006,6 +2119,15 @@ class IpcBridge:
                 via.drill_diameter = int(mm_to_nm(drill_mm))
                 via.net = net_obj
                 created = raw_board.create_items(via)
-                if created:
-                    return str(created[0].id.value)
-                return ""
+                if not created:
+                    return ""
+                kiid_proto = _KIID_proto()
+                kiid_proto.value = str(created[0].id.value)
+                _verify_created_net_or_revert(
+                    raw_board,
+                    [kiid_proto],
+                    created[0],
+                    net,
+                    [float(x_mm), float(y_mm)],
+                )
+                return str(created[0].id.value)

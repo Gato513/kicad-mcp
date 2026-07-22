@@ -23,6 +23,7 @@ from kicad_mcp.bridge.ipc import (
     IpcBridge,
     Mm,
     Nm,
+    _verify_created_net_or_revert,
     mm_to_nm,
     nm_to_mm,
 )
@@ -248,6 +249,52 @@ def test_remove_by_kiid_returns_false_on_kipy_not_found_error() -> None:
     assert bridge.remove_by_kiid(board, "stale-kiid") is False
 
 
+class _RecordingRemoveManyRawBoard:
+    """``raw`` fake que imita la firma real de ``kipy.Board.remove_items``:
+    UN solo parámetro ``items: BoardItem | Sequence[BoardItem]`` — NO
+    variádico. Detectó en vivo (19d.2, corrida GUI real) que
+    ``remove_many_by_kiid`` llamaba ``remove_items(*items)`` (desempaquetado),
+    lo que kipy rechaza con ``TypeError: remove_items() takes 2 positional
+    arguments but N were given`` en cuanto ``items`` tiene más de un
+    elemento — un fake que sólo simulara la llamada sin replicar esta forma
+    de la firma real no lo hubiera atrapado."""
+
+    def __init__(self, found: list[Any]) -> None:
+        self._found = found
+        self.remove_items_calls: list[Any] = []
+
+    def get_items_by_id(self, kiids: list[Any]) -> list[Any]:
+        return self._found
+
+    def remove_items(self, items: Any) -> None:
+        self.remove_items_calls.append(items)
+
+
+@pytest.mark.unit
+def test_remove_many_by_kiid_calls_remove_items_with_a_single_sequence_arg() -> None:
+    """Regresión del bug de 19d.2: ``remove_items`` recibe UNA lista, no
+    ``*items`` desempaquetado — kipy real rechaza más de un posicional."""
+    found_items = [object(), object(), object()]
+    raw_board = _RecordingRemoveManyRawBoard(found_items)
+    board = BoardHandle(_raw=raw_board)
+    bridge = IpcBridge()
+
+    removed = bridge.remove_many_by_kiid(board, ["k1", "k2", "k3"])
+
+    assert removed == 3
+    assert raw_board.remove_items_calls == [found_items]
+
+
+@pytest.mark.unit
+def test_remove_many_by_kiid_returns_zero_when_nothing_found() -> None:
+    raw_board = _RecordingRemoveManyRawBoard([])
+    board = BoardHandle(_raw=raw_board)
+    bridge = IpcBridge()
+
+    assert bridge.remove_many_by_kiid(board, ["stale-1", "stale-2"]) == 0
+    assert raw_board.remove_items_calls == []
+
+
 @pytest.mark.unit
 def test_move_footprint_by_kiid_raises_component_not_found_on_kipy_not_found_error() -> None:
     """El fast-path por kiid, con KIID stale, cae al mismo ``COMPONENT_NOT_FOUND``
@@ -258,6 +305,99 @@ def test_move_footprint_by_kiid_raises_component_not_found_on_kipy_not_found_err
     with pytest.raises(KicadMcpError) as excinfo:
         bridge.move_footprint(board, "U1", Mm(1.0), Mm(1.0), kiid="stale-kiid")
     assert excinfo.value.code is ErrorCode.COMPONENT_NOT_FOUND
+
+
+# --- Sesión 19d: _verify_created_net_or_revert (add_via/add_track hijacking) --
+
+
+class _FakeNet:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class _FakeCopperItem:
+    def __init__(self, net_name: str) -> None:
+        self.net = _FakeNet(net_name) if net_name else None
+
+
+class _RerereadRawBoard:
+    """``raw`` fake cuyo ``get_items_by_id`` devuelve un net fijo — simula la
+    relectura post-creación de ``add_via``/``add_track`` (sesión 19d)."""
+
+    def __init__(self, reread_net_name: str) -> None:
+        self._reread_net_name = reread_net_name
+        self.removed: list[Any] = []
+
+    def get_items_by_id(self, kiids: list[Any]) -> list[Any]:
+        return [_FakeCopperItem(self._reread_net_name)]
+
+    def remove_items(self, item: Any) -> None:
+        self.removed.append(item)
+
+
+class _EmptyRerereadRawBoard:
+    """El ítem ya no está (borrado concurrente) — nada que verificar."""
+
+    def get_items_by_id(self, kiids: list[Any]) -> list[Any]:
+        return []
+
+    def remove_items(self, item: Any) -> None:
+        raise AssertionError("no debería revertir si el ítem ya no está")
+
+
+@pytest.mark.unit
+def test_verify_created_net_or_revert_ok_when_net_matches() -> None:
+    """Caso feliz: el net releído coincide con el pedido — no revierte, no lanza."""
+    raw_board = _RerereadRawBoard(reread_net_name="GND")
+    created_item = object()
+
+    _verify_created_net_or_revert(raw_board, ["kiid-proto"], created_item, "GND", [1.0, 2.0])
+
+    assert raw_board.removed == []
+
+
+@pytest.mark.unit
+def test_verify_created_net_or_revert_raises_and_reverts_on_mismatch() -> None:
+    """El net releído difiere del pedido (KiCad reasignó al cobre físico bajo el
+    punto, H2 de 19c/19d.0): revierte creando y lanza NET_ASSIGNMENT_MISMATCH
+    con el ``data`` estructurado que necesita el agente para diagnosticar."""
+    raw_board = _RerereadRawBoard(reread_net_name="/MOSI")
+    created_item = object()
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        _verify_created_net_or_revert(
+            raw_board, ["kiid-proto"], created_item, "+3V3", [170.775, 57.225]
+        )
+
+    assert excinfo.value.code is ErrorCode.NET_ASSIGNMENT_MISMATCH
+    assert excinfo.value.data == {
+        "requested_net": "+3V3",
+        "actual_net": "/MOSI",
+        "at": [170.775, 57.225],
+    }
+    assert raw_board.removed == [created_item]
+
+
+@pytest.mark.unit
+def test_verify_created_net_or_revert_noop_when_item_disappeared() -> None:
+    """Borrado concurrente entre la creación y la relectura: nada que verificar,
+    no revierte (no hay nada que revertir) ni lanza."""
+    raw_board = _EmptyRerereadRawBoard()
+    created_item = object()
+
+    _verify_created_net_or_revert(raw_board, ["kiid-proto"], created_item, "GND", [1.0, 2.0])
+
+
+@pytest.mark.unit
+def test_verify_created_net_or_revert_noop_when_reread_net_unnamed() -> None:
+    """Si la relectura no trae un net con nombre (net None o vacío), no hay
+    señal de hijacking confiable — no revierte ni lanza."""
+    raw_board = _RerereadRawBoard(reread_net_name="")
+    created_item = object()
+
+    _verify_created_net_or_revert(raw_board, ["kiid-proto"], created_item, "GND", [1.0, 2.0])
+
+    assert raw_board.removed == []
 
 
 # --- restart detection --------------------------------------------------------

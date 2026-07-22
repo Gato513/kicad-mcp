@@ -193,7 +193,10 @@ class _FakeBridge(IpcBridge):
         layer: str,
         *,
         timings: dict[str, float] | None = None,
-    ) -> None:
+    ) -> str:
+        # Sesión 19d: add_track pasa a devolver el KIID creado (simétrico a
+        # add_via) para soportar la verificación post-creación del net real.
+        kiid = f"track-{len(self.tracks):012x}"
         self.tracks.append(
             {
                 "net": net,
@@ -205,6 +208,7 @@ class _FakeBridge(IpcBridge):
         )
         if timings is not None:
             timings["lookup_ms"] = 0.0
+        return kiid
 
     def add_via(  # type: ignore[override]
         self,

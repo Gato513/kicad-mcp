@@ -1513,6 +1513,141 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         return out
 
     @mcp.tool(
+        name="delete_tracks_bulk",
+        description="Borra tracks/vías por filtro (net/bbox/layer); dry_run lista sin mutar",
+    )
+    def delete_tracks_bulk(
+        net: str | None = None,
+        bbox: list[float] | None = None,
+        layer: str | None = None,
+        include_vias: bool = True,
+        dry_run: bool = False,
+        base_snap: int | None = None,
+    ) -> dict[str, Any]:
+        # Sesión 19d (19d.2): el Bloque 3 de 19c necesitó 266 llamadas
+        # individuales delete_track/delete_via para vaciar el cobre del board
+        # antes de un route_board desde cero. Mismo pipeline de filtrado que
+        # get_tracks (reutilizado tal cual: al menos 1 filtro obligatorio,
+        # list_net_copper/list_all_copper + _copper_in_bbox/_copper_on_layer),
+        # pero el borrado va en un solo remove_many_by_kiid (un round-trip
+        # IPC) en vez de N delete_track/delete_via.
+        with tool_call_timer() as timer:
+            if net is None and bbox is None and layer is None:
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message="delete_tracks_bulk requiere al menos un filtro.",
+                    hint=(
+                        "Pasá net, bbox=[min_x,min_y,max_x,max_y] o layer — borrar "
+                        "todo el cobre a ciegas es riesgoso."
+                    ),
+                )
+            bbox_t: tuple[float, float, float, float] | None = None
+            if bbox is not None:
+                if len(bbox) != 4:
+                    raise KicadMcpError(
+                        code=ErrorCode.INVALID_PARAMS,
+                        message=(
+                            "bbox debe tener 4 valores [min_x,min_y,max_x,max_y] "
+                            f"(recibió {len(bbox)})."
+                        ),
+                        hint="Ejemplo: bbox=[10.0, 10.0, 50.0, 40.0].",
+                    )
+                bbox_t = (bbox[0], bbox[1], bbox[2], bbox[3])
+                if bbox_t[0] > bbox_t[2] or bbox_t[1] > bbox_t[3]:
+                    raise KicadMcpError(
+                        code=ErrorCode.INVALID_PARAMS,
+                        message=f"bbox inválido (min > max): {bbox_t}.",
+                        hint="Formato [min_x,min_y,max_x,max_y] con min <= max en cada eje.",
+                    )
+
+            board = _resolve_board(bridge)
+            if net is not None:
+                nets = bridge.list_net_names(board)
+                if net not in nets:
+                    similars = _similars(net, nets)
+                    hint = (
+                        "nets similares: " + ", ".join(similars) if similars else "sin sugerencias"
+                    )
+                    raise KicadMcpError(
+                        code=ErrorCode.NET_NOT_FOUND,
+                        message=f"Net {net} no existe en el board.",
+                        hint=hint,
+                    )
+                items = bridge.list_net_copper(board, net)
+            else:
+                items = bridge.list_all_copper(board)
+            if bbox_t is not None:
+                items = tuple(it for it in items if _copper_in_bbox(it, bbox_t))
+            if layer is not None:
+                items = tuple(it for it in items if _copper_on_layer(it, layer))
+            if not include_vias:
+                items = tuple(it for it in items if it.kind != "via")
+
+            tracks_matched = sum(1 for it in items if it.kind != "via")
+            vias_matched = sum(1 for it in items if it.kind == "via")
+
+            if dry_run:
+                result: dict[str, Any] = {
+                    "tracks_deleted": tracks_matched,
+                    "vias_deleted": vias_matched,
+                    "snap_id": None,
+                    "zones_refilled": 0,
+                }
+                log_tool_call(
+                    tool_name="delete_tracks_bulk",
+                    latency_ms=timer["latency_ms"],
+                    tokens_est=estimate_tokens(str(result)),
+                    extra={"net": net, "bbox": bbox_t, "layer": layer, "dry_run": True},
+                )
+                return result
+
+            _guard_live_stale()  # D-14.1
+            check_no_external_disk_edit(  # P3.2: red de seguridad, independiente de base_snap
+                get_default_store(), _resolve_root_schematic_or_pcb()
+            )
+            root = _project_root()
+            if base_snap is not None:
+                _check_base_snap(base_snap)
+
+            ctx = bridge.read_board_context(board)
+            backup_info = ensure_session_backup(root)  # Gate G1
+            kiids = [it.kiid for it in items]
+            removed = bridge.remove_many_by_kiid(board, kiids)
+
+            zones_refilled = 0
+            if any(z.kind == "copper" for z in bridge.list_zones(board)):
+                zones_refilled = bridge.refill_zones(board)  # D-14.1: refill post-bulk
+
+            new_state = build_state_from_snapshot(ctx.footprints)
+            snap_id = get_default_store().register(new_state, mtimes=None)
+            audit_record(
+                root,
+                tool="delete_tracks_bulk",
+                params={
+                    "net": net,
+                    "bbox": bbox_t,
+                    "layer": layer,
+                    "include_vias": include_vias,
+                    "base_snap": base_snap,
+                },
+                result={"snap": snap_id, "backup": backup_info.get("backup"), "removed": removed},
+            )
+            result = {
+                "tracks_deleted": tracks_matched,
+                "vias_deleted": vias_matched,
+                "snap_id": snap_id,
+                "zones_refilled": zones_refilled,
+            }
+        log_tool_call(
+            tool_name="delete_tracks_bulk",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(str(result)),
+            snap_id=snap_id,
+            extra={"net": net, "bbox": bbox_t, "layer": layer, "dry_run": False},
+        )
+        return result
+
+    @mcp.tool(
         name="get_component_detail",
         description="Detalle de un footprint: posición, rotación, bbox/courtyard y pads absolutos",
     )

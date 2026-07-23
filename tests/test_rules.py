@@ -17,7 +17,13 @@ from typing import Any
 
 import pytest
 
-from kicad_mcp.bridge.rules import _build_report, _iter_drc_violations
+from kicad_mcp.bridge.rules import (
+    Item,
+    Violation,
+    _build_report,
+    _iter_drc_violations,
+    diff_violations,
+)
 
 # Payload real (recortado a lo relevante) capturado con kicad-cli 10.0.4.
 _EDGE_CLEARANCE_PAYLOAD: dict[str, Any] = {
@@ -165,3 +171,93 @@ def test_copper_edge_clearance_items_without_desc_are_not_misclassified_as_edge(
     report = _build_report(payload, _iter_drc_violations(payload))
     v = report.violations[0]
     assert v.items[0].pos == (3.0, 3.0)
+
+
+# --- diff_violations (F-D3-03, sesión 21) -------------------------------------
+
+
+@pytest.mark.unit
+def test_diff_violations_same_total_different_composition_is_not_zero() -> None:
+    """El escenario EXACTO del D3: 3 violaciones tipo A pre-route + 3 tipo B
+    post-route (mismo total, composición 100% distinta). La resta de totales
+    vieja daría ``err_introducidos=0``; ``diff_violations`` debe detectar las
+    3 introducidas y las 3 resueltas."""
+    pre = tuple(
+        Violation(rule="unconnected_items", severity="error", message="e", items=())
+        for _ in range(3)
+    )
+    post = tuple(
+        Violation(rule="hole_clearance", severity="error", message="e", items=()) for _ in range(3)
+    )
+    introducidas, resueltas, por_tipo = diff_violations(pre, post)
+    assert introducidas == 3
+    assert resueltas == 3
+    assert por_tipo == {"hole_clearance": 3}
+
+
+@pytest.mark.unit
+def test_diff_violations_identical_violations_are_zero_introduced() -> None:
+    """Las mismas violaciones (misma rule/pos/items) pre y post no cuentan
+    como introducidas ni resueltas — persisten sin cambio."""
+    v = Violation(
+        rule="clearance",
+        severity="error",
+        message="e",
+        items=(Item(ref="U1", net="GND", pos=(10.0, 20.0)),),
+    )
+    introducidas, resueltas, por_tipo = diff_violations((v,), (v,))
+    assert introducidas == 0
+    assert resueltas == 0
+    assert por_tipo == {}
+
+
+@pytest.mark.unit
+def test_diff_violations_position_tolerance_0_1mm() -> None:
+    """Un track ofensor que se desplaza <0.1mm al re-rutear no cuenta como
+    una violación "nueva" — tolerancia de redondeo documentada en
+    ``_violation_identity``."""
+    pre = (
+        Violation(
+            rule="clearance",
+            severity="error",
+            message="e",
+            items=(Item(ref="U1", net="GND", pos=(10.02, 20.04)),),
+        ),
+    )
+    post = (
+        Violation(
+            rule="clearance",
+            severity="error",
+            message="e",
+            items=(Item(ref="U1", net="GND", pos=(10.04, 20.02)),),
+        ),
+    )
+    introducidas, resueltas, _ = diff_violations(pre, post)
+    assert introducidas == 0
+    assert resueltas == 0
+
+
+@pytest.mark.unit
+def test_diff_violations_ignores_warnings() -> None:
+    """Sólo severidad ``error`` cuenta — mismo criterio que
+    ``err_preexistentes``/``err_post`` en ``route_board``."""
+    pre = ()
+    post = (Violation(rule="silk_overlap", severity="warning", message="w", items=()),)
+    introducidas, resueltas, por_tipo = diff_violations(pre, post)
+    assert introducidas == 0
+    assert resueltas == 0
+    assert por_tipo == {}
+
+
+@pytest.mark.unit
+def test_diff_violations_duplicate_identities_use_multiset_not_set() -> None:
+    """2 violaciones NUEVAS con la misma identidad deben contar 2, no
+    colapsar en 1 (multiset, no set)."""
+    pre = ()
+    post = tuple(
+        Violation(rule="clearance", severity="error", message="e", items=()) for _ in range(2)
+    )
+    introducidas, resueltas, por_tipo = diff_violations(pre, post)
+    assert introducidas == 2
+    assert resueltas == 0
+    assert por_tipo == {"clearance": 2}

@@ -15,6 +15,7 @@ import json
 import re
 import subprocess
 import tempfile
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -234,6 +235,62 @@ def run_drc(pcb_path: Path) -> RulesReport:
         tmp_path.unlink(missing_ok=True)
     unconnected = len(payload.get("unconnected_items", []))
     return _build_report(payload, _iter_drc_violations(payload), unconnected=unconnected)
+
+
+_POS_ROUND_MM: Final = 1  # ndigits para round() -> tolerancia de 0.1mm
+
+
+def _violation_identity(v: Violation) -> tuple[str, tuple[float, float] | None, tuple[str, ...]]:
+    """Identidad de una violación DRC (F-D3-03, sesión 21 — fix de
+    ``route_board.drc.err_introducidos``, que comparaba conteos totales en
+    vez de identidad: ``docs/dogfooding/dogfood3-fricciones.md`` F-03, donde
+    56 ``unconnected_items`` pre-ruteo y 56 ``clearance``/``hole_clearance``/
+    ``copper_edge_clearance`` post-ruteo daban ``err_introducidos:0`` por
+    coincidencia numérica de totales, con composición 100% distinta).
+
+    ``(rule, pos_redondeada_0.1mm, items_ordenados)``. La posición se
+    redondea a 0.1mm: un track ofensor que se re-rutea puede desplazarse
+    levemente sin ser, en la práctica, una violación "distinta" — tolerancia
+    elegida por ser el mismo orden de magnitud que la resolución típica de
+    grid de KiCad (no una medición exacta de "misma violación", sino un
+    balance documentado entre falsos positivos por ruido geométrico y falsos
+    negativos por colapsar violaciones realmente distintas). ``items`` usa
+    ``Item.desc`` (ya trae ref+net inline, ver ``_extract_item``), ordenado
+    para que el orden de reporte de ``kicad-cli`` no afecte la igualdad.
+    """
+    pos = v.items[0].pos if v.items else None
+    pos_rounded = (round(pos[0], _POS_ROUND_MM), round(pos[1], _POS_ROUND_MM)) if pos else None
+    item_keys = tuple(sorted(it.desc or "" for it in v.items))
+    return (v.rule, pos_rounded, item_keys)
+
+
+def diff_violations(
+    pre: tuple[Violation, ...], post: tuple[Violation, ...]
+) -> tuple[int, int, dict[str, int]]:
+    """Compara violaciones DRC pre/post-route por IDENTIDAD, no por resta de
+    totales (fix F-D3-03). Sólo severidad ``error`` — mismo criterio que
+    ``err_preexistentes``/``err_post`` en ``route_board``.
+
+    Devuelve ``(introducidas, resueltas, por_tipo_introducidos)``:
+    - ``introducidas``: violaciones en ``post`` cuya identidad no estaba (o
+      estaba menos veces) en ``pre``.
+    - ``resueltas``: violaciones en ``pre`` cuya identidad ya no está (o está
+      menos veces) en ``post`` — bonus: cuántas violaciones pre-route se
+      resolvieron con el ruteo.
+    - ``por_tipo_introducidos``: desglose de "introducidas" por ``rule``.
+
+    Multiset (``collections.Counter``), no ``set``: preserva duplicados
+    genuinos — dos violaciones distintas con la misma identidad cuentan dos
+    veces, no colapsan en una.
+    """
+    pre_ids = Counter(_violation_identity(v) for v in pre if v.severity == "error")
+    post_ids = Counter(_violation_identity(v) for v in post if v.severity == "error")
+    introduced = post_ids - pre_ids
+    resolved = pre_ids - post_ids
+    por_tipo: dict[str, int] = {}
+    for identity, count in introduced.items():
+        por_tipo[identity[0]] = por_tipo.get(identity[0], 0) + count
+    return sum(introduced.values()), sum(resolved.values()), por_tipo
 
 
 def filter_by_min_severity(report: RulesReport, min_severity: str) -> RulesReport:

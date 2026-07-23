@@ -242,6 +242,7 @@ audit line JSONL por cada mutación aceptada o rechazada.
 | `fill_zones` | Refill de TODAS las zonas de cobre del board; `zone_id?` sólo valida existencia, no acota el refill (kipy no tiene fill selectivo — sesión 19, P4.3) — devuelve JSON `{zones_filled, duration_ms, snap_id}` | `zone_id?`, `base_snap?` | JSON | `ZONE_ID_STALE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
 | `delete_zone` | Borra una zona (cobre o keepout) por `id` (de `get_zones`) — sesión 19, P4.4 | `id`, `base_snap?` | confirm | `ZONE_ID_STALE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
 | `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO — devuelve JSON estructurado (sesión 17, P2.2; campo `zones` añadido sesión 19, P4.3), no un confirm de texto | `max_passes?`, `timeout_s?=600`, `refill?=true` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED` |
+| `get_footprint_neighbors` | Vecinos de un footprint en un radio: pads/tracks/vías/holes ajenos + distancia al borde del board (sesión 21, P1, F-D3-04) | `ref`, `radius_mm?=5.0`, `include_pads?=true`, `include_tracks?=true`, `include_vias?=true`, `include_holes?=true`, `include_edge?=true`, `max_tokens?` | JSON | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 
 **Flag `live_stale` (sesión 14, D-14.1; recarga automática sesión 18, P3.1,
 D-V3.1).** Mientras `route_board` haya dejado un ruteo en disco que el editor
@@ -487,7 +488,7 @@ Resultado: **JSON estructurado**, no un confirm de texto (rompe el límite de
   },
   "drc": {
     "err_preexistentes": 0, "err_post": 0, "err_introducidos": 0,
-    "por_tipo": {}
+    "err_resueltos": 0, "por_tipo": {}, "por_tipo_introducidos": {}
   },
   "tracks_added": 640, "vias_added": 42, "snap": 17,
   "session_dsn": ".../route.dsn", "session_ses": ".../route.ses",
@@ -517,6 +518,29 @@ Resultado: **JSON estructurado**, no un confirm de texto (rompe el límite de
 - `drc.por_tipo`: sólo violaciones de severidad `error` del reporte
   post-route, agrupadas por `rule` — el desglose que permite verificar "0
   violaciones sistemáticas de `copper_edge_clearance`" sin parsear texto.
+- **`drc.err_introducidos`/`err_resueltos`/`por_tipo_introducidos` — CAMBIO DE
+  SEMÁNTICA (sesión 21, fix F-D3-03,
+  `docs/dogfooding/dogfood3-fricciones.md` F-03).** Hasta sesión 20,
+  `err_introducidos` era `err_post - err_preexistentes` (resta de totales) —
+  el Dogfooding 3 encontró un caso real donde 56 `unconnected_items`
+  pre-route fueron reemplazadas por 56 `clearance`/`hole_clearance`/
+  `copper_edge_clearance` post-route: mismo total, composición 100%
+  distinta, y el campo reportó `err_introducidos:0` siendo **falso** — el
+  contrato existe justo para que el agente no tenga que re-verificar con
+  `run_drc()`, y mentir anula ese propósito. Desde sesión 21,
+  `err_introducidos` se computa por **identidad de violación**
+  (`bridge.rules.diff_violations`): dos violaciones son "la misma" si
+  coinciden en `(rule, posición redondeada a 0.1mm, ítems involucrados)` —
+  la tolerancia de posición absorbe que un track ofensor se desplace
+  levemente al re-rutear sin considerarse una violación nueva.
+  `err_introducidos` = violaciones en el reporte post-route cuya identidad
+  no estaba en el pre-route (multiset, no set — duplicados genuinos
+  cuentan cada uno). **`err_resueltos`** (nuevo) = el complemento: cuántas
+  violaciones pre-route ya no aparecen post-route. **`por_tipo_introducidos`**
+  (nuevo) = desglose de `err_introducidos` por `rule`, mismo espíritu que
+  `por_tipo` pero sólo sobre las violaciones nuevas. Los 3 campos nuevos
+  coexisten con `err_preexistentes`/`err_post`/`por_tipo` (sin cambios) —
+  ningún código de error se renombra (F3).
 - `reloaded` (sesión 18, P3.1, D-V3.1): `true` si `route_board` logró
   recargar automáticamente el editor vivo tras escribir el ruteo (vía
   `reload_board_from_disk()` interno — ver arriba); `false` si el intento
@@ -597,6 +621,33 @@ alcance del MVP (defaults de KiCad, sin lógica propia): pad connection style
 entre zonas superpuestas (se expone `priority` pero sin árbitro propio),
 zonas multi-capa en una sola llamada, polígonos >20 vértices o con huecos.
 
+**Workaround `enforce_hole_clearance` (sesión 21, fix F-D3-01,
+`docs/dogfooding/dogfood3-fricciones.md` F-01/F-03,
+`docs/investigacion/21-fill-zones-holes.md`).** El fill de zona de kipy 0.7.1
+podía dejar 0.0000mm de clearance contra agujeros PTH/NPTH o vías de otro net
+(short físico real invisible en el `.kicad_pcb`) — la investigación de sesión
+21 (motor sintético + 3 reproducciones vía el pipeline real de kicad-mcp) no
+logró aislar la condición exacta que lo dispara (posibles candidatos: fill
+inicial sobre board vacío, o el round-trip real de Freerouting — ver la
+investigación §4), así que el fix es un **workaround post-fill defensivo**
+(decisión humana explícita, no una corrección del cómputo interno de kipy,
+que no expone esa superficie): tras **todo** `refill_zones()` — en
+`add_zone(fill=true)`, `fill_zones()`, y el refill interno de `route_board` —
+se protege PROACTIVAMENTE cada pad con drill (PTH/NPTH) o vía de net distinto
+al de la zona con un **keepout de cobre** circular (radio = radio del
+agujero + `min_hole_clearance` del proyecto + margen de 0.02mm), mecanismo ya
+confirmado correcto por el workaround manual que el agente del D3 aplicó a
+mano (`delete_zone`+`add_zone` con muescas), y se refillea de nuevo.
+
+**Efecto secundario visible en `get_zones`:** tras cualquier fill/refill,
+pueden aparecer keepouts nuevos con nombre `__kicadmcp_hc__pad_<ref>_<pad>` o
+`__kicadmcp_hc__via_<kiid>` — auto-generados, no creados por el agente.
+Idempotente: cada pasada borra sus propios keepouts de la pasada anterior
+antes de recalcular (no acumulan duplicados entre llamadas repetidas de
+`route_board`). No afecta el contrato JSON de ninguna tool (ni `add_zone` ni
+`fill_zones` cambian su forma de retorno) — sólo agrega geometría de
+protección al board, visible únicamente si se lista `get_zones`.
+
 **`get_component_detail` (sesión 11, D-11.3).** Detalle geométrico de un
 footprint **bajo demanda** (sale de reservados; ver más abajo). Devuelve, en
 TOON compacto: posición y rotación del footprint, bbox (courtyard si el
@@ -608,6 +659,49 @@ honesto (futuro). Presupuesto: un IC de ~30 pads ≈ ≤~350 tok; un conector de
 75 pads (U19) ≈ ~900 tok; una R de 2 pads ≈ ~50 tok. Formato:
 `DETAIL|U19|pcb|at:234.3,64.1|rot:0|bbox:115.9x8.1|box:...|src:courtyard`
 seguido de `[PADS] N` y una línea `num net x,y WxH capa` por pad.
+
+**`get_footprint_neighbors` (sesión 21, P1, F-D3-04
+`docs/dogfooding/dogfood3-fricciones.md`).** Tool de **solo lectura** —
+"qué hay alrededor de un footprint en un radio dado", sin tener que
+reconstruir el mapa a mano con `get_tracks(bbox=)` iterativo (el D3 gastó 35
+min/5 intentos rutéando cerca de J1 exactamente por esto). Reutiliza
+`get_component_detail` (bbox/pads del target y de cada vecino candidato),
+`list_all_copper` (tracks/arcos/vías, mismo pass que `get_tracks`),
+`list_pad_holes` (nuevo, compartido con el workaround de F-D3-01 — agujeros
+PTH/NPTH con ref/net/diámetro) y `board_outline` (bbox de Edge.Cuts) — no
+reinventa geometría de colisión.
+
+Devuelve JSON:
+```json
+{
+  "ref": "J1", "center": [190.0, 48.0], "bbox": [186.5, 46.0, 193.5, 50.0],
+  "neighbors": {
+    "pads": [{"ref": "R3", "pad": "1", "at": [196.0, 48.0], "net": "+3V3", "dist_mm": 2.5}],
+    "tracks": [{"id": "...", "net": "/MOSI", "layer": "F.Cu", "closest_point": [x, y], "dist_mm": 1.8}],
+    "vias": [{"id": "...", "net": "GND", "at": [x, y], "dist_mm": 0.9}],
+    "holes": [{"kind": "npth", "at": [192.5, 47.0], "diameter_mm": 0.99, "belongs_to": "J1", "dist_mm": 0.5}],
+    "edge": {"closest_edge": "right", "dist_mm": 0.5}
+  }
+}
+```
+
+`ref` inexistente → `COMPONENT_NOT_FOUND` (mismo que `get_component_detail`).
+**Distancia = mínimo entre el bbox del footprint target y el ítem vecino**
+(no punto-a-punto): geometría punto-a-AABB para pads/holes/vías, y una
+aproximación por extremos del segmento (no el segmento-a-rectángulo exacto)
+para tracks/arcos — mismo nivel de rigor ya aceptado en otras partes del
+catálogo (p. ej. `bloqueadas[].causa` de `route_board`). `holes` incluye
+tanto los agujeros PROPIOS del target (p. ej. los 3 NPTH mecánicos de un
+conector Tag-Connect) como los AJENOS dentro del radio — `belongs_to`
+distingue. `edge` es `null` si el lado más cercano del board está más lejos
+que `radius_mm` (el board se asume rectangular, mismo supuesto que
+`board_outline`). Cada categoría es desactivable (`include_pads`,
+`include_tracks`, `include_vias`, `include_holes`, `include_edge`) para
+acotar el presupuesto. Mismo mecanismo de `CONTEXT_BUDGET_IMPOSSIBLE` que
+`get_tracks`/`get_zones` (D4, 800 tok default) — hint sugiere achicar
+`radius_mm` o desactivar categorías. Sujeto al aviso `live_stale` (clave
+`aviso` en el JSON si el disco está adelante del editor vivo — no bloquea).
+Read-only: no pasa por G1 ni por `check_no_external_disk_edit`.
 
 ## Categoría `sch` (v0.2 — mutaciones de esquemático, sesión 08)
 

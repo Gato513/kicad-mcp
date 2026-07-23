@@ -261,6 +261,30 @@ class PadGeom:
 
 
 @dataclass(frozen=True)
+class PadHole:
+    """Agujero (PTH/NPTH) de un pad, con ref y diámetro real del drill
+    (sesión 21, F-D3-01/21.3). Ningún modelo de pad anterior leía el drill —
+    ``PadDetail``/``PadGeom`` sólo tenían el cobre (ver
+    ``docs/investigacion/21-fill-zones-holes.md`` §3). Compartido por
+    ``get_footprint_neighbors`` (holes propios/ajenos) y
+    ``enforce_hole_clearance`` (workaround F-D3-01).
+
+    ``net_name`` es ``None`` para NPTH real (agujero mecánico, sin net —
+    p. ej. los 3 agujeros de montaje de un conector Tag-Connect). Para pads
+    ovalados, ``diameter_mm`` toma el lado MAYOR del drill (conservador: una
+    exclusión más grande nunca es menos segura que una más chica).
+    """
+
+    ref: str
+    pad_number: str
+    net_name: str | None
+    x_mm: Mm
+    y_mm: Mm
+    diameter_mm: Mm
+    kind: str  # "pth" | "npth"
+
+
+@dataclass(frozen=True)
 class BoardContext:
     """Estado del board consolidado en UNA sola pasada ``get_footprints()``.
 
@@ -508,6 +532,81 @@ def _build_zone_outline(vertices_mm: tuple[tuple[float, float], ...]) -> Any:
     poly = PolygonWithHoles()
     poly.outline = outline
     return poly
+
+
+_AUTO_KEEPOUT_PREFIX = "__kicadmcp_hc__"
+"""Prefijo de nombre de los keepouts auto-generados por ``enforce_hole_clearance``
+(F-D3-01, sesión 21) — permite identificarlos y borrarlos en la siguiente
+pasada sin acumular duplicados (idempotencia, ver docstring del método)."""
+
+_HOLE_CLEARANCE_MARGIN_MM = 0.02
+"""Margen de seguridad sobre el ``min_hole_clearance`` del proyecto, para
+absorber ruido de precisión de punto flotante en la geometría del polígono
+aproximado (``_circle_vertices_mm``) — mismo espíritu que el margen de 0.02mm
+usado en otras validaciones geométricas del bridge."""
+
+
+def _circle_vertices_mm(
+    cx_mm: float, cy_mm: float, radius_mm: float, n: int = 16
+) -> tuple[tuple[float, float], ...]:
+    """Aproxima un círculo con ``n`` vértices (sesión 21, ``enforce_hole_clearance``).
+
+    Mismo criterio de sesión 19 para exclusiones circulares
+    (``docs/investigacion/19-zonas-ipc.md`` §Riesgos: "12-16 vértices,
+    suficiente para RF"). 16 es conservador para los radios pequeños
+    (<2mm) típicos de agujeros PTH/NPTH — el polígono queda ligeramente
+    INSCRITO en el círculo real, así que se prefiere sobre-excluir (radio ya
+    incluye el margen de seguridad, ver ``enforce_hole_clearance``) en vez de
+    compensar el apotema.
+    """
+    import math
+
+    return tuple(
+        (
+            cx_mm + radius_mm * math.cos(2 * math.pi * i / n),
+            cy_mm + radius_mm * math.sin(2 * math.pi * i / n),
+        )
+        for i in range(n)
+    )
+
+
+def _list_pad_holes_raw(raw_board: Any) -> tuple[PadHole, ...]:
+    """Agujeros (PTH/NPTH) de todos los pads del board — helper SIN lock.
+
+    Extraído de ``IpcBridge.list_pad_holes`` para que ``enforce_hole_clearance``
+    (que ya sostiene ``self._lock`` al llamarlo) no reentre un
+    ``threading.Lock`` no reentrante. Mismo patrón de iteración que
+    ``get_component_detail`` (``get_footprints()`` + ``definition.pads``,
+    posiciones ya absolutas). ``diameter_mm`` toma el lado mayor del drill
+    (conservador para pads ovalados). Filtra pads sin drill real (SMD,
+    edge-connector) — sólo PTH/NPTH tienen agujero físico.
+    """
+    from kipy.proto.board.board_types_pb2 import PadType
+
+    out: list[PadHole] = []
+    for fp in raw_board.get_footprints():
+        ref = str(fp.reference_field.text.value)
+        for pad in fp.definition.pads:
+            drill = pad.padstack.drill
+            dia_nm = max(int(drill.diameter.x), int(drill.diameter.y))
+            if dia_nm <= 0:
+                continue
+            net = pad.net
+            net_name = str(net.name) if net is not None and net.name else None
+            pos = pad.position
+            kind = "npth" if pad.pad_type == PadType.PT_NPTH else "pth"
+            out.append(
+                PadHole(
+                    ref=ref,
+                    pad_number=str(pad.number),
+                    net_name=net_name,
+                    x_mm=nm_to_mm(Nm(int(pos.x))),
+                    y_mm=nm_to_mm(Nm(int(pos.y))),
+                    diameter_mm=nm_to_mm(Nm(dia_nm)),
+                    kind=kind,
+                )
+            )
+    return tuple(out)
 
 
 def _kipy_zone_to_item(z: Any) -> ZoneItem:
@@ -960,6 +1059,10 @@ _IDEMPOTENT_OPS: frozenset[str] = frozenset(
         # mismo criterio que ``list_all_copper``/``get_copper_by_kiid``.
         "list_zones",
         "get_zone_by_kiid",
+        # Sesión 21 (F-D3-01/21.3): lectura pura de agujeros PTH/NPTH de
+        # todos los pads del board — sin efecto colateral, mismo criterio
+        # que ``list_all_pads``.
+        "list_pad_holes",
     }
 )
 
@@ -1782,6 +1885,155 @@ class IpcBridge:
                 raw_board.refill_zones()
                 zones = raw_board.get_zones()
                 return sum(1 for z in zones if z.type != ZoneType.ZT_RULE_AREA)
+
+    def list_pad_holes(self, board: BoardHandle) -> tuple[PadHole, ...]:
+        """Agujeros (PTH/NPTH) de todos los pads del board, con ref/net/diámetro
+        (sesión 21, F-D3-01 + 21.3 ``get_footprint_neighbors``).
+
+        Envoltorio con lock público de ``_list_pad_holes_raw`` (ver esa
+        función para el detalle de iteración/conversión).
+        """
+        with self._lock:
+            self._detect_restart()
+            return self._run_supervised_read(
+                "list_pad_holes", lambda: _list_pad_holes_raw(board.raw)
+            )
+
+    def enforce_hole_clearance(self, board: BoardHandle, pcb_path: Path) -> int:
+        """Workaround de F-D3-01/F-D3-03 (sesión 21, decisión humana post-
+        investigación — ``docs/investigacion/21-fill-zones-holes.md``): el
+        fill de zona de kipy 0.7.1 (``Board.refill_zones()``) A VECES deja
+        0.0000mm de clearance contra agujeros PTH/NPTH/vías de otro net; la
+        investigación (motor sintético + 3 reproducciones vía el pipeline
+        real de kicad-mcp) no logró aislar la condición exacta que lo
+        dispara, así que en vez de intentar parchear el cómputo interno de
+        kipy (no expone esa superficie — ver investigación §1/§2) se protege
+        PROACTIVAMENTE cada agujero ajeno con un keepout de cobre — mecanismo
+        ya confirmado correcto por el workaround manual del D3
+        (``delete_zone``+``add_zone`` con muescas) — y se refillea de nuevo.
+
+        Llamar SIEMPRE inmediatamente después de ``refill_zones()`` (en
+        ``add_zone``, ``fill_zones``, y el refill interno de ``route_board``)
+        — no es una tool propia, es un paso interno del pipeline de fill.
+
+        Idempotente: borra sus propios keepouts de la pasada anterior (tag
+        ``_AUTO_KEEPOUT_PREFIX``) antes de recalcular, así llamadas repetidas
+        (p. ej. varios ``route_board`` seguidos) no acumulan duplicados.
+
+        Radio de exclusión = radio del agujero + ``min_hole_clearance`` del
+        proyecto (``rules_reader``, único punto que lee esa regla — kipy no
+        la expone vía IPC, confirmado en la investigación) +
+        ``_HOLE_CLEARANCE_MARGIN_MM``. Se protege contra TODO agujero de pad
+        (PTH con net distinto de la zona, o NPTH sin net — siempre ajeno) y
+        toda vía de net distinto, sin filtrar por capa (simplificación
+        deliberada: el MVP no modela vías ciegas/enterradas, así que toda vía
+        atraviesa el board completo — sobre-proteger una capa donde el
+        agujero no tiene cobre es inofensivo, ver investigación §4 nota de
+        diseño). Devuelve la cantidad de keepouts de protección creados (0
+        si ninguna zona de cobre lo necesitaba).
+        """
+        from kipy.board_types import Zone
+        from kipy.proto.board.board_types_pb2 import ZoneType
+
+        from .rules_reader import load_project_rules
+
+        with self._lock:
+            self._detect_restart()
+            with self._supervise("enforce_hole_clearance"):
+                raw_board = board.raw
+
+                stale = [
+                    z
+                    for z in raw_board.get_zones()
+                    if z.type == ZoneType.ZT_RULE_AREA
+                    and str(z.name).startswith(_AUTO_KEEPOUT_PREFIX)
+                ]
+                if stale:
+                    raw_board.remove_items(stale)
+
+                copper_zones = [z for z in raw_board.get_zones() if z.type == ZoneType.ZT_COPPER]
+                if not copper_zones:
+                    return 0
+
+                rules = load_project_rules(pcb_path)
+                hole_clearance_mm = rules.min_hole_clearance_mm
+
+                pad_holes = _list_pad_holes_raw(raw_board)
+                vias = [it for it in raw_board.get_tracks() if type(it).__name__ == "Via"]
+
+                created = 0
+                for zone in copper_zones:
+                    zone_net_obj = zone.net
+                    zone_net = (
+                        str(zone_net_obj.name)
+                        if zone_net_obj is not None and zone_net_obj.name
+                        else None
+                    )
+                    layer_values = list(zone.layers)
+
+                    for hole in pad_holes:
+                        if hole.net_name is not None and hole.net_name == zone_net:
+                            continue  # mismo net: conexión legítima, no ajeno
+                        radius_mm = (
+                            float(hole.diameter_mm) / 2.0
+                            + hole_clearance_mm
+                            + _HOLE_CLEARANCE_MARGIN_MM
+                        )
+                        keepout = Zone()
+                        keepout.type = ZoneType.ZT_RULE_AREA
+                        keepout.name = f"{_AUTO_KEEPOUT_PREFIX}pad_{hole.ref}_{hole.pad_number}"
+                        keepout.layers = list(layer_values)
+                        keepout.outline = _build_zone_outline(
+                            _circle_vertices_mm(float(hole.x_mm), float(hole.y_mm), radius_mm)
+                        )
+                        keepout.proto.rule_area_settings.keepout_copper = True
+                        keepout.proto.rule_area_settings.keepout_tracks = False
+                        keepout.proto.rule_area_settings.keepout_vias = False
+                        keepout.proto.rule_area_settings.keepout_footprints = False
+                        raw_board.create_items(keepout)
+                        created += 1
+
+                    for via in vias:
+                        via_net_obj = via.net
+                        via_net = (
+                            str(via_net_obj.name)
+                            if via_net_obj is not None and via_net_obj.name
+                            else None
+                        )
+                        if via_net is not None and via_net == zone_net:
+                            continue
+                        pos = via.position
+                        # drill_diameter (el AGUJERO real), no diameter (el
+                        # anillo de cobre) — el clearance de cobre ordinario
+                        # ya lo resuelve correctamente el motor de fill (el
+                        # D3 lo confirmó para pads SMD); acá sólo hace falta
+                        # cubrir el hueco específico de hole_clearance.
+                        radius_mm = (
+                            nm_to_mm(Nm(int(via.drill_diameter))) / 2.0
+                            + hole_clearance_mm
+                            + _HOLE_CLEARANCE_MARGIN_MM
+                        )
+                        keepout = Zone()
+                        keepout.type = ZoneType.ZT_RULE_AREA
+                        keepout.name = f"{_AUTO_KEEPOUT_PREFIX}via_{via.id.value}"
+                        keepout.layers = list(layer_values)
+                        keepout.outline = _build_zone_outline(
+                            _circle_vertices_mm(
+                                nm_to_mm(Nm(int(pos.x))),
+                                nm_to_mm(Nm(int(pos.y))),
+                                radius_mm,
+                            )
+                        )
+                        keepout.proto.rule_area_settings.keepout_copper = True
+                        keepout.proto.rule_area_settings.keepout_tracks = False
+                        keepout.proto.rule_area_settings.keepout_vias = False
+                        keepout.proto.rule_area_settings.keepout_footprints = False
+                        raw_board.create_items(keepout)
+                        created += 1
+
+                if created:
+                    raw_board.refill_zones()
+                return created
 
     def board_outline(self, board: BoardHandle) -> tuple[BBoxMm, str]:
         """Bbox del board y estado del contorno Edge.Cuts (F-03).

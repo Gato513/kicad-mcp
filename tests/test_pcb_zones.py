@@ -56,6 +56,7 @@ class _FakeBridge(IpcBridge):
         self.added_zones: list[dict[str, Any]] = []
         self.added_keepouts: list[dict[str, Any]] = []
         self.refill_calls = 0
+        self.enforce_hole_clearance_calls = 0
         self._next_kiid = 1000
 
     def get_open_board(self) -> BoardHandle | None:
@@ -173,6 +174,13 @@ class _FakeBridge(IpcBridge):
     def refill_zones(self, board: BoardHandle) -> int:  # type: ignore[override]
         self.refill_calls += 1
         return sum(1 for z in self._zones if z.kind == "copper")
+
+    def enforce_hole_clearance(self, board: BoardHandle, pcb_path: Path) -> int:  # type: ignore[override]
+        # F-D3-01 (sesión 21): no hay geometría real de holes en este fake
+        # (sin kipy) — el fake sólo registra que el paso se ejecutó, mismo
+        # espíritu que ``refill_calls``.
+        self.enforce_hole_clearance_calls += 1
+        return 0
 
     def remove_by_kiid(self, board: BoardHandle, kiid: str) -> bool:  # type: ignore[override]
         self.removed_kiids.append(kiid)

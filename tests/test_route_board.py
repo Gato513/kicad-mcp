@@ -63,6 +63,7 @@ class _FakeBridge(IpcBridge):
         self.saved: list[str] = []
         self.reload_calls = 0
         self.refill_calls = 0
+        self.enforce_hole_clearance_calls = 0
 
     def get_open_board(self) -> BoardHandle | None:  # type: ignore[override]
         if self._raise_not_running:
@@ -99,6 +100,13 @@ class _FakeBridge(IpcBridge):
     def refill_zones(self, board: BoardHandle) -> int:  # type: ignore[override]
         self.refill_calls += 1
         return self._n_zones
+
+    def enforce_hole_clearance(self, board: BoardHandle, pcb_path: Path) -> int:  # type: ignore[override]
+        # F-D3-01 (sesión 21): sin geometría real de holes en este fake (sin
+        # kipy) — sólo registra que el paso corrió, mismo espíritu que
+        # ``refill_calls``.
+        self.enforce_hole_clearance_calls += 1
+        return 0
 
     def read_board_context(self, board: BoardHandle) -> BoardContext:  # type: ignore[override]
         fps = tuple(
@@ -366,8 +374,12 @@ async def test_route_board_confirm_flag_and_counts(
     assert payload["drc"] == {
         "err_preexistentes": 0,
         "err_post": 0,
+        # F-D3-03 (sesión 21): err_introducidos/err_resueltos por identidad,
+        # no por resta de totales (ver test_route_board_err_introducidos_by_identity).
         "err_introducidos": 0,
+        "err_resueltos": 0,
         "por_tipo": {},
+        "por_tipo_introducidos": {},
     }
     assert payload["tracks_added"] == 318
     assert payload["vias_added"] == 26
@@ -574,6 +586,67 @@ async def test_route_board_reports_drc_error_breakdown_by_type(
     assert payload["drc"]["err_post"] == 2
     assert payload["drc"]["err_introducidos"] == 2  # pre_err=0 (drc_sequence[0])
     assert payload["drc"]["por_tipo"] == {"copper_edge_clearance": 2}  # warnings no cuentan acá
+
+
+@pytest.mark.unit
+async def test_route_board_err_introducidos_by_identity_not_totals(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regresión F-D3-03 (sesión 21): reproduce el escenario EXACTO del D3
+    (``docs/dogfooding/dogfood3-fricciones.md`` F-03) — el total de errores
+    coincide pre/post-route (3 == 3) pero la composición es 100% distinta (3
+    violaciones tipo A pre-route, reemplazadas por 3 tipo B post-route).
+
+    Con la lógica VIEJA (resta de totales, ``post_err - pre_err``):
+    ``err_introducidos == 0`` — FALSO, ninguna de las 3 violaciones post-route
+    existía antes. Con la lógica NUEVA (identidad de conjunto,
+    ``diff_violations``): ``err_introducidos == 3`` y ``err_resueltos == 3``
+    (las 3 de tipo A se resolvieron, las 3 de tipo B son nuevas). Este test
+    DEBE fallar si alguien reintroduce la resta de totales.
+    """
+    from kicad_mcp.bridge.rules import RulesReport, Violation
+
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    pre_drc = RulesReport(
+        violations=tuple(
+            Violation(rule="unconnected_items", severity="error", message="e", items=())
+            for _ in range(3)
+        ),
+        counts={"error": 3},
+        coordinate_units="mm",
+        kicad_version="10.0.4",
+        unconnected=3,
+    )
+    post_drc = RulesReport(
+        violations=tuple(
+            Violation(rule="hole_clearance", severity="error", message="e", items=())
+            for _ in range(3)
+        ),
+        counts={"error": 3},
+        coordinate_units="mm",
+        kicad_version="10.0.4",
+        unconnected=0,
+    )
+    _patch_pipeline(
+        monkeypatch,
+        drc_sequence=[pre_drc, post_drc],
+        result=_result(project, ruteables=2, routed=2),
+    )
+    bridge = _FakeBridge(open_board_path=str(project / "proj.kicad_pcb"))
+    mcp = _server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("route_board", {})
+
+    assert not result.isError
+    payload = _json(result)
+    assert payload["drc"]["err_preexistentes"] == 3
+    assert payload["drc"]["err_post"] == 3
+    # El total NO cambió (3 == 3) — la resta de totales daría 0, mintiendo.
+    assert payload["drc"]["err_introducidos"] == 3
+    assert payload["drc"]["err_resueltos"] == 3
+    assert payload["drc"]["por_tipo_introducidos"] == {"hole_clearance": 3}
 
 
 @pytest.mark.unit

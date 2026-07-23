@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from ..audit.logger import record as audit_record
 from ..bridge.autoroute import classify_net_routing, run_autoroute
 from ..bridge.ipc import (
+    BBoxMm,
     BoardHandle,
     ComponentDetail,
     CopperItem,
@@ -35,7 +36,7 @@ from ..bridge.ipc import (
     PadGeom,
     ZoneItem,
 )
-from ..bridge.rules import run_drc
+from ..bridge.rules import diff_violations, run_drc
 from ..bridge.rules_reader import load_project_rules
 from ..bridge.state_builder import build_state_from_board, build_state_from_snapshot
 from ..errors import ErrorCode, KicadMcpError
@@ -297,6 +298,77 @@ def _match_copper(
     if len(within) == 1:
         return within[0], within
     return None, within
+
+
+def _bbox_distance_to_point(bbox: tuple[float, float, float, float], px: float, py: float) -> float:
+    """Distancia euclídea de un punto ``(px,py)`` a un rectángulo axis-aligned
+    ``(min_x,min_y,max_x,max_y)`` — 0.0 si el punto cae DENTRO del bbox
+    (sesión 21, ``get_footprint_neighbors`` — "distancia = mínimo entre bbox
+    del footprint y el ítem vecino"). Clamp del punto al rectángulo, distancia
+    del punto clampeado al original — geometría estándar punto-a-AABB.
+    """
+    min_x, min_y, max_x, max_y = bbox
+    cx = min(max(px, min_x), max_x)
+    cy = min(max(py, min_y), max_y)
+    return math.hypot(px - cx, py - cy)
+
+
+def _copper_distance_to_bbox(item: CopperItem, bbox: tuple[float, float, float, float]) -> float:
+    """Distancia de un ``CopperItem`` (track/arc/vía) a un bbox (mm).
+
+    ``0.0`` si el segmento cruza o toca el bbox (reusa
+    ``_segment_intersects_bbox``, ya validado por ``get_tracks``). Si no,
+    aproxima con el mínimo de la distancia punto-a-bbox de los EXTREMOS del
+    segmento (start/end/mid) — no la distancia exacta segmento-a-rectángulo
+    (que requeriría clipping contra los 4 lados), simplificación deliberada
+    del mismo espíritu que otras aproximaciones ya aceptadas en el catálogo
+    (p. ej. ``bloqueadas[].causa`` de ``route_board``, "mínimo honesto").
+    """
+    if item.kind == "via" or item.end_x_mm is None or item.end_y_mm is None:
+        return _bbox_distance_to_point(bbox, float(item.start_x_mm), float(item.start_y_mm))
+    sx, sy = float(item.start_x_mm), float(item.start_y_mm)
+    ex, ey = float(item.end_x_mm), float(item.end_y_mm)
+    if _segment_intersects_bbox(sx, sy, ex, ey, bbox):
+        return 0.0
+    candidates = [_bbox_distance_to_point(bbox, sx, sy), _bbox_distance_to_point(bbox, ex, ey)]
+    if item.kind == "arc" and item.mid_x_mm is not None and item.mid_y_mm is not None:
+        candidates.append(_bbox_distance_to_point(bbox, float(item.mid_x_mm), float(item.mid_y_mm)))
+    return min(candidates)
+
+
+def _closest_point_copper_bbox(
+    item: CopperItem, bbox: tuple[float, float, float, float]
+) -> tuple[float, float]:
+    """Punto representativo de un ``CopperItem`` más cercano a ``bbox`` (sesión
+    21, ``get_footprint_neighbors``) — mismo criterio de aproximación que
+    ``_copper_distance_to_bbox`` (extremos del segmento, no el punto exacto
+    de cruce si el segmento atraviesa el bbox)."""
+    if item.kind == "via" or item.end_x_mm is None or item.end_y_mm is None:
+        return (float(item.start_x_mm), float(item.start_y_mm))
+    sx, sy = float(item.start_x_mm), float(item.start_y_mm)
+    ex, ey = float(item.end_x_mm), float(item.end_y_mm)
+    d_start = _bbox_distance_to_point(bbox, sx, sy)
+    d_end = _bbox_distance_to_point(bbox, ex, ey)
+    return (sx, sy) if d_start <= d_end else (ex, ey)
+
+
+def _closest_board_edge(
+    bbox: tuple[float, float, float, float], board_bbox: BBoxMm
+) -> tuple[str, float]:
+    """Lado del board (``left``/``right``/``top``/``bottom``) más cercano al
+    ``bbox`` de un footprint, y la distancia (mm) — sesión 21,
+    ``get_footprint_neighbors``. El board se asume rectangular (mismo
+    supuesto que ``board_outline``, que sólo expone el bbox de Edge.Cuts, no
+    el polígono real — ver su docstring)."""
+    min_x, min_y, max_x, max_y = bbox
+    gaps = {
+        "left": min_x - float(board_bbox.min_x),
+        "right": float(board_bbox.max_x) - max_x,
+        "top": min_y - float(board_bbox.min_y),
+        "bottom": float(board_bbox.max_y) - max_y,
+    }
+    side = min(gaps, key=lambda k: gaps[k])
+    return side, max(gaps[side], 0.0)
 
 
 def _segment_intersects_bbox(
@@ -1674,6 +1746,158 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         return out
 
     @mcp.tool(
+        name="get_footprint_neighbors",
+        description=(
+            "Vecinos de un footprint en un radio: pads/tracks/vías/holes ajenos + "
+            "distancia al borde del board"
+        ),
+    )
+    def get_footprint_neighbors(
+        ref: str,
+        radius_mm: float = 5.0,
+        include_pads: bool = True,
+        include_tracks: bool = True,
+        include_vias: bool = True,
+        include_holes: bool = True,
+        include_edge: bool = True,
+        max_tokens: int | None = None,
+    ) -> dict[str, Any]:
+        # P1 (sesión 21, F-D3-04): D3 gastó 35 min/5 intentos rutéando a mano
+        # cerca de J1 por no poder ver "qué hay alrededor" sin reconstruir el
+        # mapa a mano con get_tracks(bbox=) iterativo. Read-only, reutiliza
+        # get_component_detail/get_tracks/board_outline (NO reinventa
+        # geometría) + list_pad_holes (nuevo, compartido con el workaround de
+        # F-D3-01 — ver bridge.ipc.PadHole). Distancia = mínimo entre el bbox
+        # del footprint target y el ítem vecino (no punto-a-punto).
+        with tool_call_timer() as timer:
+            board = _resolve_board(bridge)
+            detail = bridge.get_component_detail(board, ref)
+            bbox_t: tuple[float, float, float, float] = (
+                float(detail.bbox_min_x),
+                float(detail.bbox_min_y),
+                float(detail.bbox_max_x),
+                float(detail.bbox_max_y),
+            )
+
+            neighbors: dict[str, Any] = {}
+
+            if include_pads:
+                own_refs = {ref}
+                pad_neighbors: list[dict[str, Any]] = []
+                for other_ref in bridge.list_footprint_refs(board):
+                    if other_ref in own_refs:
+                        continue
+                    other = bridge.get_component_detail(board, other_ref)
+                    for pad in other.pads:
+                        dist = _bbox_distance_to_point(bbox_t, float(pad.x_mm), float(pad.y_mm))
+                        if dist <= radius_mm:
+                            pad_neighbors.append(
+                                {
+                                    "ref": other_ref,
+                                    "pad": pad.number,
+                                    "at": [round(float(pad.x_mm), 3), round(float(pad.y_mm), 3)],
+                                    "net": pad.net_name,
+                                    "dist_mm": round(dist, 3),
+                                }
+                            )
+                neighbors["pads"] = pad_neighbors
+
+            if include_tracks or include_vias:
+                all_copper = bridge.list_all_copper(board)
+                if include_tracks:
+                    track_neighbors: list[dict[str, Any]] = []
+                    for it in all_copper:
+                        if it.kind not in ("track", "arc"):
+                            continue
+                        dist = _copper_distance_to_bbox(it, bbox_t)
+                        if dist <= radius_mm:
+                            closest = _closest_point_copper_bbox(it, bbox_t)
+                            track_neighbors.append(
+                                {
+                                    "id": it.kiid,
+                                    "net": it.net_name,
+                                    "layer": it.layer,
+                                    "closest_point": [round(closest[0], 3), round(closest[1], 3)],
+                                    "dist_mm": round(dist, 3),
+                                }
+                            )
+                    neighbors["tracks"] = track_neighbors
+                if include_vias:
+                    via_neighbors: list[dict[str, Any]] = []
+                    for it in all_copper:
+                        if it.kind != "via":
+                            continue
+                        dist = _copper_distance_to_bbox(it, bbox_t)
+                        if dist <= radius_mm:
+                            via_neighbors.append(
+                                {
+                                    "id": it.kiid,
+                                    "net": it.net_name,
+                                    "at": [
+                                        round(float(it.start_x_mm), 3),
+                                        round(float(it.start_y_mm), 3),
+                                    ],
+                                    "dist_mm": round(dist, 3),
+                                }
+                            )
+                    neighbors["vias"] = via_neighbors
+
+            if include_holes:
+                hole_neighbors: list[dict[str, Any]] = []
+                for hole in bridge.list_pad_holes(board):
+                    dist = _bbox_distance_to_point(bbox_t, float(hole.x_mm), float(hole.y_mm))
+                    if dist <= radius_mm:
+                        hole_neighbors.append(
+                            {
+                                "kind": hole.kind,
+                                "at": [round(float(hole.x_mm), 3), round(float(hole.y_mm), 3)],
+                                "diameter_mm": round(float(hole.diameter_mm), 3),
+                                "belongs_to": hole.ref,
+                                "dist_mm": round(dist, 3),
+                            }
+                        )
+                neighbors["holes"] = hole_neighbors
+
+            if include_edge:
+                board_bbox, outline = bridge.board_outline(board)
+                if outline == "none":
+                    neighbors["edge"] = None
+                else:
+                    side, edge_dist = _closest_board_edge(bbox_t, board_bbox)
+                    neighbors["edge"] = (
+                        {"closest_edge": side, "dist_mm": round(edge_dist, 3)}
+                        if edge_dist <= radius_mm
+                        else None
+                    )
+
+            payload: dict[str, Any] = {
+                "ref": ref,
+                "center": [round(float(detail.x_mm), 3), round(float(detail.y_mm), 3)],
+                "bbox": [round(v, 3) for v in bbox_t],
+                "neighbors": neighbors,
+            }
+            budget = max_tokens if max_tokens is not None else _TRACKS_DEFAULT_BUDGET
+            out_json = json.dumps(payload, ensure_ascii=False)
+            if estimate_tokens(out_json) > budget * _TRACKS_BUDGET_SAFETY:
+                raise KicadMcpError(
+                    code=ErrorCode.CONTEXT_BUDGET_IMPOSSIBLE,
+                    message=f"Los vecinos de {ref} no caben en {budget} tokens.",
+                    hint=(
+                        f"presupuesto mínimo estimado ≈ {estimate_tokens(out_json)} tokens; "
+                        "achicá radius_mm o desactivá alguna categoría (include_*)"
+                    ),
+                )
+            if get_default_store().is_live_stale():
+                payload["aviso"] = "editor vivo detras del disco (route_board)"
+        log_tool_call(
+            tool_name="get_footprint_neighbors",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(out_json),
+            extra={"ref": ref, "radius_mm": radius_mm, "max_tokens": budget},
+        )
+        return payload
+
+    @mcp.tool(
         name="draw_board_outline",
         description="Crea un contorno rectangular en Edge.Cuts (x_mm, y_mm, width_mm, height_mm)",
     )
@@ -1824,6 +2048,12 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 priority=priority,
                 fill=fill,
             )
+            if fill:
+                # F-D3-01 (sesión 21): el fill de kipy puede dejar 0mm de
+                # clearance contra holes PTH/NPTH/vías ajenos — workaround
+                # post-fill obligatorio en TODO camino que rellene (ver
+                # docstring de enforce_hole_clearance).
+                bridge.enforce_hole_clearance(board, _resolve_root_pcb())
             new_state = build_state_from_snapshot(ctx.footprints)
             snap_id = get_default_store().register(new_state, mtimes=None)
             raw_params["base_snap"] = base_snap
@@ -2044,6 +2274,9 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             backup_info = ensure_session_backup(root)  # Gate G1
             fill_start = time.perf_counter()
             zones_filled = bridge.refill_zones(board)
+            # F-D3-01 (sesión 21): workaround post-fill obligatorio en TODO
+            # camino que rellene — ver docstring de enforce_hole_clearance.
+            bridge.enforce_hole_clearance(board, _resolve_root_pcb())
             duration_ms = (time.perf_counter() - fill_start) * 1000
             new_state = build_state_from_snapshot(ctx.footprints)
             snap_id = get_default_store().register(new_state, mtimes=None)
@@ -2205,6 +2438,16 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 if v.severity == "error":
                     por_tipo[v.rule] = por_tipo.get(v.rule, 0) + 1
 
+            # F-D3-03 (sesión 21): err_introducidos por IDENTIDAD de violación,
+            # no por resta de totales — el D3 reportó err_introducidos:0
+            # cuando en realidad 56 unconnected_items pre-route fueron
+            # reemplazadas por 56 clearance/hole_clearance/copper_edge_clearance
+            # post-route (mismo total, composición 100% distinta). Ver
+            # bridge.rules.diff_violations.
+            err_introducidos, err_resueltos, por_tipo_introducidos = diff_violations(
+                pre_report.violations, post_report.violations
+            )
+
             # P2.2 (F-09): denominador y estado por net desde el .dsn/.ses del
             # round-trip, no del ``unconnected`` del DRC.
             pin_counts = result.nets_pin_counts
@@ -2258,6 +2501,11 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 assert open_board is not None  # reloaded=True lo implica
                 fill_start = time.perf_counter()
                 zones_refilladas = bridge.refill_zones(open_board)
+                # F-D3-01/F-D3-03 (sesión 21): el refill interno de
+                # route_board es precisamente el disparador que el D3
+                # reportó (zones.refilladas:1 → 53 violaciones nuevas) —
+                # workaround post-fill obligatorio acá también.
+                bridge.enforce_hole_clearance(open_board, pcb_path)
                 fill_ms = (time.perf_counter() - fill_start) * 1000
 
             tracks_added = result.tracks_after - result.tracks_before
@@ -2282,8 +2530,13 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 "drc": {
                     "err_preexistentes": pre_err,
                     "err_post": post_err,
-                    "err_introducidos": post_err - pre_err,
+                    # F-D3-03: semántica cambiada de resta de totales a
+                    # identidad de conjunto (ver diff_violations) — NO se
+                    # renombra el campo (F3), documentado en tool-catalog.md.
+                    "err_introducidos": err_introducidos,
+                    "err_resueltos": err_resueltos,
                     "por_tipo": por_tipo,
+                    "por_tipo_introducidos": por_tipo_introducidos,
                 },
                 "tracks_added": tracks_added,
                 "vias_added": vias_added,

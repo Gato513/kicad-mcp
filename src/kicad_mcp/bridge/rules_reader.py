@@ -11,6 +11,11 @@ desviación #3). Este módulo es la única fuente para ambos consumidores —
 ``bridge/autoroute.py`` (inyección al DSN) y ``tools/pcb.py`` (colisión de
 ``add_track``) — para no duplicar el plumbing.
 
+``min_hole_clearance`` (sesión 21, F-D3-01) se agrega con el mismo patrón
+dual-path que el edge clearance — kipy 0.7.1 no expone esta regla vía IPC
+(confirmado en ``docs/investigacion/21-fill-zones-holes.md`` §2), así que
+``bridge/ipc.py::enforce_hole_clearance`` la lee de acá.
+
 Ubicación del campo de edge clearance DIVERGE entre versiones del
 ``.kicad_pro`` (confirmado en sesión 17 comparando el despertador recién
 creado contra ``tests/fixtures/004_real/video.kicad_pro``): el schema "v3"
@@ -38,6 +43,7 @@ from typing import Any, Final
 # no está — preservan el comportamiento previo a la sesión 17 (D-16.4: piso
 # fijo 0.2mm de add_track; 0.25mm es el ancho default de add_track/width_mm).
 _DEFAULT_EDGE_CLEARANCE_MM: Final = 0.2
+_DEFAULT_HOLE_CLEARANCE_MM: Final = 0.25  # default real de KiCad (sesión 21)
 _DEFAULT_CLASS_NAME: Final = "Default"
 _DEFAULT_CLEARANCE_MM: Final = 0.2
 _DEFAULT_TRACK_WIDTH_MM: Final = 0.25
@@ -47,6 +53,11 @@ _DEFAULT_VIA_DRILL_MM: Final = 0.3
 _EDGE_CLEARANCE_PATHS: Final = (
     ("design_settings", "rules", "min_copper_edge_clearance"),
     ("board", "design_settings", "rules", "min_copper_edge_clearance"),
+)
+
+_HOLE_CLEARANCE_PATHS: Final = (
+    ("design_settings", "rules", "min_hole_clearance"),
+    ("board", "design_settings", "rules", "min_hole_clearance"),
 )
 
 
@@ -75,6 +86,7 @@ class ProjectRules:
     """Reglas resueltas del ``.kicad_pro`` activo, con defaults si faltan."""
 
     min_copper_edge_clearance_mm: float
+    min_hole_clearance_mm: float = _DEFAULT_HOLE_CLEARANCE_MM
     classes: tuple[NetClass, ...] = ()
     # net exacto -> nombre de clase (net_settings.netclass_assignments).
     net_assignments: dict[str, str] = field(default_factory=dict)
@@ -132,6 +144,14 @@ def _dig(payload: dict[str, Any], path: tuple[str, ...]) -> Any:
 
 def _extract_edge_clearance(payload: dict[str, Any]) -> float | None:
     for path in _EDGE_CLEARANCE_PATHS:
+        value = _dig(payload, path)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
+def _extract_hole_clearance(payload: dict[str, Any]) -> float | None:
+    for path in _HOLE_CLEARANCE_PATHS:
         value = _dig(payload, path)
         if isinstance(value, int | float) and not isinstance(value, bool):
             return float(value)
@@ -217,6 +237,7 @@ def load_project_rules(pcb_path: Path) -> ProjectRules:
         min_copper_edge_clearance_mm=(
             _extract_edge_clearance(payload) or _DEFAULT_EDGE_CLEARANCE_MM
         ),
+        min_hole_clearance_mm=(_extract_hole_clearance(payload) or _DEFAULT_HOLE_CLEARANCE_MM),
         classes=_extract_classes(payload),
         net_assignments=_extract_assignments(payload),
         net_patterns=_extract_patterns(payload),

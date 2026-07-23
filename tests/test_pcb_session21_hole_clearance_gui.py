@@ -98,9 +98,7 @@ async def test_add_zone_bbox_respects_pth_npth_hole_clearance() -> None:
         j1 = await client.call_tool("get_component_detail", {"ref": "J1"})
         assert not j1.isError, _text(j1)
 
-        world_pcb = await client.call_tool(
-            "get_world_context", {"kind": "pcb", "max_tokens": 4000}
-        )
+        world_pcb = await client.call_tool("get_world_context", {"kind": "pcb", "max_tokens": 4000})
         assert not world_pcb.isError, _text(world_pcb)
         header = _text(world_pcb).splitlines()[0]
         bbox_field = next(p for p in header.split("|") if p.startswith("bbox:"))

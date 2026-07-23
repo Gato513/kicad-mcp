@@ -111,9 +111,7 @@ async def test_route_board_drc_contract_matches_independent_run_drc() -> None:
 
     mcp = _server()
     async with create_connected_server_and_client_session(mcp._mcp_server) as client:
-        route_result = await client.call_tool(
-            "route_board", {"timeout_s": _ROUTE_TIMEOUT_S}
-        )
+        route_result = await client.call_tool("route_board", {"timeout_s": _ROUTE_TIMEOUT_S})
         assert not route_result.isError, _text(route_result)
         payload = _json(route_result)
         drc = payload["drc"]

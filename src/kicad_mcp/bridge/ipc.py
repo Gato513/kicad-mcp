@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, NewType, Protocol, TypeVar
 
 from ..errors import ErrorCode, KicadMcpError
-from ..logging_config import log_ipc_retry
+from ..logging_config import log_ipc_retry, log_socket_glob_ambiguous
 
 _T = TypeVar("_T")
 
@@ -681,6 +681,11 @@ def _socket_file_missing(socket_uri: str | None) -> bool:
     return not Path(fs_path).exists()
 
 
+def _socket_uri(path: Path) -> str:
+    """Envuelve un path filesystem como URI ``ipc://<path>`` (esquema de kipy)."""
+    return f"ipc://{path}"
+
+
 def _default_client_factory(
     socket_path: str | None, timeout_ms: int, kicad_token: str | None
 ) -> KiCadClientLike:
@@ -971,6 +976,51 @@ _BUSY_RETRY_BACKOFFS_MS: tuple[int, ...] = (250, 500)
 _DEFAULT_TIMEOUT_MS = 2000
 _DEFAULT_SOCKET_LINUX = "ipc:///tmp/kicad/api.sock"
 
+# --- Descubrimiento del socket en cascada (sesión 19e, F-19b-09) --------------
+#
+# KiCad 10.0.4 crea el socket como ``/tmp/kicad/api-<PID>.sock`` (sufijo de
+# PID), no el path canónico sin sufijo. Constantes separadas (en vez de
+# derivarlas de ``_DEFAULT_SOCKET_LINUX``) para que los tests las
+# ``monkeypatch.setattr`` y redirijan el descubrimiento a un ``tmp_path``
+# sin tocar el ``/tmp/kicad`` real del dev.
+_KICAD_SOCKET_DIR = Path("/tmp/kicad")
+_LEGACY_SOCKET_NAME = "api.sock"
+_PID_SOCKET_GLOB = "api-*.sock"
+
+
+def _resolve_kicad_socket(explicit_arg: str | None = None) -> str | None:
+    """Resuelve el socket IPC de KiCad en Linux por cascada (F-19b-09).
+
+    Orden: ``KICAD_API_SOCKET`` (si el path existe) → ``explicit_arg`` (si
+    el path existe) → path legacy ``/tmp/kicad/api.sock`` (si existe) →
+    glob per-PID ``/tmp/kicad/api-<PID>.sock`` (1 match, o el más reciente
+    por ``mtime`` si hay varios — con warning) → último recurso: el
+    override explícito (env o arg) aunque su path no exista, para que el
+    fast-fail de ``_default_client_factory`` siga funcionando → ``None`` si
+    no hay ningún candidato.
+
+    Función pura salvo el log warning en el caso ambiguo (múltiples
+    sockets per-PID). En plataformas no-Linux el caller mantiene el path
+    canónico — esta cascada es específica de Linux (RNF6).
+    """
+    env = os.environ.get("KICAD_API_SOCKET")
+    if env and not _socket_file_missing(env):
+        return env
+    if explicit_arg and not _socket_file_missing(explicit_arg):
+        return explicit_arg
+    legacy = _socket_uri(_KICAD_SOCKET_DIR / _LEGACY_SOCKET_NAME)
+    if not _socket_file_missing(legacy):
+        return legacy
+    matches = sorted(
+        _KICAD_SOCKET_DIR.glob(_PID_SOCKET_GLOB),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if matches:
+        if len(matches) > 1:
+            log_socket_glob_ambiguous(chosen=str(matches[-1]), count=len(matches))
+        return _socket_uri(matches[-1])  # más reciente por mtime
+    return env or explicit_arg or None  # último recurso: fast-fail en el factory
+
 
 class IpcBridge:
     """Cliente IPC serializado con detección de reinicio de KiCad.
@@ -987,9 +1037,14 @@ class IpcBridge:
         client_factory: _ClientFactory = _default_client_factory,
         timeout_ms: int = _DEFAULT_TIMEOUT_MS,
     ) -> None:
-        # Resolución del socket: env → argumento → default de la plataforma.
-        env_socket = os.environ.get("KICAD_API_SOCKET")
-        self._socket_path: str | None = env_socket or socket_path or _DEFAULT_SOCKET_LINUX
+        # El arg explícito se conserva para re-resolver en cada chequeo
+        # (F-19b-09 / R11): KiCad puede reiniciarse a mitad de la vida del
+        # server con un socket distinto (PID nuevo, o incluso sin sufijo de
+        # PID — observado en vivo, sesión 19e), y una resolución congelada
+        # en el constructor dejaría a ``socket_present()``/``_ensure_client``
+        # apuntando a un socket muerto indefinidamente.
+        self._socket_path_arg = socket_path
+        self._socket_path: str | None = _resolve_kicad_socket(socket_path)
         self._timeout_ms = timeout_ms
         self._client_factory = client_factory
         self._client: KiCadClientLike | None = None
@@ -1013,10 +1068,29 @@ class IpcBridge:
         presencia distingue "KiCad no está corriendo" (missing) de "KiCad
         corriendo pero el server IPC puede estar ocupado o cerrado". No
         toca red ni el hilo UI.
+
+        Re-resuelve la cascada en cada llamada (sesión 19e, F-19b-09/R11):
+        si KiCad se reinició con un socket distinto desde la última vez,
+        este check debe reflejarlo sin requerir reconstruir el bridge.
+
+        ``None`` (nada descubrible: sin env, sin arg, sin socket en
+        ``/tmp/kicad``) es explícitamente "ausente" — ``_socket_file_missing``
+        devuelve ``False`` para ``None``/esquemas no ``ipc://`` porque ese
+        caso lo delega al factory (deja pasar), pero aquí no hay factory al
+        que delegar: sin candidato, no hay socket.
         """
+        self._socket_path = _resolve_kicad_socket(self._socket_path_arg)
+        if self._socket_path is None:
+            return False
         return not _socket_file_missing(self._socket_path)
 
     def _ensure_client(self) -> KiCadClientLike:
+        resolved = _resolve_kicad_socket(self._socket_path_arg)
+        if resolved != self._socket_path:
+            # El socket cambió (KiCad se reinició) desde la última conexión:
+            # el cliente viejo apunta a un path muerto, descartarlo.
+            self._client = None
+            self._socket_path = resolved
         if self._client is None:
             token = self._current_env_token()
             self._client = self._client_factory(self._socket_path, self._timeout_ms, token)

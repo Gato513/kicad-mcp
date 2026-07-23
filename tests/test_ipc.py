@@ -23,6 +23,7 @@ from kicad_mcp.bridge.ipc import (
     IpcBridge,
     Mm,
     Nm,
+    _resolve_kicad_socket,
     _verify_created_net_or_revert,
     mm_to_nm,
     nm_to_mm,
@@ -1050,12 +1051,20 @@ def test_supervise_preserves_typed_errors_unchanged() -> None:
 def test_default_factory_fast_fails_when_ipc_socket_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Socket ``ipc://<path>`` inexistente ⇒ ``KICAD_NOT_RUNNING`` en <100 ms.
+    """Socket ``ipc://<path>`` inexistente y nada descubrible ⇒ ``KICAD_NOT_RUNNING``
+    en <100 ms.
 
     Sin este fast-fail, ``kipy`` deja pasar la construcción y falla al
     primer ``send()`` con costo de import + arranque (medido: ~370 ms en
     la workstation de dev, se dispararía a 2 s ante timeouts reales).
+
+    Sesión 19e: se hermetiza redirigiendo ``_KICAD_SOCKET_DIR`` (el dir de
+    descubrimiento) a un ``tmp_path`` vacío, para que la cascada no
+    encuentre nada más y caiga al último recurso (el env inexistente).
     """
+    import kicad_mcp.bridge.ipc as ipc_module
+
+    monkeypatch.setattr(ipc_module, "_KICAD_SOCKET_DIR", tmp_path / "discovery-empty")
     nonexistent = tmp_path / "definitely-not-there.sock"
     assert not nonexistent.exists()
     monkeypatch.setenv("KICAD_API_SOCKET", f"ipc://{nonexistent}")
@@ -1074,14 +1083,19 @@ def test_default_factory_fast_fails_when_ipc_socket_missing(
 
 
 @pytest.mark.unit
-def test_default_factory_resolves_socket_env_over_arg(
+def test_default_factory_resolves_arg_when_env_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Orden env → arg → default preservado en el fast-fail.
+    """Sesión 19e — contrato *existence-aware*: env inexistente cede al arg.
 
-    Con ``KICAD_API_SOCKET`` inexistente y ``socket_path`` arg apuntando a
-    un socket que sí existe, el env debe ganar y fast-failear.
+    Con ``KICAD_API_SOCKET`` apuntando a un path que NO existe, la cascada
+    ya no lo usa incondicionalmente (contrato pre-19e); sigue a
+    ``socket_path`` (el arg del constructor), que sí existe, y se conecta
+    con éxito. Reemplaza al test de sesión 04 que afirmaba lo contrario.
     """
+    import kicad_mcp.bridge.ipc as ipc_module
+
+    monkeypatch.setattr(ipc_module, "_KICAD_SOCKET_DIR", tmp_path / "discovery-empty")
     env_socket = tmp_path / "env-missing.sock"
     arg_socket = tmp_path / "arg-exists.sock"
     arg_socket.touch()
@@ -1089,9 +1103,7 @@ def test_default_factory_resolves_socket_env_over_arg(
 
     bridge = IpcBridge(socket_path=f"ipc://{arg_socket}")
 
-    with pytest.raises(KicadMcpError) as excinfo:
-        bridge.get_version()
-    assert excinfo.value.code is ErrorCode.KICAD_NOT_RUNNING
+    assert bridge._socket_path == f"ipc://{arg_socket}"
 
 
 @pytest.mark.unit
@@ -1110,6 +1122,189 @@ def test_default_factory_skips_fast_fail_for_non_ipc_scheme(
     assert _socket_file_missing("tcp://localhost:12345") is False
     assert _socket_file_missing(None) is False
     assert _socket_file_missing("ipc://") is False  # sin path → deja pasar
+
+
+# --- resolución cascada del socket (sesión 19e, F-19b-09) --------------------
+
+
+@pytest.mark.unit
+def test_resolve_socket_env_var_wins_when_path_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``KICAD_API_SOCKET`` con path existente gana sobre todo lo demás."""
+    import kicad_mcp.bridge.ipc as ipc_module
+
+    monkeypatch.setattr(ipc_module, "_KICAD_SOCKET_DIR", tmp_path / "discovery")
+    env_socket = tmp_path / "env.sock"
+    env_socket.touch()
+    monkeypatch.setenv("KICAD_API_SOCKET", f"ipc://{env_socket}")
+
+    assert _resolve_kicad_socket() == f"ipc://{env_socket}"
+
+
+@pytest.mark.unit
+def test_resolve_socket_env_var_missing_falls_through_to_last_resort(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``KICAD_API_SOCKET`` con path inexistente y nada más descubrible ⇒ se
+    devuelve igual como último recurso (para que el caller fast-failee)."""
+    import kicad_mcp.bridge.ipc as ipc_module
+
+    monkeypatch.setattr(ipc_module, "_KICAD_SOCKET_DIR", tmp_path / "discovery-empty")
+    env_socket = tmp_path / "env-missing.sock"
+    monkeypatch.setenv("KICAD_API_SOCKET", f"ipc://{env_socket}")
+
+    assert _resolve_kicad_socket() == f"ipc://{env_socket}"
+
+
+@pytest.mark.unit
+def test_resolve_socket_legacy_path_used_when_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Solo existe el path legacy ``api.sock`` (sin PID) ⇒ se usa ese."""
+    import kicad_mcp.bridge.ipc as ipc_module
+
+    monkeypatch.delenv("KICAD_API_SOCKET", raising=False)
+    discovery_dir = tmp_path / "discovery"
+    discovery_dir.mkdir()
+    monkeypatch.setattr(ipc_module, "_KICAD_SOCKET_DIR", discovery_dir)
+    legacy = discovery_dir / "api.sock"
+    legacy.touch()
+
+    assert _resolve_kicad_socket() == f"ipc://{legacy}"
+
+
+@pytest.mark.unit
+def test_resolve_socket_single_pid_glob_match(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Solo existe ``api-<PID>.sock`` (KiCad 10.0.4) ⇒ se descubre por glob."""
+    import kicad_mcp.bridge.ipc as ipc_module
+
+    monkeypatch.delenv("KICAD_API_SOCKET", raising=False)
+    discovery_dir = tmp_path / "discovery"
+    discovery_dir.mkdir()
+    monkeypatch.setattr(ipc_module, "_KICAD_SOCKET_DIR", discovery_dir)
+    pid_socket = discovery_dir / "api-1234.sock"
+    pid_socket.touch()
+
+    assert _resolve_kicad_socket() == f"ipc://{pid_socket}"
+
+
+@pytest.mark.unit
+def test_resolve_socket_multiple_pid_globs_picks_newest_and_warns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Múltiples ``api-<PID>.sock`` ⇒ se elige el más reciente por ``mtime`` y
+    se loguea un warning (sockets de instancias previas de KiCad no limpiadas)."""
+    import logging
+
+    import kicad_mcp.bridge.ipc as ipc_module
+
+    monkeypatch.delenv("KICAD_API_SOCKET", raising=False)
+    discovery_dir = tmp_path / "discovery"
+    discovery_dir.mkdir()
+    monkeypatch.setattr(ipc_module, "_KICAD_SOCKET_DIR", discovery_dir)
+
+    older = discovery_dir / "api-1234.sock"
+    newer = discovery_dir / "api-5678.sock"
+    older.touch()
+    newer.touch()
+    now = time.time()
+    os.utime(older, (now - 100, now - 100))
+    os.utime(newer, (now, now))
+
+    with caplog.at_level(logging.WARNING, logger="kicad_mcp"):
+        result = _resolve_kicad_socket()
+
+    assert result == f"ipc://{newer}"
+    assert any("socket_discovery" in record.message for record in caplog.records)
+
+
+@pytest.mark.unit
+def test_resolve_socket_nothing_found_returns_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Sin env, sin arg, sin ningún socket en el dir de descubrimiento ⇒ ``None``."""
+    import kicad_mcp.bridge.ipc as ipc_module
+
+    monkeypatch.delenv("KICAD_API_SOCKET", raising=False)
+    monkeypatch.setattr(ipc_module, "_KICAD_SOCKET_DIR", tmp_path / "discovery-empty")
+
+    assert _resolve_kicad_socket() is None
+
+
+@pytest.mark.unit
+def test_socket_present_reflects_live_filesystem_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``socket_present()`` re-resuelve en cada llamada, no cachea del ``__init__``.
+
+    Sesión 19e / R11: verificado en vivo que el proceso ``kicad-mcp`` vive
+    más que una sesión de KiCad — si el socket resuelto se congelara en el
+    constructor, un reinicio de KiCad a mitad de vida del bridge dejaría
+    ``socket_present()`` reportando ``False`` para siempre aunque KiCad
+    vuelva a estar arriba con un socket nuevo.
+    """
+    import kicad_mcp.bridge.ipc as ipc_module
+
+    monkeypatch.delenv("KICAD_API_SOCKET", raising=False)
+    discovery_dir = tmp_path / "discovery"
+    discovery_dir.mkdir()
+    monkeypatch.setattr(ipc_module, "_KICAD_SOCKET_DIR", discovery_dir)
+
+    bridge = IpcBridge()
+    assert bridge.socket_present() is False  # nada en el dir todavía
+
+    pid_socket = discovery_dir / "api-9999.sock"
+    pid_socket.touch()
+    assert bridge.socket_present() is True  # mismo bridge, sin reconstruir
+
+    pid_socket.unlink()
+    assert bridge.socket_present() is False  # KiCad se cerró de nuevo
+
+
+@pytest.mark.unit
+def test_bridge_reconnects_when_socket_changes_after_kicad_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R11 — KiCad se reinicia con un socket distinto a mitad de vida del
+    bridge (PID nuevo, o incluso sin sufijo de PID — observado en vivo,
+    sesión 19e) ⇒ el próximo request re-resuelve y reconecta solo, sin
+    reconstruir el ``IpcBridge`` ni intervención humana.
+    """
+    import kicad_mcp.bridge.ipc as ipc_module
+
+    monkeypatch.delenv("KICAD_API_SOCKET", raising=False)
+    discovery_dir = tmp_path / "discovery"
+    discovery_dir.mkdir()
+    monkeypatch.setattr(ipc_module, "_KICAD_SOCKET_DIR", discovery_dir)
+
+    first_socket = discovery_dir / "api-1111.sock"
+    first_socket.touch()
+
+    seen_paths: list[str | None] = []
+
+    class _RecordingFactory:
+        def __call__(
+            self, socket_path: str | None, timeout_ms: int, kicad_token: str | None
+        ) -> _FakeClient:
+            seen_paths.append(socket_path)
+            return _FakeClient(_FakeVersion("10.0.4", 10, 0, 4))
+
+    bridge = IpcBridge(client_factory=_RecordingFactory())
+    bridge.get_version()
+    assert seen_paths == [f"ipc://{first_socket}"]
+
+    # KiCad se reinicia: el socket viejo desaparece, aparece uno nuevo con
+    # otro nombre — sin symlink ni intervención manual (visto en vivo: la
+    # segunda instancia usó ``api.sock`` sin PID, no ``api-<PID>.sock``).
+    first_socket.unlink()
+    second_socket = discovery_dir / "api.sock"
+    second_socket.touch()
+
+    bridge.get_version()
+    assert seen_paths == [f"ipc://{first_socket}", f"ipc://{second_socket}"]
 
 
 # --- register_all singleton (sesión 04) ---------------------------------------

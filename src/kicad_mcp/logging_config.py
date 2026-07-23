@@ -76,6 +76,26 @@ def tool_call_timer() -> Iterator[dict[str, float]]:
         result["latency_ms"] = (time.perf_counter() - start) * 1000
 
 
+def log_socket_glob_ambiguous(chosen: str, count: int) -> None:
+    """Warning: múltiples sockets per-PID en ``/tmp/kicad`` (sesión 19e, F-19b-09).
+
+    ``tool_name="socket_discovery"`` es el canal fijo para grep/filter.
+    ``chosen`` es el socket elegido (el más reciente por ``mtime``);
+    ``count`` es cuántos candidatos ``api-<PID>.sock`` se encontraron.
+    """
+    _LOGGER.warning(
+        json.dumps(
+            {
+                "tool_name": "socket_discovery",
+                "chosen": chosen,
+                "candidates": count,
+            },
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+    )
+
+
 def log_ipc_retry(op_name: str, attempt: int, backoff_ms: int) -> None:
     """Emite una línea JSON por cada retry por ``AS_BUSY`` (sesión 07 D-07.1).
 

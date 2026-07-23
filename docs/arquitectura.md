@@ -99,7 +99,7 @@ Objetivo real alcanzable con la tecnología disponible (julio 2026): **un sistem
 | RNF3 | Robustez ante KiCad caído/reiniciado | Reconexión automática; detección por KICAD_API_TOKEN; errores tipados al agente | El token cambia por instancia: úsese para detectar reinicios a mitad de sesión. |
 | RNF4 | Nunca congelar la GUI de KiCad > 2 s | Timeout por request IPC (configurable, default 2000 ms) + operaciones acotadas | Restricción dura impuesta por el diseño de KiCad. |
 | RNF5 | Mantenibilidad | Core desacoplado de la capa KiCad mediante trait/interfaz mockeable; cobertura de tests del motor TOON/delta > 90 % (es lógica pura) | |
-| RNF6 | Portabilidad | **Linux únicamente** (decisión D5). Unix socket `/tmp/kicad/api.sock`. macOS: probablemente funcional (mismo mecanismo), sin CI → no soportado oficialmente. Windows: eliminado del roadmap. | Resuelto por P5. |
+| RNF6 | Portabilidad | **Linux únicamente** (decisión D5). Unix socket resuelto por cascada (sesión 19e, F-19b-09): `KICAD_API_SOCKET` (si el path existe) → path legacy `/tmp/kicad/api.sock` → glob `/tmp/kicad/api-<PID>.sock` (KiCad 10.0.4 sufija el socket con el PID; con varios candidatos se toma el más reciente por `mtime`). macOS: probablemente funcional (mismo mecanismo), sin CI → no soportado oficialmente. Windows: eliminado del roadmap. | Resuelto por P5. Cascada en `bridge/ipc.py::_resolve_kicad_socket()`. |
 | RNF7 | Escalabilidad | **Fuera de alcance deliberado**: sistema mono-usuario local. | Ver §6: "escalar" aquí significa proyectos grandes (500+ componentes), no usuarios concurrentes. |
 
 ---

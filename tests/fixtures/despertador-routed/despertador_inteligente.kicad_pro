@@ -645,13 +645,18 @@
       {
         "filename": "despertador_inteligente.kicad_sch",
         "name": "despertador_inteligente",
-        "uuid": "00000000-0000-0000-0000-000000000000"
+        "uuid": "c495cffe-7dd2-454f-a6dc-51655f2a89b5"
       }
     ],
     "used_designators": "",
     "variants": []
   },
-  "sheets": [],
+  "sheets": [
+    [
+      "c495cffe-7dd2-454f-a6dc-51655f2a89b5",
+      "despertador_inteligente"
+    ]
+  ],
   "text_variables": {},
   "tuning_profiles": {
     "meta": {

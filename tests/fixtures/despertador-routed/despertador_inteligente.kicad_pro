@@ -39,9 +39,9 @@
         "other_text_thickness": 0.15,
         "other_text_upright": false,
         "pads": {
-          "drill": 0.0,
-          "height": 1.8,
-          "width": 1.2
+          "drill": 0.8,
+          "height": 1.27,
+          "width": 1.27
         },
         "silk_line_width": 0.1,
         "silk_text_italic": false,
@@ -645,18 +645,13 @@
       {
         "filename": "despertador_inteligente.kicad_sch",
         "name": "despertador_inteligente",
-        "uuid": "c495cffe-7dd2-454f-a6dc-51655f2a89b5"
+        "uuid": "00000000-0000-0000-0000-000000000000"
       }
     ],
     "used_designators": "",
     "variants": []
   },
-  "sheets": [
-    [
-      "c495cffe-7dd2-454f-a6dc-51655f2a89b5",
-      "despertador_inteligente"
-    ]
-  ],
+  "sheets": [],
   "text_variables": {},
   "tuning_profiles": {
     "meta": {

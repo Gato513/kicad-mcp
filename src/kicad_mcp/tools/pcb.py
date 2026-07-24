@@ -2371,9 +2371,17 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # (live→disco, sólo si el board abierto ES el target) → DRC pre-route
         # (para drc.err_preexistentes) → round-trip DSN/Freerouting/SES
         # (subprocess, python del SISTEMA + java; NUNCA el venv) → reemplazo
-        # atómico del .kicad_pcb → DRC post-route → snapshot de DISCO + flag
-        # D-14.1. El router corre como subprocess, no por IPC: no toca la cola
-        # IPC (contención D-12.7 intacta).
+        # atómico del .kicad_pcb → recarga del vivo → refill+enforce (si
+        # corresponde) → **DRC post-route + save_board** → snapshot de DISCO +
+        # flag D-14.1. El router corre como subprocess, no por IPC: no toca la
+        # cola IPC (contención D-12.7 intacta).
+        #
+        # D-23.2 (ADR-0012, sesión 24 — cierre F-D4-02): contrato reforzado —
+        # cuando ``route_board`` termina OK, disco == memoria == ``err_post``
+        # reportado. El DRC que se reporta se mide DESPUÉS del bloque de
+        # refill+enforce (no sobre la salida cruda de Freerouting), y ese
+        # estado se persiste con ``save_board()`` antes de medirlo. Ver
+        # docs/investigacion/23-fd4-02.md para la causa raíz original.
         #
         # P2.2 (sesión 17, D-V3.4): el resultado deja de ser un confirm de
         # ≤50 tok (D-14.2 original) y pasa a JSON estructurado — route_ms
@@ -2430,7 +2438,93 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             # os.replace no deja el .kicad_pcb a medio escribir).
             os.replace(result.routed_pcb, pcb_path)
 
-            # DRC post-route (bridge.rules, como G3) para el conteo de errores.
+            # P2.2 (F-09): denominador y estado por net desde el .dsn/.ses del
+            # round-trip, no del ``unconnected`` del DRC.
+            pin_counts = result.nets_pin_counts
+            wire_counts = result.nets_wire_counts
+            nets_total = len(pin_counts)
+            nets_ruteables = sum(1 for p in pin_counts.values() if p >= 2)
+            routed_nets, partial_nets, blocked_nets = classify_net_routing(pin_counts, wire_counts)
+
+            # P3.1 (sesión 18, D-V3.1): recarga automática del editor vivo
+            # post-route — reemplaza el File→Revert manual de D-14.1 cuando es
+            # posible. Sólo se intenta si el board abierto ES el target recién
+            # ruteado (mismo chequeo que el save implícito de arriba).
+            # Best-effort: si la recarga falla (busy/timeout/kipy roto), NO
+            # tumba route_board — el ruteo YA está en disco y es válido; se cae
+            # al viejo guard ``live_stale`` como red de seguridad (reforzada
+            # por mtime en P3.2). El flag ``live_stale``/snapshot se aplican
+            # más abajo (D-23.2): recién ahí existe un ``snap_id`` y el disco
+            # ya está en su estado FINAL (post refill+save si corrió).
+            reloaded: bool | str
+            if is_target_open:
+                assert open_board is not None  # is_target_open lo implica
+                try:
+                    bridge.reload_board_from_disk(open_board)
+                    reloaded = True
+                except KicadMcpError:
+                    reloaded = False
+            else:
+                reloaded = "skipped_editor_closed" if open_board is None else False
+
+            # P4.3 (sesión 19, D-19.1 — ver docs/investigacion/19-zonas-ipc.md
+            # §2.4): el ruteo NO necesita tocar el DSN para zonas (Freerouting
+            # respeta nativamente el ``(plane)`` que ``ExportSpecctraDSN``
+            # emite del outline) — pero los tracks nuevos pueden requerir
+            # recalcular el fill (thermal reliefs, clearance contra el cobre
+            # recién agregado). Sólo se puede refillear si la recarga (arriba)
+            # dejó el board vivo reflejando el archivo recién ruteado —
+            # ``reload_board_from_disk`` no tiene contraparte para el caso
+            # "editor cerrado" (best-effort, igual que ``pre_footprints``).
+            #
+            # D-19.1 v6 (sesión 23, docs/investigacion/23-fd4-02.md Bloque 3):
+            # Freerouting NO respeta el plano GND como exclusión de ruteo para
+            # nets ajenos — lo trata como área libre, así que tracks/vías de
+            # otros nets pueden terminar geométricamente dentro del polígono
+            # de la zona. El refill+enforce de acá es lo que arregla ese
+            # clearance contra la zona ya ruteada; no es cosmético.
+            zones_refilladas = 0
+            fill_ms = 0.0
+            if refill and zones_existentes > 0 and reloaded is True:
+                assert open_board is not None  # reloaded=True lo implica
+                fill_start = time.perf_counter()
+                zones_refilladas = bridge.refill_zones(open_board)
+                # F-D3-01/F-D3-03 (sesión 21): el refill interno de
+                # route_board es precisamente el disparador que el D3
+                # reportó (zones.refilladas:1 → 53 violaciones nuevas) —
+                # workaround post-fill obligatorio acá también.
+                bridge.enforce_hole_clearance(open_board, pcb_path)
+                # D-23.2 (ADR-0012, sesión 24): persistir el vivo YA arreglado
+                # por refill+enforce — sin esto el disco queda con el
+                # clearance roto de forma indefinida (F-D4-02: el bug no era
+                # protección ausente, era falta de persistencia post-fix).
+                try:
+                    bridge.save_board(open_board)
+                except KicadMcpError as exc:
+                    _audit_error(
+                        root,
+                        "route_board",
+                        {"max_passes": max_passes, "timeout_s": timeout_s, "refill": refill},
+                        ErrorCode.POST_ROUTE_PERSIST_FAILED,
+                    )
+                    raise KicadMcpError(
+                        code=ErrorCode.POST_ROUTE_PERSIST_FAILED,
+                        message=(
+                            f"route_board completó ruteo + refill de {pcb_path.name} "
+                            "pero no pudo guardar el board a disco."
+                        ),
+                        hint=(
+                            "El board VIVO ya tiene el clearance arreglado; "
+                            "reintentá save_board() manual o descartá los cambios."
+                        ),
+                        data={"pcb": pcb_path.name, "live_has_fix": True},
+                    ) from exc
+                fill_ms = (time.perf_counter() - fill_start) * 1000
+
+            # DRC post-route (bridge.rules, como G3) para el conteo de
+            # errores. D-23.2: se mide ACÁ, después del refill+enforce+save de
+            # arriba, para que ``err_post``/``por_tipo`` reflejen el estado
+            # REAL persistido — no la salida cruda de Freerouting (F-D4-02).
             post_report = run_drc(pcb_path)
             post_err = sum(1 for v in post_report.violations if v.severity == "error")
             por_tipo: dict[str, int] = {}
@@ -2448,65 +2542,24 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 pre_report.violations, post_report.violations
             )
 
-            # P2.2 (F-09): denominador y estado por net desde el .dsn/.ses del
-            # round-trip, no del ``unconnected`` del DRC.
-            pin_counts = result.nets_pin_counts
-            wire_counts = result.nets_wire_counts
-            nets_total = len(pin_counts)
-            nets_ruteables = sum(1 for p in pin_counts.values() if p >= 2)
-            routed_nets, partial_nets, blocked_nets = classify_net_routing(pin_counts, wire_counts)
-
             # Snapshot de DISCO: el ruteo no mueve footprints, se deriva de los
             # leídos pre-route (o vacío si el board no estaba abierto/coincidía;
             # el agente re-sincroniza con confirm_reloaded o reload_board_from_disk
-            # tras recargar).
+            # tras recargar). D-23.2: los mtimes se recolectan ACÁ (no antes del
+            # refill+save) — si se registraran con los mtimes previos al nuevo
+            # save_board(), quedarían stale y una lectura posterior dispararía
+            # un EXTERNAL_EDIT_DETECTED espurio contra el propio guardado de
+            # route_board.
             new_state = build_state_from_snapshot(pre_footprints)
             mtimes = collect_project_mtimes(_resolve_root_schematic_or_pcb())
             snap_id = store.register(new_state, mtimes)
 
-            # P3.1 (sesión 18, D-V3.1): recarga automática del editor vivo
-            # post-route — reemplaza el File→Revert manual de D-14.1 cuando es
-            # posible. Sólo se intenta si el board abierto ES el target recién
-            # ruteado (mismo chequeo que el save implícito de arriba).
-            # Best-effort: si la recarga falla (busy/timeout/kipy roto), NO
-            # tumba route_board — el ruteo YA está en disco y es válido; se cae
-            # al viejo guard ``live_stale`` como red de seguridad (reforzada
-            # por mtime en P3.2).
-            reloaded: bool | str
-            if is_target_open:
-                assert open_board is not None  # is_target_open lo implica
-                try:
-                    bridge.reload_board_from_disk(open_board)
-                    reloaded = True
-                    store.clear_live_stale()
-                except KicadMcpError:
-                    reloaded = False
-                    store.mark_live_stale(snap_id)  # D-14.1: disco adelante del vivo
+            # D-14.1: aplicar el flag de "disco adelante del vivo" ahora que
+            # existe snap_id, usando el ``reloaded`` calculado arriba.
+            if reloaded is True:
+                store.clear_live_stale()
             else:
-                reloaded = "skipped_editor_closed" if open_board is None else False
-                store.mark_live_stale(snap_id)  # D-14.1: disco adelante del vivo
-
-            # P4.3 (sesión 19, D-19.1 — ver docs/investigacion/19-zonas-ipc.md
-            # §2.4): el ruteo NO necesita tocar el DSN para zonas (Freerouting
-            # respeta nativamente el ``(plane)`` que ``ExportSpecctraDSN``
-            # emite del outline) — pero los tracks nuevos pueden requerir
-            # recalcular el fill (thermal reliefs, clearance contra el cobre
-            # recién agregado). Sólo se puede refillear si la recarga (arriba)
-            # dejó el board vivo reflejando el archivo recién ruteado —
-            # ``reload_board_from_disk`` no tiene contraparte para el caso
-            # "editor cerrado" (best-effort, igual que ``pre_footprints``).
-            zones_refilladas = 0
-            fill_ms = 0.0
-            if refill and zones_existentes > 0 and reloaded is True:
-                assert open_board is not None  # reloaded=True lo implica
-                fill_start = time.perf_counter()
-                zones_refilladas = bridge.refill_zones(open_board)
-                # F-D3-01/F-D3-03 (sesión 21): el refill interno de
-                # route_board es precisamente el disparador que el D3
-                # reportó (zones.refilladas:1 → 53 violaciones nuevas) —
-                # workaround post-fill obligatorio acá también.
-                bridge.enforce_hole_clearance(open_board, pcb_path)
-                fill_ms = (time.perf_counter() - fill_start) * 1000
+                store.mark_live_stale(snap_id)
 
             tracks_added = result.tracks_after - result.tracks_before
             vias_added = result.vias_after - result.vias_before

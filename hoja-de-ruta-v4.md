@@ -40,7 +40,7 @@ activada, investigación sesión 23, fix sesión 24 Opción X mergeada
 
 ---
 
-## Estado técnico al arrancar Fase 3
+## Estado técnico tras D5 (sesión 25)
 
 **Cerrado con evidencia:**
 - Loop de escritura PCB completo (P1 v3).
@@ -48,22 +48,33 @@ activada, investigación sesión 23, fix sesión 24 Opción X mergeada
   Post-sesión 24: disco == memoria == `err_post` reportado al terminar OK.
 - Test de regresión GUI para D-23.2 (gate del merge, 2/2 corridas en vivo
   contra Freerouting real).
+- **Contrato D-23.2 ratificado en producción real, 5/5 corridas sin
+  excepción** (2/2 test de regresión sesión 24 + 3/3 D5, sesión 25 — `err_post`
+  == `run_drc()` independiente, mtime cambia post-save, cero
+  `EXTERNAL_EDIT_DETECTED` espurio). El workaround manual de refill que el
+  fixture de D3 documentaba como obligatorio quedó obsoleto. **Alcance:
+  `route_board` solamente** — `fill_zones`/`add_zone(fill=True)` no
+  generalizados todavía (paso 3, sesión 27).
 - Zonas y keepouts operativos.
 - Revert humano eliminado (D-V3.1).
 - Freerouting operativo con reglas DSN (D-V3.5) y edge clearance
   (ingeniería inversa documentada).
 - Regeneración de sch mecanizada donde aplicable (sesión 19b).
-
-**Pendiente de ratificación estadística en Fase 3:**
-- Contrato D-23.2 aguanta en producción durante dogfoodings reales, no
-  solo tests controlados. **Sesión 25 = D5 lo evalúa por primera vez.**
+- D-D4.1 (`get_footprint_neighbors` inclusivo) y D-19c.1 (keepout
+  POST-route inocuo) re-ratificados con impacto real en D5.
 
 **Deuda técnica conocida y priorizada:**
 - P1: solder mask bridge en ANT1 (pad no protegido por hole keepout,
-  aparecido en D4 como colateral del fix sesión 21).
+  aparecido en D4 como colateral del fix sesión 21). **Sesión 26 —
+  verificar primero el hallazgo de D5**: en la corrida de D5 el
+  `solder_mask_bridge` de ANT1 desapareció junto con el `hole_clearance`
+  al aplicarse el keepout auto-generado — puede que el alcance del fix sea
+  menor de lo previsto. Ver `docs/BACKLOG.md` P1.
 - P2 top: generalización D-23.2 a `fill_zones` y `add_zone(fill=True)`
-  (mismo patrón conceptual, mismo bug latente). Condicionado a que D5
-  ratifique el patrón en `route_board`.
+  (mismo patrón conceptual, mismo bug latente). **Condición de entrada
+  cumplida** — D5 ratificó el patrón en `route_board` (sesión 27).
+- P3: F-D5-01 (isla GND sin vía al plano, sesión 25) — vigilancia, sin
+  acción hasta 2 dogfoodings independientes que reproduzcan el patrón.
 - P3-P4: R12 (CRUD de sch), R13 (`get_world_context(kind="sch")` con
   `#PWR*/#FLG*`), R16 (loop de vías de `enforce_hole_clearance`
   posiblemente código muerto), y varios menores. Ver `docs/BACKLOG.md`.
@@ -87,13 +98,13 @@ NO expandir capabilities. NO escalar complejidad prematuramente.
 
 **Secuencia estricta:**
 
-| Sesión | Contenido | Gate de salida |
-|---|---|---|
-| 25 | **Dogfooding 5** con baseline dinámico + V1/V2/V3 reforzadas | Nota ≥9, V2 3/3 con mtime cambio y sin `EXTERNAL_EDIT_DETECTED` espurio, delta V4 sin violaciones nuevas |
-| 26 | Fix P1 solder mask bridge ANT1 + test de regresión | Test verde, sin regresiones en tests existentes |
-| 27 | Generalización D-23.2 a `fill_zones` + `add_zone(fill=True)` + tests | Tests de regresión análogos al de sesión 24, verdes |
-| 28 | **Dogfooding 6** con misma placa despertador | Nota ≥9, ratifica sesiones 26+27, sin P0/P1 nuevos |
-| 29+ | Iterar hasta convergencia si D6 abre pendientes | — |
+| Sesión | Contenido | Gate de salida | Estado |
+|---|---|---|---|
+| 25 | **Dogfooding 5** con baseline dinámico + V1/V2/V3 reforzadas | Nota ≥9, V2 3/3 con mtime cambio y sin `EXTERNAL_EDIT_DETECTED` espurio, delta V4 sin violaciones nuevas | ✅ **Completada — 9.5/10.** Gate cumplido sin excepción: V2 3/3 limpio, delta V4 = 1 hallazgo menor resuelto misma sesión (F-D5-01). Ver `docs/historico/sesiones/25-reporte.md`. |
+| 26 | Fix P1 solder mask bridge ANT1 + test de regresión | Test verde, sin regresiones en tests existentes | ⏭️ **Siguiente.** Verificar primero si el hallazgo de D5 (solder_mask_bridge de ANT1 resuelto por el keepout de hole existente) cambia el alcance del fix — ver `docs/BACKLOG.md` P1. |
+| 27 | Generalización D-23.2 a `fill_zones` + `add_zone(fill=True)` + tests | Tests de regresión análogos al de sesión 24, verdes | Pendiente — condición de entrada (D5 verde) ya cumplida. |
+| 28 | **Dogfooding 6** con misma placa despertador | Nota ≥9, ratifica sesiones 26+27, sin P0/P1 nuevos | Pendiente. |
+| 29+ | Iterar hasta convergencia si D6 abre pendientes | — | Pendiente. |
 
 **Criterio de cierre de Fase 3 (habilita Fase 4):**
 - ≥2-3 dogfoodings consecutivos verdes (nota ≥9) sobre misma placa.
@@ -129,11 +140,12 @@ Cambio de disposición respecto a Fase 2 (v3 no lo articulaba):
 
 Detalle priorizado vigente en `docs/BACKLOG.md`. Resumen:
 
-- **P0:** vacío al inicio de Fase 3. Reabrir solo si un dogfooding lo
-  fuerza.
-- **P1:** solder mask bridge ANT1 (sesión 26).
+- **P0:** vacío tras D5. F-D4-02 cerrado y ratificado 5/5. Reabrir solo si
+  un dogfooding futuro lo fuerza.
+- **P1:** solder mask bridge ANT1 (sesión 26 — verificar primero el
+  hallazgo de D5 sobre alcance real del fix).
 - **P2 top:** generalización D-23.2 a `fill_zones` + `add_zone(fill=True)`
-  (sesión 27, condicionado a D5 verde).
+  (sesión 27, condición de entrada cumplida — D5 salió verde).
 - **P2 polish (post-Fase 3):** ADRs de decisiones aún no formalizadas,
   docs para colaboradores, test canario Freerouting, issue upstream sobre
   R9, licencia + README + CONTRIBUTING, limpieza código muerto, política
@@ -142,7 +154,8 @@ Detalle priorizado vigente en `docs/BACKLOG.md`. Resumen:
   ÷100), `get_pin_net_membership`, `delete_track` cosmético, A* de
   bloqueador concreto, `route_ms` en ruta de fallo, convención
   `__kicadmcp_hc__*`, default `max_tokens` de `get_footprint_neighbors`,
-  discrepancia 23 vs 24 footprints, investigación R16 (loop de vías).
+  discrepancia 23 vs 24 footprints, investigación R16 (loop de vías),
+  F-D5-01 (isla GND sin vía al plano, vigilancia — sesión 25).
 - **P4 (para Fase 4):** rotación en `move_footprint`, timeout adaptativo,
   limpieza tracks huérfanos, guard cross-proceso, `add_zone` con hueco
   interior, Opción Y de F-D4-02 descartada por ahora.

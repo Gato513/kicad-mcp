@@ -25,7 +25,7 @@ proyecto ya superó el estadio de MVP solo-lectura: hoy tiene **20+ tools
 productivas** con un **loop de escritura de PCB cerrado** — colocación,
 contorno, zonas/plano GND, ruteo vía Freerouting (autorouter headless), DRC,
 recarga programática, export de gerbers — sin reverts humanos en el camino.
-Validado empíricamente contra KiCad 10.0.4 real en 4 rondas de dogfooding
+Validado empíricamente contra KiCad 10.0.4 real en 5 rondas de dogfooding
 (ver `docs/ROADMAP.md`).
 
 **Objetivo del proyecto:** herramienta de calidad de referencia, no release
@@ -69,12 +69,36 @@ aumento progresivo de confianza, arranca en sesión 25). El objetivo de Fase 3
 ya no es "encontrar causa raíz" sino "ganar confianza estadística en que las
 causas raíz eliminadas realmente no vuelven".
 
+**Estado en una línea (post-sesión 25):** D5 — primer dogfooding de Fase 3 —
+salió **verde, 9.5/10**; contrato D-23.2 ratificado **5/5 corridas** en
+producción real (2/2 test de regresión sesión 24 + 3/3 D5), cero P0/P1
+nuevos, V3 nunca activada. Próximo paso: sesión 26 (fix P1 solder mask
+ANT1). Detalle: `docs/historico/sesiones/25-reporte.md`.
+
 **Qué cerró Fase 2:** F-D4-02 — el último P0 conocido (bug de orden de
 medición + falta de persistencia en `route_board`, causaba que el DRC
 post-route reportado no coincidiera con el estado real en disco). Cerrado en
 sesión 24 (Opción X: reordenar medición + persistir + fallo visible si el save
 falla), documentado en `docs/adr/0012-route-board-persist-contract.md`, con
 test de regresión en vivo 2/2 corridas contra KiCad 10.0.4 + Freerouting real.
+
+**Qué ratificó D5 (sesión 25):** primer dogfooding de Fase 3 sobre la placa
+despertador (misma variable controlada que D3/D4). El contrato D-23.2 se
+sometió a un cross-check reforzado (V2) en 3 corridas consecutivas de
+`route_board` — `err_post` coincidió exacto (total y `por_tipo`) con
+`run_drc()` independiente inmediato en las 3, mtime del `.kicad_pcb` cambió
+post-save las 3 veces, cero `EXTERNAL_EDIT_DETECTED` espurio. Sumado a las
+2/2 corridas del test de regresión de sesión 24, el contrato acumula **5/5
+ratificaciones en producción real, sin excepción** — el workaround manual de
+refill (`delete_zone`+`add_zone`) que el fixture de D3 documentaba como
+obligatorio quedó explícitamente obsoleto. D5 también re-ratificó dos
+decisiones informales: **D-D4.1** (`get_footprint_neighbors` inclusivo,
+aplicado más allá de conectores, detectó BT1/U4 fuera del contorno antes de
+rutear) y **D-19c.1** (`add_keepout_zone` POST-route es inocuo — test
+explícito en Fase 7 de D5, 0 errores DRC nuevos). Único hallazgo: F-D5-01
+(isla GND sin vía al plano tras el primer autoroute, severidad `info`,
+resuelta con `add_via` puntual con visibilidad completa, sin cirugía a
+ciegas) — ver `docs/BACKLOG.md` P3.
 
 **Ciclo de Fase 3:**
 ```
@@ -122,7 +146,13 @@ más condicionan trabajo futuro:
   ingeniería inversa de bytecode) — D-V3.5.
 - **Nunca `add_keepout_zone` antes de un `route_board` autorruteado desde
   cero** — bloquea nets sistemáticamente (D-19c.1). Aplicar keepouts después
-  del ruteo.
+  del ruteo. Re-ratificado en D5 (sesión 25, Fase 7): keepout redundante
+  agregado POST-route sobre ANT1 no generó errores DRC nuevos.
+- **`get_footprint_neighbors` inclusivo, no acotado a conectores** (D-D4.1,
+  origen sesión 22): aplicar a cualquier footprint denso o con incertidumbre
+  geométrica antes de colocar. Re-ratificado con impacto real en D5: detectó
+  BT1/U4 con bbox fuera del contorno del board antes de invertir tiempo en
+  ruteo.
 - **Fixture helper runtime > directorio estático con coords hardcodeadas**
   para tests que dependen de geometría del board (D-24.1) — la copia de
   trabajo real puede tener origen absoluto distinto del fixture crudo.

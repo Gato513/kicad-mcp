@@ -13,22 +13,39 @@ aproximado de severidad.
 
 ## P0 — Bloqueantes de dogfooding / release
 
-Ninguno abierto hoy. F-D4-02 (el último P0) se cerró en sesión 24
-(ADR-0012). Pendiente: **confirmación en D5** de que el cierre generaliza al
-board vivo, no solo al contrato JSON (ver `hoja-de-ruta-v4.md`). Reabrir
-como P0 solo si D5 lo ratifica como regresión.
+Ninguno abierto hoy. **F-D4-02 cerrado y ratificado con evidencia 5/5**
+(2/2 test de regresión sesión 24 + 3/3 corridas de D5, sesión 25 —
+`err_post` coincidió exacto con `run_drc()` independiente, mtime cambió
+post-save, cero `EXTERNAL_EDIT_DETECTED` espurio, sin ninguna excepción en
+las 5 corridas). El cierre generaliza al board vivo en producción real, no
+solo al contrato JSON del test controlado — ver
+`docs/historico/sesiones/25-reporte.md`. **Alcance de la ratificación:
+`route_board` solamente** — `fill_zones`/`add_zone(fill=True)` siguen sin
+generalizar (P2 abajo, sesión 27). Reabrir como P0 solo si una sesión futura
+lo ratifica como regresión.
 
 ## P1 — Solder mask bridge en ANT1 (Fase 3, paso 2 de la secuencia)
 
 El pad de ANT1 hace bridge con la zona GND. El fix de sesión 21 (F-D3-01)
 protege el *hole*, no el *pad* — puede necesitar un keepout de máscara
-separado. Próxima sesión de fix inmediatamente después de D5, salvo que D5
-abra algo más urgente.
+separado. Próxima sesión de fix inmediatamente después de D5.
 
 - **Origen:** friccion de D4 (sesión 22), P1 vigente confirmado en
   `docs/historico/CONTEXT-v7.md`.
 - **Esfuerzo estimado:** por investigar (probablemente S/M — keepout de
   máscara puntual).
+- **⚠️ Dato de D5 (sesión 25) a verificar PRIMERO en sesión 26:** en el
+  baseline DRC pre-route de D5, el pad de ANT1 mostró exactamente 1
+  violación `solder_mask_bridge` contra la zona GND — pero **desapareció
+  post-route junto con las violaciones de `hole_clearance`/`clearance`**,
+  resuelta por el mismo keepout `__kicadmcp_hc__` auto-generado que protege
+  el hole (V1). DRC final de D5: 0 `solder_mask_bridge`. Esto sugiere que el
+  keepout de hole podría estar cubriendo también el caso de máscara en esta
+  geometría específica (radio del keepout > apertura de máscara del pad) —
+  no confirma que el bug esté cerrado en general, pero sí que **sesión 26
+  debe empezar verificando si el problema sigue siendo reproducible** antes
+  de invertir esfuerzo en un keepout de máscara separado. Ver
+  `docs/historico/sesiones/25-reporte.md`.
 
 ## P2 — Generalización D-23.2 a `fill_zones` / `add_zone(fill=True)` (Fase 3, paso 3)
 
@@ -38,8 +55,9 @@ reordenamiento de medición + persistencia incondicional confirmado en
 persiste el refill" que tenía `route_board` antes de sesión 24 (R14
 residual).
 
-- **Condición:** solo si D5 ratifica que el patrón de `route_board` es
-  correcto en producción — no iniciar antes.
+- **Condición:** ✅ cumplida — D5 (sesión 25) ratificó el patrón de
+  `route_board` en producción con evidencia 5/5. Listo para iniciar (sesión
+  27, después del fix P1 de sesión 26).
 - **Origen:** D-23.2, nota de sesión 24 sobre `add_zone`/`fill_zones`.
 - **Esfuerzo estimado:** M (sesión dedicada + tests de regresión, siguiendo
   el patrón ya probado en `route_board`).
@@ -116,6 +134,32 @@ que lo acotaba a "solo conectores" dejó un punto ciego: 2 `courtyards_overlap`
   toda colocación manual, no solo conectores — es un cambio de proceso/brief,
   no de código.
 
+## P3 — F-D5-01: isla GND sin vía al plano tras autoroute (vigilancia)
+
+En D5 (sesión 25), tras la primera corrida de `route_board`, dos caps
+adyacentes (C2/C3, ambos GND) quedaron unidos entre sí por un track pero sin
+vía propia al plano B.Cu — a diferencia de otros caps de la misma columna
+(C4/C6), que sí recibieron vía del autorouter. 1 error DRC
+(`unconnected_items`), diagnosticado con `get_tracks`+`get_footprint_neighbors`
+(visibilidad completa) y resuelto con un `add_via` puntual, sin re-ruteo.
+
+**No es señal V3** (no es clearance/hole_clearance/mismatch/persist_failed
+contra la zona GND) — es un dato de comportamiento de Freerouting: el motor
+puede conectar pads dentro de un net entre sí sin garantizar conectividad
+global de esa isla al plano fillado.
+
+- **Severidad:** `info` — una sola ocurrencia no ratifica un patrón.
+- **Trigger explícito de promoción a P2 (investigación):** si **2
+  dogfoodings independientes** (geometrías de colocación distintas, no la
+  misma placa con el mismo layout) reproducen el mismo patrón — isla de
+  ≥2 pads del mismo net conectados entre sí pero sin vía al plano — se
+  promueve a P2 y se investiga si es sistemático de Freerouting con
+  columnas de decoupling caps muy juntos, o un caso borde específico de la
+  geometría de D5.
+- **Origen:** F-D5-01, sesión 25. Ver `docs/historico/sesiones/25-reporte.md`
+  §Fricciones.
+- **Acción hoy:** ninguna — solo vigilar en D6/D7 (sesiones 28+).
+
 ## P4 — Diferidos sin urgencia (re-evaluar con evidencia nueva)
 
 Nice-to-have, para después de convergencia de Fase 3 (Fase 4).
@@ -143,8 +187,10 @@ Nice-to-have, para después de convergencia de Fase 3 (Fase 4).
 
 ## Higiene menor (sin severidad, cuando haya tiempo)
 
-- Fixture `tests/fixtures/despertador-routed/` puede haber quedado stale tras
-  correcciones de sch posteriores — verificar antes de reusar en D5.
+- ~~Fixture `tests/fixtures/despertador-routed/` puede haber quedado stale
+  tras correcciones de sch posteriores — verificar antes de reusar en D5.~~
+  Resuelto: D5 (sesión 25) verificó (sch sin cambios, ERC idéntico) y
+  regeneró el fixture con el ruteo nuevo.
 - Contador agregado de `post_fallback` en `health()` para monitoreo pasivo de
   la derivación local (propuesto en `historico/analisis/ANALISIS-ESTADO-Y-BACKLOG.md`
   §C3, nunca implementado, 0 fallbacks observados hasta ahora).

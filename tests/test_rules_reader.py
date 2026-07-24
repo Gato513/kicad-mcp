@@ -25,6 +25,19 @@ def _write_pro(tmp_path: Path, payload: dict, *, stem: str = "proj") -> Path:
     return pcb
 
 
+def _write_pcb_with_setup(
+    tmp_path: Path, pad_to_mask_clearance: float, *, stem: str = "proj"
+) -> Path:
+    """``.kicad_pcb`` con un ``(setup ...)`` real (sesión 26) — sin ``.kicad_pro``
+    hermano, para aislar la lectura del segundo archivo de la del primero."""
+    pcb = tmp_path / f"{stem}.kicad_pcb"
+    pcb.write_text(
+        f"(kicad_pcb\n\t(setup\n\t\t(pad_to_mask_clearance {pad_to_mask_clearance})\n\t)\n)",
+        encoding="utf-8",
+    )
+    return pcb
+
+
 # --- edge clearance: ambas ubicaciones -----------------------------------------
 
 
@@ -55,6 +68,87 @@ def test_edge_clearance_missing_field_falls_back_to_default(tmp_path: Path) -> N
     pcb = _write_pro(tmp_path, {"design_settings": {"rules": {}}})
     rules = load_project_rules(pcb)
     assert rules.min_copper_edge_clearance_mm == 0.2  # default documentado
+
+
+# --- solder_mask_to_copper_clearance (.kicad_pro) + pad_to_mask_clearance
+# (.kicad_pcb) — sesión 26, F-P1-solder-mask ------------------------------------
+
+
+@pytest.mark.unit
+def test_solder_mask_to_copper_clearance_from_design_settings_rules(tmp_path: Path) -> None:
+    pcb = _write_pro(
+        tmp_path,
+        {"design_settings": {"rules": {"solder_mask_to_copper_clearance": 0.15}}},
+    )
+    rules = load_project_rules(pcb)
+    assert rules.solder_mask_to_copper_clearance_mm == 0.15
+
+
+@pytest.mark.unit
+def test_solder_mask_to_copper_clearance_from_board_design_settings_rules(tmp_path: Path) -> None:
+    pcb = _write_pro(
+        tmp_path,
+        {"board": {"design_settings": {"rules": {"solder_mask_to_copper_clearance": 0.1}}}},
+    )
+    rules = load_project_rules(pcb)
+    assert rules.solder_mask_to_copper_clearance_mm == 0.1
+
+
+@pytest.mark.unit
+def test_solder_mask_to_copper_clearance_missing_defaults_to_zero(tmp_path: Path) -> None:
+    pcb = _write_pro(tmp_path, {"design_settings": {"rules": {}}})
+    rules = load_project_rules(pcb)
+    assert rules.solder_mask_to_copper_clearance_mm == 0.0
+
+
+@pytest.mark.unit
+def test_pad_to_mask_clearance_read_from_kicad_pcb_setup(tmp_path: Path) -> None:
+    """``pad_to_mask_clearance`` vive en el .kicad_pcb, NO en el .kicad_pro —
+    debe leerse aunque no haya ningún .kicad_pro en el directorio."""
+    pcb = _write_pcb_with_setup(tmp_path, 0.6)
+    rules = load_project_rules(pcb)
+    assert rules.pad_to_mask_clearance_mm == 0.6
+
+
+@pytest.mark.unit
+def test_pad_to_mask_clearance_missing_defaults_to_zero(tmp_path: Path) -> None:
+    pcb = tmp_path / "orphan.kicad_pcb"
+    pcb.write_text("(kicad_pcb)", encoding="utf-8")
+    rules = load_project_rules(pcb)
+    assert rules.pad_to_mask_clearance_mm == 0.0
+
+
+@pytest.mark.unit
+def test_pad_to_mask_clearance_and_pro_fields_both_read_together(tmp_path: Path) -> None:
+    """Caso real (fixture despertador): .kicad_pro con netclasses/hole
+    clearance Y .kicad_pcb con pad_to_mask_clearance, ambos aportando al
+    mismo ``ProjectRules`` — no son mutuamente excluyentes."""
+    pcb = _write_pro(
+        tmp_path,
+        {"design_settings": {"rules": {"min_hole_clearance": 0.3}}},
+    )
+    pcb.write_text(
+        "(kicad_pcb\n\t(setup\n\t\t(pad_to_mask_clearance 0.25)\n\t)\n)", encoding="utf-8"
+    )
+    rules = load_project_rules(pcb)
+    assert rules.min_hole_clearance_mm == 0.3
+    assert rules.pad_to_mask_clearance_mm == 0.25
+
+
+@pytest.mark.unit
+def test_cache_reloads_when_kicad_pcb_setup_changes_only(tmp_path: Path) -> None:
+    """El cache debe invalidar por cambios en el .kicad_pcb, no sólo en el
+    .kicad_pro — motivación central del cache de dos archivos (sesión 26)."""
+    pcb = _write_pcb_with_setup(tmp_path, 0.0)
+    first = load_project_rules(pcb)
+    assert first.pad_to_mask_clearance_mm == 0.0
+
+    time.sleep(0.01)
+    pcb.write_text(
+        "(kicad_pcb\n\t(setup\n\t\t(pad_to_mask_clearance 0.8)\n\t)\n)", encoding="utf-8"
+    )
+    second = load_project_rules(pcb)
+    assert second.pad_to_mask_clearance_mm == 0.8
 
 
 # --- netclasses + resolución por net -------------------------------------------

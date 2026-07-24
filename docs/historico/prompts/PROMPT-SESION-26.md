@@ -59,39 +59,60 @@ aislada, o si el hallazgo de D5 indica que ya está cerrado por accidente
 geométrico en la mayoría de los casos reales.
 
 1. Sobre el fixture actual (ya ruteado, DRC 0/0): correr
-   `run_drc(min_severity="error")` — confirmar 0 `solder_mask_bridge` (debería
-   coincidir con el cierre de D5).
-2. **Reproducción aislada:** crear un pad/via de test con hole PEQUEÑO
-   (ej. 0.3-0.5mm, bien por debajo de los 2mm de ANT1) muy cerca del borde
-   de una zona de cobre de net distinto, en una copia de trabajo separada
-   (NO tocar el fixture despertador). Verificar si el keepout auto-generado
-   por `enforce_hole_clearance` alcanza a cubrir la apertura de máscara en
-   ese caso, o si el bug reaparece con holes chicos.
-3. Si el bug NO reproduce ni con hole chico → el fix de F-D3-01 ya cubre el
-   caso general de forma incidental. Documentar esto claramente, proponer
-   cerrar el P1 con nota explicativa (por qué keepout de hole con margen
-   suficiente también protege máscara), y saltar a Bloque 3 (test de
-   regresión que fije este comportamiento) sin tocar código.
-4. Si el bug SÍ reproduce con hole chico → proceder a Bloque 1 (diseño del
-   fix real: probablemente ampliar el radio del keepout para cubrir
+   `run_drc(min_severity="error")` — confirmar 0 `solder_mask_bridge`
+   (debería coincidir con el cierre de D5).
+2. **Reproducción aislada:** en una copia de trabajo separada (NO tocar el
+   fixture despertador), construir el harness mínimo que aísla la variable
+   "margen de keepout vs `solder_mask_margin`":
+   - Board pequeño con outline arbitrario.
+   - Zona de cobre GND filleada cubriendo la mitad del board.
+   - Pad de test de net distinto (por ejemplo `/SIG`) con hole PEQUEÑO
+     (0.3-0.5mm, bien por debajo de los 2mm de ANT1) posicionado tal que
+     **la distancia entre el borde del pad y el borde interno de la zona
+     GND filleada sea menor que `solder_mask_margin` del proyecto pero
+     mayor que `hole_clearance`**. Esta geometría es lo que dispara el bug
+     si existe: el keepout de `enforce_hole_clearance` (radio = hole +
+     hole_clearance + margen) no alcanzaría a cubrir la superficie de
+     máscara.
+   - Correr el pipeline que dispara el mecanismo (probablemente
+     `fill_zones` o `route_board` con refill, según el precedente de
+     F-D3-01).
+   - Verificar con `run_drc()` si aparece `solder_mask_bridge` en el pad
+     de test.
+3. Si el harness no dispara la violación con hole chico y distancia
+   adversa → keepout de hole cubre el caso por diseño accidental de margen
+   suficiente, confirmar cerrando el P1 con nota y saltar a Bloque 3.
+4. Si sí dispara → bug real, proceder a Bloque 1 (diseño del fix real:
+   probablemente ampliar el radio del keepout para cubrir
    `solder_mask_margin` del proyecto, o generar un keepout de máscara
-   separado — evaluar cuál es menos invasivo dado que `enforce_hole_clearance`
-   ya tiene toda la infraestructura de keepouts auto-generados).
+   separado — evaluar cuál es menos invasivo dado que
+   `enforce_hole_clearance` ya tiene toda la infraestructura de keepouts
+   auto-generados).
 
 **Salida esperada:** decisión documentada (bug cerrado incidentalmente vs.
 bug real que necesita fix) ANTES de tocar código de producción.
+**Escenario intermedio a considerar:** si el bug reproduce parcialmente
+(aparece con hole 0.3mm pero NO con 0.5mm, o similar umbral geométrico),
+tratar como "bug real" y proceder a Bloque 1 — el fix debe cubrir el peor
+caso identificado, no solo el promedio.
 
 ---
 
 ## Bloque 1 — Diseño del cambio (timeout: 30 min, SOLO si Bloque 0 confirma bug real)
 
-1. Leer cómo se lee `solder_mask_margin` en las reglas del proyecto
-   (¿`rules_reader` ya lo expone? Si no, es el primer punto a extender).
+1. Leer cómo se lee `solder_mask_margin` en las reglas del proyecto. Si
+   `rules_reader` ya lo expone → usar directamente. Si NO lo expone →
+   **`AskUserQuestion` obligatoria al arquitecto** antes de extender
+   `rules_reader`: es superficie de tool de lectura y puede tocar
+   `tool-catalog.md` (F1). Alternativa aceptable sin extender: leer el
+   valor directamente desde el archivo del proyecto en el bridge, con el
+   mismo patrón de ingeniería inversa que se usó para edge clearance de
+   Freerouting (D-V3.5). El arquitecto decide entre las dos rutas.
 2. Decidir: ¿ampliar el radio existente del keepout de
    `enforce_hole_clearance` (radio = hole + hole_clearance + margen →
    radio = hole + max(hole_clearance, solder_mask_margin) + margen), o
-   generar un segundo keepout específico de máscara? Preferir la opción más
-   simple que no rompa el contrato existente de F-D3-01 (idempotencia,
+   generar un segundo keepout específico de máscara? Preferir la opción
+   más simple que no rompa el contrato existente de F-D3-01 (idempotencia,
    prefijo `_AUTO_KEEPOUT_PREFIX`, llamado desde `add_zone`/`fill_zones`/
    `route_board`).
 3. **ADR requerido si el cambio introduce un contrato nuevo** (no solo
@@ -154,3 +175,17 @@ export KICAD_MCP_FREEROUTING_JAR=/home/astra/.local/share/kicad/9.0/3rdparty/plu
   test de regresión que fija el comportamiento actual como contrato.
 - Sesión 27 = generalización D-23.2 a `fill_zones`/`add_zone(fill=True)`,
   ya con condición de entrada cumplida desde D5.
+
+**Nota sobre timeboxing en el escenario "no hay bug":** si el Bloque 0
+concluye que el P1 se cerró incidentalmente, el tiempo total efectivo de
+la sesión baja a ~105 min (Bloque 0: 30 + Bloque 3: 45 + Bloque 4: 30, con
+Bloques 1 y 2 salteados). NO usar el tiempo ahorrado para expandir alcance
+(por ejemplo, incluir preliminares de la generalización de sesión 27, o
+meter fixes cosméticos, o investigar D-23.3/R16). El escenario "no hay
+bug" es un cierre válido y limpio; terminar la sesión temprano es
+correcto. La única expansión aceptable del tiempo ahorrado es reforzar el
+test de regresión con más assertions defensivas — por ejemplo, verificar
+el mismo comportamiento con dos tamaños de hole distintos (pequeño y
+grande) para asegurar cobertura de rango, o con `solder_mask_margin`
+alterado a un valor más adverso para dejar documentado el umbral de
+seguridad del comportamiento actual.

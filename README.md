@@ -1,55 +1,69 @@
 # kicad-mcp — Servidor MCP para automatización de KiCad
 
-Agente LLM que opera sobre KiCad: lee esquemáticos en formato comprimido (TOON),
-ejecuta herramientas atómicas, y actualiza el contexto por delta + área local.
+Agente LLM que opera sobre KiCad 10.0.4: lee esquemáticos/PCB en formato
+comprimido (TOON), muta mediante herramientas atómicas vía IPC (kicad-python)
+y kicad-cli, y actualiza el contexto por delta + área local. El diferencial
+declarado es la economía de tokens (TOON + delta), no la mera conectividad
+con KiCad.
+
+## Estado (post-sesión 24, 2026-07-24)
+
+Ya **no** es un MVP solo-lectura: el loop completo de escritura de PCB está
+cerrado — esquemático → colocación → contorno → zonas/plano GND → ruteo
+(autorouter Freerouting) → DRC → recarga programática → gerbers — validado
+contra KiCad real en 4 rondas de dogfooding (D1–D4). Ver `docs/ROADMAP.md`
+para el estado exacto y la próxima etapa (D5).
+
+Escritura de esquemático sigue siendo la superficie más débil: las tools
+existentes son puramente aditivas (sin CRUD) — ver `docs/BACKLOG.md`.
 
 ## Quickstart
 
 ```bash
-# Fase 0: verificar el entorno (obligatoria)
+# Fase 0: verificar el entorno (obligatoria al inicio de cada sesión)
 python3 scripts/verificar_entorno.py
 
-# Si todo OK, seguir el PROMPT-SESION-01.md
+uv sync                                  # instalar deps
+uv run pytest -m "not integration"      # tests (unit + golden)
 ```
+
+Para retomar el trabajo del proyecto: leer `CLAUDE.md` (cómo trabajar) +
+`docs/ROADMAP.md` (qué sigue) + `docs/BACKLOG.md` (pendientes). No hace falta
+leer la cronología completa en `docs/historico/` salvo para investigar el
+porqué de una decisión puntual.
 
 ## Estructura
 
 ```
-docs/               — Documentación y especificaciones (contratos)
-  arquitectura.md   — Diseño v0.2 del sistema
-  adr/              — Decisiones de arquitectura (a generar)
-  specs/            — Contratos técnicos (TOON, tools, restricciones, glosario)
-  glosario.md       — Dominio EDA/KiCad
+CLAUDE.md            — memoria del proyecto para el agente ejecutor (leer primero)
+docs/
+  INDEX.md            — mapa de navegación: qué leer y cuándo
+  CONTEXT.md          — visión del sistema, estado, riesgos (mantenido por el arquitecto)
+  DECISIONES.md        — índice de ADR + decisiones vigentes no formalizadas
+  ROADMAP.md          — estado actual y próximas etapas
+  BACKLOG.md          — pendientes priorizados
+  arquitectura.md     — diseño del sistema (v0.2)
+  glosario.md         — dominio EDA/KiCad
+  componentes-pcb.md  — referencia del PCB de prueba (202 comp.)
+  guias/              — protocolos operativos (paleta de símbolos, pruebas GUI)
+  specs/              — CONTRATOS: TOON, catálogo de tools, restricciones (frontera F1/F3)
+  adr/                — decisiones de arquitectura individuales
+  historico/          — reportes de sesión, prompts, investigaciones, dogfooding
+                        (evidencia del proceso; no hace falta leerlo para
+                        entender el estado actual)
 
-src/kicad_mcp/      — Código del servidor (a generar)
-  server.py         — Servidor MCP + protocolo
-  toon/             — Encoder TOON v1
-  snapshots/        — Cache + índice espacial
-  tools/            — Tools MCP por categoría
-  errors.py         — Taxonomía de errores
+src/kicad_mcp/
+  toon/        — encoder TOON + delta
+  snapshots/   — cache de estado + índice espacial
+  tools/       — tools MCP (world/, sch, pcb, validate/, export/)
+  bridge/      — kicad-python (IPC) y kicad-cli (subprocess)
+  gates/       — sistema de gates de autonomía
+  audit/       — log JSONL de mutaciones
 
 tests/
-  golden/           — Golden files: input + expected output (INMUTABLES)
-  fixtures/         — Proyectos KiCad de prueba (sintéticos, validados contra kicad-cli)
-  (tests/*.py)      — Tests (a generar)
-
-.claude/            — Permisos y configuración de Claude Code
-CLAUDE.md           — Memoria del proyecto (leer primero)
-PROMPT-SESION-01.md — Prompt inicial para el agente
-pyproject.toml      — Dependencias pre-aprobadas
+  golden/      — pares entrada→salida del encoder (INMUTABLES, frontera F1)
+  fixtures/    — proyectos KiCad de prueba
 ```
-
-## Para el agente
-
-1. Lee `CLAUDE.md` completamente.
-2. Ejecuta `python3 scripts/verificar_entorno.py` (Fase 0).
-3. Sigue `PROMPT-SESION-01.md`.
-
-## Para el humano
-
-- `docs/arquitectura.md` — contexto del sistema.
-- `docs/preparacion-claude-code.md` — cómo se preparó esto para el agente.
-- `scripts/verificar_entorno.py` — diagnóstico de tu máquina (corre antes de cada sesión).
 
 ## Documentación de referencia
 
@@ -57,12 +71,10 @@ pyproject.toml      — Dependencias pre-aprobadas
 - `docs/specs/tool-catalog.md` — catálogo de tools + taxonomía de errores (contrato F3).
 - `docs/specs/restricciones-kicad.md` — limitaciones técnicas de KiCad.
 - `docs/glosario.md` — dominio EDA (consultar ante dudas).
+- `docs/adr/` — decisiones de arquitectura, una por archivo.
 
-## Estado
+## Para el humano
 
-MVP (solo-lectura): contexto + validación + exportación.
-
-**Verificado:** fixtures sintéticos validados contra kicad-cli real; permisos del agente
-configurados; arquitectura v0.2 con decisiones cerradas.
-
-**Pending (la máquina del humano):** KiCad 10 (KiCad 9 mínimo); habilitar API server.
+- `docs/guias/pruebas-gui.md` — cómo correr los tests `integration_gui` a mano.
+- `docs/guias/guia-paleta.md` — cómo mantener la "hoja paleta" de símbolos.
+- `scripts/verificar_entorno.py` — diagnóstico de tu máquina (corre antes de cada sesión).

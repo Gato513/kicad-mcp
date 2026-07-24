@@ -64,12 +64,15 @@ activada, investigación sesión 23, fix sesión 24 Opción X mergeada
   POST-route inocuo) re-ratificados con impacto real en D5.
 
 **Deuda técnica conocida y priorizada:**
-- P1: solder mask bridge en ANT1 (pad no protegido por hole keepout,
-  aparecido en D4 como colateral del fix sesión 21). **Sesión 26 —
-  verificar primero el hallazgo de D5**: en la corrida de D5 el
-  `solder_mask_bridge` de ANT1 desapareció junto con el `hole_clearance`
-  al aplicarse el keepout auto-generado — puede que el alcance del fix sea
-  menor de lo previsto. Ver `docs/BACKLOG.md` P1.
+- P1: solder mask bridge en ANT1 — **sesión 26 la investigó, no la
+  cerró.** Refutó la hipótesis de D5 (el keepout de hole NO cubría el caso
+  de máscara, era geométricamente imposible — r=1.27mm vs cobre del pad
+  r=1.50mm), confirmó el bug como real y alcanzable con valores de
+  `pad_to_mask_clearance` realistas, diseñó un fix con el arquitecto, pero
+  la verificación contra KiCad real mostró que el fix no resuelve el bug
+  en el valor que su propia fórmula calcula — mecanismo de
+  `solder_mask_bridge` no aislado. Re-estimado M/L. Ver `docs/BACKLOG.md`
+  P1 y `docs/investigacion/26-solder-mask-ant1.md`.
 - P2 top: generalización D-23.2 a `fill_zones` y `add_zone(fill=True)`
   (mismo patrón conceptual, mismo bug latente). **Condición de entrada
   cumplida** — D5 ratificó el patrón en `route_board` (sesión 27).
@@ -101,14 +104,15 @@ NO expandir capabilities. NO escalar complejidad prematuramente.
 | Sesión | Contenido | Gate de salida | Estado |
 |---|---|---|---|
 | 25 | **Dogfooding 5** con baseline dinámico + V1/V2/V3 reforzadas | Nota ≥9, V2 3/3 con mtime cambio y sin `EXTERNAL_EDIT_DETECTED` espurio, delta V4 sin violaciones nuevas | ✅ **Completada — 9.5/10.** Gate cumplido sin excepción: V2 3/3 limpio, delta V4 = 1 hallazgo menor resuelto misma sesión (F-D5-01). Ver `docs/historico/sesiones/25-reporte.md`. |
-| 26 | Fix P1 solder mask bridge ANT1 + test de regresión | Test verde, sin regresiones en tests existentes | ⏭️ **Siguiente.** Verificar primero si el hallazgo de D5 (solder_mask_bridge de ANT1 resuelto por el keepout de hole existente) cambia el alcance del fix — ver `docs/BACKLOG.md` P1. |
-| 27 | Generalización D-23.2 a `fill_zones` + `add_zone(fill=True)` + tests | Tests de regresión análogos al de sesión 24, verdes | Pendiente — condición de entrada (D5 verde) ya cumplida. |
-| 28 | **Dogfooding 6** con misma placa despertador | Nota ≥9, ratifica sesiones 26+27, sin P0/P1 nuevos | Pendiente. |
-| 29+ | Iterar hasta convergencia si D6 abre pendientes | — | Pendiente. |
+| 26 | Fix P1 solder mask bridge ANT1 + test de regresión | Test verde, sin regresiones en tests existentes | ⚠️ **Completada — investigación abierta, sin fix.** Hipótesis de D5 refutada, bug confirmado real, fix diseñado NO verificado contra KiCad real — mecanismo no aislado. P1 sigue abierto, re-estimado M/L. Ver `docs/investigacion/26-solder-mask-ant1.md` y `docs/historico/sesiones/26-reporte.md`. |
+| 27 | Generalización D-23.2 a `fill_zones` + `add_zone(fill=True)` + tests | Tests de regresión análogos al de sesión 24, verdes | ⏭️ **Siguiente.** Condición de entrada (D5 verde) cumplida, no bloqueada por P1 (ortogonal). |
+| 28 | **Dogfooding 6** con misma placa despertador | Nota ≥9, ratifica sesión 27, sin P0/P1 nuevos | Pendiente. |
+| 29+ | Iterar hasta convergencia si D6 abre pendientes; sesión dedicada a P1 si sigue abierto | — | Pendiente. |
 
 **Criterio de cierre de Fase 3 (habilita Fase 4):**
 - ≥2-3 dogfoodings consecutivos verdes (nota ≥9) sobre misma placa.
-- P1 (solder mask ANT1) resuelto y ratificado.
+- P1 (solder mask ANT1) resuelto y ratificado — **reabierto tras sesión 26**,
+  requiere sesión de investigación dedicada antes de reintentar el fix.
 - Generalización D-23.2 completada y ratificada.
 - Sin P0 nuevos en la superficie ratificada.
 - Estabilidad sostenida.
@@ -142,8 +146,9 @@ Detalle priorizado vigente en `docs/BACKLOG.md`. Resumen:
 
 - **P0:** vacío tras D5. F-D4-02 cerrado y ratificado 5/5. Reabrir solo si
   un dogfooding futuro lo fuerza.
-- **P1:** solder mask bridge ANT1 (sesión 26 — verificar primero el
-  hallazgo de D5 sobre alcance real del fix).
+- **P1:** solder mask bridge ANT1 — investigado en sesión 26 (hipótesis de
+  D5 refutada, bug confirmado real, fix diseñado no verificado), sigue
+  abierto, re-estimado M/L.
 - **P2 top:** generalización D-23.2 a `fill_zones` + `add_zone(fill=True)`
   (sesión 27, condición de entrada cumplida — D5 salió verde).
 - **P2 polish (post-Fase 3):** ADRs de decisiones aún no formalizadas,
@@ -194,6 +199,10 @@ el diagnóstico.
   identificó la causa raíz de F-D4-02. Obligatorio de leer antes de
   re-hipotetizar sobre bugs de reporte/persistencia en pipelines
   similares.
+- **docs/investigacion/26-solder-mask-ant1.md:** investigación de P1
+  (solder mask bridge ANT1) — hipótesis de D5 refutada, bug confirmado
+  real, fix diseñado no verificado, mecanismo de `solder_mask_bridge` de
+  KiCad no aislado. Obligatorio de leer antes de re-intentar el fix.
 - **PROMPT-SESION-XX.md:** prompts operacionales generados por el
   arquitecto para cada sesión. Se descartan una vez la sesión cierra
   (no se preservan como documentación).

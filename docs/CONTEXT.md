@@ -69,11 +69,20 @@ aumento progresivo de confianza, arranca en sesión 25). El objetivo de Fase 3
 ya no es "encontrar causa raíz" sino "ganar confianza estadística en que las
 causas raíz eliminadas realmente no vuelven".
 
-**Estado en una línea (post-sesión 25):** D5 — primer dogfooding de Fase 3 —
-salió **verde, 9.5/10**; contrato D-23.2 ratificado **5/5 corridas** en
-producción real (2/2 test de regresión sesión 24 + 3/3 D5), cero P0/P1
-nuevos, V3 nunca activada. Próximo paso: sesión 26 (fix P1 solder mask
-ANT1). Detalle: `docs/historico/sesiones/25-reporte.md`.
+**Estado en una línea (post-sesión 26):** D5 (sesión 25) — primer dogfooding
+de Fase 3 — salió **verde, 9.5/10**; contrato D-23.2 ratificado **5/5
+corridas** en producción real. Sesión 26 refutó con evidencia geométrica la
+hipótesis de D5 sobre P1 (el keepout de hole NO cubría el caso de máscara
+por accidente, como se creía), confirmó que el bug de `solder_mask_bridge`
+es real y alcanzable con valores de `pad_to_mask_clearance` realistas, pero
+el fix diseñado con el arquitecto **no resolvió el bug en verificación
+contra KiCad real** — mecanismo no aislado, P1 queda **abierto** como
+investigación pendiente (re-estimado M/L). Sin P0 nuevos. Próximo paso:
+sesión 27 (generalización D-23.2 a `fill_zones`/`add_zone(fill=True)`, no
+bloqueada por P1 — ver `docs/BACKLOG.md`). Detalle:
+`docs/historico/sesiones/25-reporte.md`,
+`docs/investigacion/26-solder-mask-ant1.md`,
+`docs/historico/sesiones/26-reporte.md`.
 
 **Qué cerró Fase 2:** F-D4-02 — el último P0 conocido (bug de orden de
 medición + falta de persistencia en `route_board`, causaba que el DRC
@@ -124,7 +133,11 @@ desperdicio de sesión — ver "disciplina de Fase 3" más abajo.
 **Criterio operacional de convergencia** (condición para pensar en Fase 4 —
 release / features nuevos / escenarios más complejos):
 - ≥2-3 dogfoodings consecutivos verdes (nota ≥9) sobre la misma placa.
-- P1 conocido (solder mask bridge ANT1) resuelto.
+- P1 conocido (solder mask bridge ANT1) resuelto — **reabierto tras sesión
+  26**: bug confirmado real, fix no verificado, investigación pendiente
+  (ver `docs/BACKLOG.md` P1, `docs/investigacion/26-solder-mask-ant1.md`).
+  No bloquea el resto de la secuencia de convergencia (D-23.2 sí puede
+  avanzar en paralelo).
 - Generalización del contrato D-23.2 a `fill_zones`/`add_zone(fill=True)`
   completada y ratificada.
 - Sin P0 nuevos en la superficie ratificada.

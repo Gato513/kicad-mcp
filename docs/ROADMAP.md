@@ -22,8 +22,9 @@ P0/P1 nuevos, V3 nunca activada (detalle:
 mergeado hasta sesión 24 (docs+fixture de sesión 25 en preparación). **El
 proyecto está en Fase 3 (consolidación)** — ver `docs/CONTEXT.md`
 §"Estado actual" para el modelo de fases, y `hoja-de-ruta-v4.md` para la
-secuencia estricta vigente (D5 ✓ → fix P1 solder mask ANT1 [sesión 26] →
-generalización D-23.2 [sesión 27] → D6 [sesión 28] → convergencia).
+secuencia vigente (D5 ✓ → investigación P1 solder mask ANT1 [sesión 26,
+**abierta, sin fix**] → generalización D-23.2 [sesión 27, no bloqueada por
+P1] → D6 [sesión 28] → convergencia).
 
 ## Historial de dogfooding (la métrica que importa)
 
@@ -36,6 +37,7 @@ generalización D-23.2 [sesión 27] → D6 [sesión 28] → convergencia).
 | — | 23 | — | Investigación pura de F-D4-02: causa raíz = orden de medición + falta de persistencia en `route_board` (no falta de protección). |
 | — | 24 | — | **Fix aplicado y validado en vivo** (ADR-0012/D-23.2): DRC se mide después de refill+enforce, y se persiste con `save_board()` explícito. Test de regresión 2/2 corridas. |
 | D5 | 25 | **9.5/10** | **Primer verde de Fase 3.** Contrato D-23.2 ratificado 3/3 corridas adicionales (5/5 acumulado con sesión 24) sin ninguna divergencia. ERC 0, colocación 23/23, ruteo 10/10, DRC final 0/0, gerbers+BOM limpios. Único hallazgo: F-D5-01 (isla GND sin vía al plano, `info`, resuelta en la misma sesión). Cero contactos humanos. |
+| — | 26 | — | Investigación P1 solder mask ANT1: hipótesis de D5 refutada (keepout de hole no cubría el caso de máscara), bug confirmado real y alcanzable, pero el fix diseñado no se verificó contra KiCad real — mecanismo no aislado, P1 queda abierto (`docs/investigacion/26-solder-mask-ant1.md`). |
 
 La caída D3→D4 (8.5 → 4.5) fue causada por un bug estructural real
 (`route_board` sobreestimaba sus propios errores y no persistía el fix), no

@@ -24,28 +24,58 @@ solo al contrato JSON del test controlado — ver
 generalizar (P2 abajo, sesión 27). Reabrir como P0 solo si una sesión futura
 lo ratifica como regresión.
 
-## P1 — Solder mask bridge en ANT1 (Fase 3, paso 2 de la secuencia)
+## P1 — Solder mask bridge en ANT1 (Fase 3, paso 2 de la secuencia) — ⚠️ ABIERTO, investigación sin cerrar (sesión 26)
 
 El pad de ANT1 hace bridge con la zona GND. El fix de sesión 21 (F-D3-01)
-protege el *hole*, no el *pad* — puede necesitar un keepout de máscara
-separado. Próxima sesión de fix inmediatamente después de D5.
+protege el *hole*, no el *pad*. **Sesión 26 confirmó el bug como real y
+alcanzable, diseñó e implementó un fix con el arquitecto, pero la
+verificación contra KiCad real mostró que el fix NO resuelve el bug en el
+valor que su propia fórmula calcula — el mecanismo exacto de
+`solder_mask_bridge` de KiCad no se pudo aislar con confianza dentro del
+timebox de la sesión.** Ver `docs/investigacion/26-solder-mask-ant1.md`
+(reporte completo, incluye el barrido que aisló el umbral real entre
+1.82mm y 2.0mm de radio de keepout, sin explicación completa) y
+`docs/historico/sesiones/26-reporte.md`.
 
-- **Origen:** friccion de D4 (sesión 22), P1 vigente confirmado en
+- **Origen:** fricción de D4 (sesión 22), P1 vigente confirmado en
   `docs/historico/CONTEXT-v7.md`.
-- **Esfuerzo estimado:** por investigar (probablemente S/M — keepout de
-  máscara puntual).
-- **⚠️ Dato de D5 (sesión 25) a verificar PRIMERO en sesión 26:** en el
-  baseline DRC pre-route de D5, el pad de ANT1 mostró exactamente 1
-  violación `solder_mask_bridge` contra la zona GND — pero **desapareció
-  post-route junto con las violaciones de `hole_clearance`/`clearance`**,
-  resuelta por el mismo keepout `__kicadmcp_hc__` auto-generado que protege
-  el hole (V1). DRC final de D5: 0 `solder_mask_bridge`. Esto sugiere que el
-  keepout de hole podría estar cubriendo también el caso de máscara en esta
-  geometría específica (radio del keepout > apertura de máscara del pad) —
-  no confirma que el bug esté cerrado en general, pero sí que **sesión 26
-  debe empezar verificando si el problema sigue siendo reproducible** antes
-  de invertir esfuerzo en un keepout de máscara separado. Ver
-  `docs/historico/sesiones/25-reporte.md`.
+- **Esfuerzo estimado:** M/L (re-estimado desde S/M — requiere aislar un
+  mecanismo de KiCad que resistió una sesión completa de investigación
+  dirigida, posiblemente necesita inspeccionar código fuente de KiCad).
+- **Retracción explícita — la hipótesis de D5/sesión 25 es FALSA:** "el
+  keepout de hole podría estar cubriendo también el caso de máscara (radio
+  del keepout > apertura de máscara del pad)" — medido: keepout
+  `__kicadmcp_hc__pad_ANT1_1` tiene r=1.27mm, el cobre del pad tiene
+  r=1.50mm. El keepout está ÍNTEGRAMENTE DENTRO del cobre del pad y solo en
+  B.Cu — geométricamente incapaz de resolver nada de máscara. Ver
+  investigación 26 §1. (Para J1, sin cobre de pad propio en sus NPTH, el
+  mecanismo de hole SÍ sigue siendo el único y funciona — no confundir los
+  dos casos.)
+- **Confirmado real y alcanzable (investigación 26 §3):** con
+  `pad_to_mask_clearance` del proyecto ≥ ~0.22mm (valor dentro de rangos
+  reales de fabricación/ensamblado, aunque el fixture despertador usa 0 —
+  no expuesto hoy en ese proyecto), aparece un `solder_mask_bridge` de
+  ANT1 contra la zona GND SIN `clearance`/`hole_clearance` co-localizada —
+  un modo de falla genuinamente independiente del hole.
+- **Causa raíz del baseline específico de D5** (probable, no confirma ni
+  refuta el bug independiente de arriba): fill rancio — `add_zone(fill=true)`
+  se llamó ANTES de las 23 `move_footprint` en D5, y `move_footprint` no
+  dispara refill. Ver investigación 26 §2. **Hallazgo de proceso
+  transferible:** `fill_zones()` obligatorio tras colocación masiva, antes
+  de leer el baseline DRC — anotado también en la sección de correcciones
+  puntuales abajo.
+- **Estado del código:** el intento de fix (extender el radio del keepout
+  de `enforce_hole_clearance` para cubrir también la apertura de máscara)
+  se implementó y se REVIRTIÓ en la misma sesión tras fallar la
+  verificación — no está en el árbol de trabajo. Lo único que se conserva
+  es la extensión de `rules_reader.py` para leer `pad_to_mask_clearance`
+  (`.kicad_pcb`) y `solder_mask_to_copper_clearance` (`.kicad_pro`) — lectura
+  correcta y testeada, independiente de resolver el mecanismo, que
+  cualquier investigación futura sobre este tema va a necesitar.
+- **Condición de entrada para la próxima sesión sobre este tema:** leer
+  investigación 26 completa (especialmente §5/§6, el barrido de radio de
+  keepout que no se explica del todo) antes de re-intentar un fix — evita
+  repetir el mismo diseño que ya se probó insuficiente.
 
 ## P2 — Generalización D-23.2 a `fill_zones` / `add_zone(fill=True)` (Fase 3, paso 3)
 
@@ -57,7 +87,9 @@ residual).
 
 - **Condición:** ✅ cumplida — D5 (sesión 25) ratificó el patrón de
   `route_board` en producción con evidencia 5/5. Listo para iniciar (sesión
-  27, después del fix P1 de sesión 26).
+  27) — **no bloqueado por P1**: sesión 26 dejó P1 abierto (investigación sin
+  cerrar, no un fix pendiente de aplicar), y P1/D-23.2 son ortogonales
+  (mask bridge vs. contrato de persistencia). Iniciar 27 sin esperar a P1.
 - **Origen:** D-23.2, nota de sesión 24 sobre `add_zone`/`fill_zones`.
 - **Esfuerzo estimado:** M (sesión dedicada + tests de regresión, siguiendo
   el patrón ya probado en `route_board`).
@@ -72,6 +104,7 @@ residual).
 | Asimetría `delete_track` sí / `delete_footprint` no | D-R3, D-R8 | Abierto, sin ADR. |
 | Doc del lock no-reentrante del bridge (`self._lock` no es reentrante) | Sesión 19d | Pendiente: documentar en `bridge/README.md` o similar. |
 | Issue upstream a Freerouting sobre `gui.enabled=true` colgando la JVM (R9) | Sesión 17 | Mitigado en código; issue no abierto (no urgente). |
+| `move_footprint` no dispara refill de zonas — un DRC leído de disco tras mover pads sobre un plano mide fill rancio, no el estado real | Sesión 26, investigación 26 §2 | Nota de proceso: `fill_zones()` obligatorio tras colocación masiva, antes del baseline DRC. No es un bug de la tool (su contrato nunca prometió refill) — es un punto ciego de brief/protocolo de dogfooding. |
 
 ## P2 — Release polish (diferido hasta convergencia de Fase 3)
 

@@ -51,6 +51,7 @@ class _FakeBridge(IpcBridge):
         raise_not_running: bool = False,
         reload_error: Exception | None = None,
         n_zones: int = 0,
+        fail_save_after: int | None = None,
     ) -> None:
         self._client = None  # type: ignore[assignment]
         self._instance_token = None
@@ -60,6 +61,10 @@ class _FakeBridge(IpcBridge):
         self._raise_not_running = raise_not_running
         self._reload_error = reload_error
         self._n_zones = n_zones  # P4 (sesión 19): zonas pre-route fakeadas
+        # D-23.2 (sesión 24): a partir de la llamada N+1 a save_board(),
+        # levanta KicadMcpError — simula el fallo de persistencia post-refill
+        # sin tocar kipy real. ``None`` = nunca falla.
+        self._fail_save_after = fail_save_after
         self.saved: list[str] = []
         self.reload_calls = 0
         self.refill_calls = 0
@@ -83,6 +88,14 @@ class _FakeBridge(IpcBridge):
 
     def save_board(self, board: BoardHandle) -> None:  # type: ignore[override]
         self.saved.append(self._open_board_path or "")
+        if self._fail_save_after is not None and len(self.saved) > self._fail_save_after:
+            from kicad_mcp.errors import KicadMcpError
+
+            raise KicadMcpError(
+                code=ErrorCode.KICAD_CLI_FAILED,
+                message="fake: save_board falló (test D-23.2).",
+                hint="test only",
+            )
 
     def reload_board_from_disk(self, board: BoardHandle) -> tuple[int, int]:  # type: ignore[override]
         self.reload_calls += 1
@@ -429,6 +442,51 @@ async def test_route_board_refills_zones_when_present_and_reloaded(
     assert payload["zones"]["refilladas"] == 2
     assert payload["zones"]["fill_ms"] >= 0.0
     assert bridge.refill_calls == 1
+    # D-23.2 (ADR-0012, sesión 24): además del save_board implícito
+    # pre-route, el bloque refill+enforce persiste explícitamente el vivo ya
+    # arreglado — dos llamadas a save_board en total.
+    assert bridge.saved == [str(project / "proj.kicad_pcb")] * 2
+
+
+@pytest.mark.unit
+async def test_route_board_post_route_persist_failed_when_save_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D-23.2 (ADR-0012, sesión 24): si el ``save_board()`` posterior al
+    refill+enforce falla, ``route_board`` levanta ``POST_ROUTE_PERSIST_FAILED``
+    en vez de reportar un ``err_post`` que no coincide con lo persistido a
+    disco — el corazón del bug de F-D4-02 era exactamente reportar sin poder
+    garantizar esa persistencia."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    _patch_pipeline(
+        monkeypatch,
+        drc_sequence=[_drc(64)],
+        result=_result(project),
+    )
+    # 1ra llamada a save_board (implícita, pre-route) OK; la 2da (post-refill,
+    # dentro del bloque refill+enforce) falla.
+    bridge = _FakeBridge(
+        open_board_path=str(project / "proj.kicad_pcb"), n_zones=2, fail_save_after=1
+    )
+    mcp = _server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("route_board", {})
+
+    assert result.isError
+    assert "POST_ROUTE_PERSIST_FAILED" in _text(result)
+    # El bridge SÍ corrió refill+enforce (el vivo tiene el fix) antes de
+    # fallar al guardar — sólo la persistencia falló.
+    assert bridge.refill_calls == 1
+    assert bridge.enforce_hole_clearance_calls == 1
+    assert len(bridge.saved) == 2  # el intento fallido también quedó registrado
+    # El .kicad_pcb en disco es el ruteo crudo (el save que lo hubiera
+    # actualizado con el post-refill falló) — no queda a medio escribir.
+    assert (project / "proj.kicad_pcb").read_text() == "(kicad_pcb routed)"
+    # No se llegó a computar/registrar post_report ni snapshot — el error
+    # aborta antes de esos pasos, sin dejar el flag D-14.1 en un estado
+    # inconsistente con el snapshot que nunca se registró.
 
 
 @pytest.mark.unit

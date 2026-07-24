@@ -62,6 +62,24 @@ y en los reportes de sesión referenciados.
   posteriores comparan solo los deltas contra ese baseline. Convertir a
   allowlist estática solo cuando N corridas consecutivas ratifican
   estabilidad del residual.
+- **D-26.1 (refill obligatorio post-colocación masiva antes de leer
+  baseline DRC)**: `move_footprint` NO dispara refill de zonas — solo
+  `add_zone(fill=True)`, `fill_zones`, `route_board` (con refill) y
+  `delete_tracks_bulk` lo hacen (sesión 26,
+  `docs/investigacion/26-solder-mask-ant1.md` §2). Un baseline DRC leído
+  inmediatamente después de una colocación masiva sobre una zona ya
+  filleada mide fill rancio (geometría previa a los moves), no el estado
+  real de la zona contra los footprints en su posición final. Todo flujo
+  (dogfooding o test) que combine `move_footprint` masivo con lectura de
+  baseline DRC según D-24.2 debe invocar `fill_zones()` explícito entre la
+  colocación y esa lectura. **Consecuencia sobre el baseline V4 de D5**:
+  las 6 violaciones que registró (3× `hole_clearance` J1, 1×
+  `hole_clearance`/1× `clearance`/1× `solder_mask_bridge` ANT1) no
+  representan la geometría real post-colocación — no se re-audita
+  retroactivamente, el hallazgo aplica de D6 en adelante. **Pendiente de
+  ratificación**: si `fill_zones()` post-colocación en D6 cambia el
+  conteo/composición del baseline respecto a lo que D5 midió sin ese paso,
+  es evidencia dura de la validez de D-26.1.
 
 ### Sobre esquemático
 - **D-19b.1**: `lib_symbol_mismatch` NO se resuelve con "Update Symbols from Library" — es destructivo cuando el símbolo local diverge intencionalmente (rompió 6 pines en sesión 19b).

@@ -105,15 +105,19 @@ NO expandir capabilities. NO escalar complejidad prematuramente.
 |---|---|---|---|
 | 25 | **Dogfooding 5** con baseline dinámico + V1/V2/V3 reforzadas | Nota ≥9, V2 3/3 con mtime cambio y sin `EXTERNAL_EDIT_DETECTED` espurio, delta V4 sin violaciones nuevas | ✅ **Completada — 9.5/10.** Gate cumplido sin excepción: V2 3/3 limpio, delta V4 = 1 hallazgo menor resuelto misma sesión (F-D5-01). Ver `docs/historico/sesiones/25-reporte.md`. |
 | 26 | Fix P1 solder mask bridge ANT1 + test de regresión | Test verde, sin regresiones en tests existentes | ⚠️ **Completada — investigación abierta, sin fix.** Hipótesis de D5 refutada, bug confirmado real, fix diseñado NO verificado contra KiCad real — mecanismo no aislado. P1 sigue abierto, re-estimado M/L. Ver `docs/investigacion/26-solder-mask-ant1.md` y `docs/historico/sesiones/26-reporte.md`. |
-| 27 | Generalización D-23.2 a `fill_zones` + `add_zone(fill=True)` + tests | Tests de regresión análogos al de sesión 24, verdes | ⏭️ **Siguiente.** Condición de entrada (D5 verde) cumplida, no bloqueada por P1 (ortogonal). |
+| 27 | Generalización D-23.2 a `fill_zones` + `add_zone(fill=True)` + tests | Tests de regresión análogos al de sesión 24, verdes | ⏭️ **Siguiente.** Condición de entrada (D5 verde) cumplida, no bloqueada por sesión 26. |
+| N | Sesión de investigación P4.0-style: mecanismo `solder_mask_bridge` de KiCad (retoma P1) | Mecanismo aislado con confianza, ver `docs/investigacion/26-solder-mask-ant1.md` §5-§6 | Agendable post-27, requerido antes de retomar el fix de P1. |
 | 28 | **Dogfooding 6** con misma placa despertador | Nota ≥9, ratifica sesión 27, sin P0/P1 nuevos | Pendiente. |
-| 29+ | Iterar hasta convergencia si D6 abre pendientes; sesión dedicada a P1 si sigue abierto | — | Pendiente. |
+| 29+ | Iterar hasta convergencia si D6 abre pendientes | — | Pendiente. |
 
 **Criterio de cierre de Fase 3 (habilita Fase 4):**
 - ≥2-3 dogfoodings consecutivos verdes (nota ≥9) sobre misma placa.
 - P1 (solder mask ANT1) resuelto y ratificado — **reabierto tras sesión 26**,
   requiere sesión de investigación dedicada antes de reintentar el fix.
-- Generalización D-23.2 completada y ratificada.
+- Generalización D-23.2 completada y ratificada. **Nota (sesión 26):**
+  D-26.1 (refill obligatorio pre-baseline DRC, `docs/DECISIONES.md`)
+  también pendiente de ratificación en D6 — es hallazgo transferible de
+  proceso, sin sesión de fix propia, no una generalización de código.
 - Sin P0 nuevos en la superficie ratificada.
 - Estabilidad sostenida.
 

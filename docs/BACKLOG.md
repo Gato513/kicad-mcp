@@ -24,7 +24,7 @@ solo al contrato JSON del test controlado — ver
 generalizar (P2 abajo, sesión 27). Reabrir como P0 solo si una sesión futura
 lo ratifica como regresión.
 
-## P1 — Solder mask bridge en ANT1 (Fase 3, paso 2 de la secuencia) — ⚠️ ABIERTO, investigación sin cerrar (sesión 26)
+## P1 — Solder mask bridge en ANT1 (re-estimado M/L, próximo paso = investigación) — ⚠️ ABIERTO, sesión 26 no lo cerró
 
 El pad de ANT1 hace bridge con la zona GND. El fix de sesión 21 (F-D3-01)
 protege el *hole*, no el *pad*. **Sesión 26 confirmó el bug como real y
@@ -33,49 +33,60 @@ verificación contra KiCad real mostró que el fix NO resuelve el bug en el
 valor que su propia fórmula calcula — el mecanismo exacto de
 `solder_mask_bridge` de KiCad no se pudo aislar con confianza dentro del
 timebox de la sesión.** Ver `docs/investigacion/26-solder-mask-ant1.md`
-(reporte completo, incluye el barrido que aisló el umbral real entre
-1.82mm y 2.0mm de radio de keepout, sin explicación completa) y
-`docs/historico/sesiones/26-reporte.md`.
+(reporte completo) y `docs/historico/sesiones/26-reporte.md`.
 
 - **Origen:** fricción de D4 (sesión 22), P1 vigente confirmado en
   `docs/historico/CONTEXT-v7.md`.
-- **Esfuerzo estimado:** M/L (re-estimado desde S/M — requiere aislar un
-  mecanismo de KiCad que resistió una sesión completa de investigación
-  dirigida, posiblemente necesita inspeccionar código fuente de KiCad).
-- **Retracción explícita — la hipótesis de D5/sesión 25 es FALSA:** "el
-  keepout de hole podría estar cubriendo también el caso de máscara (radio
-  del keepout > apertura de máscara del pad)" — medido: keepout
-  `__kicadmcp_hc__pad_ANT1_1` tiene r=1.27mm, el cobre del pad tiene
-  r=1.50mm. El keepout está ÍNTEGRAMENTE DENTRO del cobre del pad y solo en
-  B.Cu — geométricamente incapaz de resolver nada de máscara. Ver
-  investigación 26 §1. (Para J1, sin cobre de pad propio en sus NPTH, el
-  mecanismo de hole SÍ sigue siendo el único y funciona — no confundir los
-  dos casos.)
-- **Confirmado real y alcanzable (investigación 26 §3):** con
-  `pad_to_mask_clearance` del proyecto ≥ ~0.22mm (valor dentro de rangos
-  reales de fabricación/ensamblado, aunque el fixture despertador usa 0 —
-  no expuesto hoy en ese proyecto), aparece un `solder_mask_bridge` de
-  ANT1 contra la zona GND SIN `clearance`/`hole_clearance` co-localizada —
-  un modo de falla genuinamente independiente del hole.
-- **Causa raíz del baseline específico de D5** (probable, no confirma ni
-  refuta el bug independiente de arriba): fill rancio — `add_zone(fill=true)`
-  se llamó ANTES de las 23 `move_footprint` en D5, y `move_footprint` no
-  dispara refill. Ver investigación 26 §2. **Hallazgo de proceso
-  transferible:** `fill_zones()` obligatorio tras colocación masiva, antes
-  de leer el baseline DRC — anotado también en la sección de correcciones
-  puntuales abajo.
-- **Estado del código:** el intento de fix (extender el radio del keepout
-  de `enforce_hole_clearance` para cubrir también la apertura de máscara)
-  se implementó y se REVIRTIÓ en la misma sesión tras fallar la
-  verificación — no está en el árbol de trabajo. Lo único que se conserva
-  es la extensión de `rules_reader.py` para leer `pad_to_mask_clearance`
-  (`.kicad_pcb`) y `solder_mask_to_copper_clearance` (`.kicad_pro`) — lectura
-  correcta y testeada, independiente de resolver el mecanismo, que
-  cualquier investigación futura sobre este tema va a necesitar.
-- **Condición de entrada para la próxima sesión sobre este tema:** leer
-  investigación 26 completa (especialmente §5/§6, el barrido de radio de
-  keepout que no se explica del todo) antes de re-intentar un fix — evita
-  repetir el mismo diseño que ya se probó insuficiente.
+- **Estado:** vigente, no cerrado en sesión 26. Bug confirmado real y
+  reproducible con evidencia sólida (investigación 26 §3): umbral entre
+  `pad_to_mask_clearance=0.20mm` (no) y `0.22mm` (sí), independiente de
+  `hole_clearance`.
+- **Alcance del bug:** proyectos con `pad_to_mask_clearance ≥ ~0.22mm`. El
+  fixture despertador usa M=0 (default KiCad) — no expuesto hoy — pero un
+  proyecto real con relief de máscara mayor sí lo estaría.
+- **Nota corregida (reemplaza la hipótesis de D5/sesión 25, que era
+  FALSA):** en D5 corrida 1, las 3 violaciones del baseline
+  (`hole_clearance`, `clearance`, `solder_mask_bridge`) se resolvieron
+  post-route pero **NO** por el keepout de hole. Refutación geométrica en
+  investigación 26 §1: el keepout r=1.27mm de ANT1 vive íntegramente
+  DENTRO del cobre del propio pad (r=1.50mm), en B.Cu solamente — es
+  geométricamente incapaz de proteger la apertura de máscara. El mecanismo
+  real que resolvió el bridge en D5 fue el refill del plano post-
+  `route_board` recortando la zona alrededor del pad con clearance de
+  zona ordinaria (0.5mm), no protección específica de máscara. (Para J1,
+  sin cobre de pad propio en sus NPTH, el mecanismo de hole SÍ sigue
+  siendo el único y funciona — no confundir los dos casos.)
+- **Estimación:** re-estimado de S/M a **M/L**. El fix acordado en sesión
+  26 (radio keepout = max(término de hole, término de máscara)) se
+  implementó, se verificó contra KiCad real, y NO resolvió el bug en su
+  valor calculado (investigación 26 §5). El umbral real (§6, entre 1.82mm
+  y 2.0mm) no se deriva de ninguna combinación obvia de reglas del
+  proyecto vía la fórmula usada. Hay al menos una variable no
+  identificada en el mecanismo de `solder_mask_bridge` de KiCad.
+- **Causa raíz del baseline específico de D5** (complementaria a la nota
+  corregida de arriba — explica por qué APARECIERON las 3 violaciones,
+  no por qué desaparecieron): fill rancio — `add_zone(fill=true)` se
+  llamó ANTES de las 23 `move_footprint` en D5, y `move_footprint` no
+  dispara refill. Ver investigación 26 §2 y D-26.1
+  (`docs/DECISIONES.md`). **Hallazgo de proceso transferible:**
+  `fill_zones()` obligatorio tras colocación masiva, antes de leer el
+  baseline DRC — anotado también en la sección de correcciones puntuales
+  abajo.
+- **Próximo paso:** sesión de investigación P4.0-style dedicada a aislar
+  el mecanismo real antes de intentar otro fix. Alternativas de
+  investigación: inspeccionar código fuente de KiCad (`pcbnew`
+  específicamente), instrumentación adicional del pipeline de fill,
+  reportar upstream y observar el issue tracker de KiCad. NO se agenda
+  sesión de fix hasta que la investigación entregue mecanismo aislado.
+  Leer investigación 26 completa (especialmente §5/§6, el barrido de
+  radio de keepout que no se explica del todo) antes de re-intentar un
+  fix — evita repetir el mismo diseño que ya se probó insuficiente.
+- **Kept de sesión 26:** extensión de `rules_reader.py`
+  (`pad_to_mask_clearance_mm`, `solder_mask_to_copper_clearance_mm`) con
+  tests — el intento de fix de `enforce_hole_clearance` se implementó y
+  se REVIRTIÓ en la misma sesión tras fallar la verificación, no está en
+  el árbol de trabajo. Independiente del mecanismo, reutilizable por
+  cualquier investigación futura sobre este tema.
 
 ## P2 — Generalización D-23.2 a `fill_zones` / `add_zone(fill=True)` (Fase 3, paso 3)
 

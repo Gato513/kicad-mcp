@@ -69,17 +69,12 @@ aumento progresivo de confianza, arranca en sesión 25). El objetivo de Fase 3
 ya no es "encontrar causa raíz" sino "ganar confianza estadística en que las
 causas raíz eliminadas realmente no vuelven".
 
-**Estado en una línea (post-sesión 26):** D5 (sesión 25) — primer dogfooding
-de Fase 3 — salió **verde, 9.5/10**; contrato D-23.2 ratificado **5/5
-corridas** en producción real. Sesión 26 refutó con evidencia geométrica la
-hipótesis de D5 sobre P1 (el keepout de hole NO cubría el caso de máscara
-por accidente, como se creía), confirmó que el bug de `solder_mask_bridge`
-es real y alcanzable con valores de `pad_to_mask_clearance` realistas, pero
-el fix diseñado con el arquitecto **no resolvió el bug en verificación
-contra KiCad real** — mecanismo no aislado, P1 queda **abierto** como
-investigación pendiente (re-estimado M/L). Sin P0 nuevos. Próximo paso:
-sesión 27 (generalización D-23.2 a `fill_zones`/`add_zone(fill=True)`, no
-bloqueada por P1 — ver `docs/BACKLOG.md`). Detalle:
+**Estado (post-sesión 26, 2026-07-24):** Fase 3 en curso, sesión 26 cerrada
+sin fix (P1 solder mask ANT1 re-estimado M/L, requiere investigación
+P4.0-style antes de intentar fix). Hallazgo transferible D-26.1 (refill
+obligatorio pre-baseline DRC, ver C7 abajo). F-D4-02 / contrato D-23.2
+sigue ratificado 5/5. Próxima sesión: 27 = generalización D-23.2 a
+`fill_zones`/`add_zone(fill=True)` (no bloqueada por sesión 26). Detalle:
 `docs/historico/sesiones/25-reporte.md`,
 `docs/investigacion/26-solder-mask-ant1.md`,
 `docs/historico/sesiones/26-reporte.md`.
@@ -173,6 +168,23 @@ más condicionan trabajo futuro:
   cambio no introduce errores nuevos en placas con DRC preexistente (D-24.2):
   `run_drc()` inicial registra el residual, mediciones posteriores comparan
   solo deltas.
+- **Refill obligatorio post-colocación masiva antes de leer baseline DRC**
+  (D-26.1, sesión 26): `move_footprint` no dispara refill de zonas; un
+  baseline leído inmediatamente después de mover pads sobre un plano ya
+  filleado mide fill rancio, no el estado real. Ver C7 abajo.
+
+## Caveats operacionales
+
+Hallazgos de proceso puntuales, vinculantes para quien redacte briefs de
+sesión o ejecute dogfoodings — complementan los "Errores de dominio" de
+`CLAUDE.md` (esos son técnicos/de API; estos son de secuencia/protocolo).
+
+### C7 — Refill obligatorio antes de baseline DRC
+
+Ver D-26.1 completo. En resumen: `move_footprint` no dispara refill. Todo
+dogfooding que use baseline dinámico + delta (D-24.2) debe invocar
+`fill_zones()` explícito entre colocación masiva y lectura del baseline.
+Sin ese paso, el baseline mide fill rancio, no la geometría real.
 
 ## Riesgos abiertos
 

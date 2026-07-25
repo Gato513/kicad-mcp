@@ -2001,6 +2001,11 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # add_track/add_via. Refill automático por defecto (fill=True): el
         # caso común es "quiero un plano GND funcional ya"; fill=false difiere
         # el costo (refill_zones() es bloqueante con polling, ver bridge).
+        # D-23.2 (ADR-0012, extendido sesión 27): con fill=True, el refill +
+        # enforce_hole_clearance del vivo se persiste con save_board() antes
+        # de retornar — POST_ZONE_PERSIST_FAILED si la escritura falla. Con
+        # fill=False no hay nada que persistir (zona sin rellenar, vivo≠disco
+        # como cualquier otra mutación sin save explícito).
         with tool_call_timer() as timer:
             _guard_live_stale()  # D-14.1
             check_no_external_disk_edit(  # P3.2
@@ -2054,8 +2059,36 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 # post-fill obligatorio en TODO camino que rellene (ver
                 # docstring de enforce_hole_clearance).
                 bridge.enforce_hole_clearance(board, _resolve_root_pcb())
-            new_state = build_state_from_snapshot(ctx.footprints)
-            snap_id = get_default_store().register(new_state, mtimes=None)
+                # D-23.2 (ADR-0012, extendido sesión 27): persistir el vivo ya
+                # arreglado por refill+enforce — sin esto el disco queda con
+                # el clearance roto de forma indefinida (mismo bug conceptual
+                # que F-D4-02, ver docs/investigacion/23-fd4-02.md Bloque 2).
+                try:
+                    bridge.save_board(board)
+                except KicadMcpError as exc:
+                    _audit_error(root, "add_zone", raw_params, ErrorCode.POST_ZONE_PERSIST_FAILED)
+                    raise KicadMcpError(
+                        code=ErrorCode.POST_ZONE_PERSIST_FAILED,
+                        message=(
+                            f"add_zone creó la zona y corrió refill+enforce en "
+                            f"{_resolve_root_pcb().name} pero no pudo guardar el board a disco."
+                        ),
+                        hint=(
+                            "El board VIVO ya tiene la zona rellenada con el clearance "
+                            "arreglado; reintentá save_board() manual o descartá los cambios."
+                        ),
+                        data={"pcb": _resolve_root_pcb().name, "live_has_fix": True},
+                    ) from exc
+                new_state = build_state_from_snapshot(ctx.footprints)
+                # D-23.2: mtimes recolectados POST-save (hallazgo #31 sesión
+                # 24) — si se recolectaran antes, quedarían stale y el propio
+                # save de add_zone dispararía un EXTERNAL_EDIT_DETECTED
+                # espurio en la siguiente lectura.
+                mtimes = collect_project_mtimes(_resolve_root_schematic_or_pcb())
+                snap_id = get_default_store().register(new_state, mtimes)
+            else:
+                new_state = build_state_from_snapshot(ctx.footprints)
+                snap_id = get_default_store().register(new_state, mtimes=None)
             raw_params["base_snap"] = base_snap
             audit_record(
                 root,
@@ -2250,6 +2283,9 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # recalcula TODAS las zonas de cobre del board. zone_id, si se pasa,
         # sólo VALIDA que exista (ZONE_ID_STALE si no) — no acota el refill.
         # Idempotente: llamarla dos veces seguidas no rompe nada (mismo fill).
+        # D-23.2 (ADR-0012, extendido sesión 27): el refill + enforce_hole_
+        # clearance del vivo se persiste incondicionalmente con save_board()
+        # antes de retornar — POST_ZONE_PERSIST_FAILED si la escritura falla.
         with tool_call_timer() as timer:
             _guard_live_stale()  # D-14.1
             check_no_external_disk_edit(  # P3.2
@@ -2277,9 +2313,41 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             # F-D3-01 (sesión 21): workaround post-fill obligatorio en TODO
             # camino que rellene — ver docstring de enforce_hole_clearance.
             bridge.enforce_hole_clearance(board, _resolve_root_pcb())
+            # D-23.2 (ADR-0012, extendido sesión 27): persistir el vivo ya
+            # arreglado por refill+enforce — sin esto el disco queda con el
+            # clearance roto de forma indefinida (mismo bug conceptual que
+            # F-D4-02, ver docs/investigacion/23-fd4-02.md Bloque 2).
+            # Incondicional: aun con zones_filled==0 enforce_hole_clearance
+            # pudo haber tocado keepouts en el vivo.
+            try:
+                bridge.save_board(board)
+            except KicadMcpError as exc:
+                _audit_error(
+                    root,
+                    "fill_zones",
+                    {"zone_id": zone_id, "base_snap": base_snap},
+                    ErrorCode.POST_ZONE_PERSIST_FAILED,
+                )
+                raise KicadMcpError(
+                    code=ErrorCode.POST_ZONE_PERSIST_FAILED,
+                    message=(
+                        f"fill_zones corrió refill+enforce en {_resolve_root_pcb().name} "
+                        "pero no pudo guardar el board a disco."
+                    ),
+                    hint=(
+                        "El board VIVO ya tiene el clearance arreglado; reintentá "
+                        "save_board() manual o descartá los cambios."
+                    ),
+                    data={"pcb": _resolve_root_pcb().name, "live_has_fix": True},
+                ) from exc
             duration_ms = (time.perf_counter() - fill_start) * 1000
             new_state = build_state_from_snapshot(ctx.footprints)
-            snap_id = get_default_store().register(new_state, mtimes=None)
+            # D-23.2: mtimes recolectados POST-save (hallazgo #31 sesión 24) —
+            # si se recolectaran antes, quedarían stale y el propio save de
+            # fill_zones dispararía un EXTERNAL_EDIT_DETECTED espurio en la
+            # siguiente lectura.
+            mtimes = collect_project_mtimes(_resolve_root_schematic_or_pcb())
+            snap_id = get_default_store().register(new_state, mtimes)
             audit_record(
                 root,
                 tool="fill_zones",

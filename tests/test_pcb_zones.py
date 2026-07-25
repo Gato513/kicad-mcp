@@ -34,6 +34,7 @@ from kicad_mcp.bridge.ipc import (
     Mm,
     ZoneItem,
 )
+from kicad_mcp.errors import ErrorCode, KicadMcpError
 from kicad_mcp.gates import g1
 from kicad_mcp.tools.pcb import register as register_pcb
 
@@ -46,6 +47,7 @@ class _FakeBridge(IpcBridge):
         *,
         nets: list[str] | None = None,
         zones: list[ZoneItem] | None = None,
+        fail_save_after: int | None = None,
     ) -> None:
         self._client = None  # type: ignore[assignment]
         self._instance_token = None
@@ -58,9 +60,23 @@ class _FakeBridge(IpcBridge):
         self.refill_calls = 0
         self.enforce_hole_clearance_calls = 0
         self._next_kiid = 1000
+        # D-23.2 (ADR-0012, extendido sesión 27): a partir de la llamada N+1
+        # a save_board(), levanta KicadMcpError — simula el fallo de
+        # persistencia post-refill sin tocar kipy real. ``None`` = nunca falla.
+        self._fail_save_after = fail_save_after
+        self.saved: list[str] = []
 
     def get_open_board(self) -> BoardHandle | None:
         return BoardHandle(_raw=object())
+
+    def save_board(self, board: BoardHandle) -> None:  # type: ignore[override]
+        self.saved.append("proj.kicad_pcb")
+        if self._fail_save_after is not None and len(self.saved) > self._fail_save_after:
+            raise KicadMcpError(
+                code=ErrorCode.KICAD_CLI_FAILED,
+                message="fake: save_board falló (test D-23.2/sesión 27).",
+                hint="test only",
+            )
 
     def list_net_names(self, board: BoardHandle) -> list[str]:  # type: ignore[override]
         return list(self._nets)
@@ -267,6 +283,9 @@ async def test_add_zone_bbox_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert isinstance(payload["snap_id"], int)
     assert bridge.added_zones[0]["net"] == "GND"
     assert bridge.added_zones[0]["layer"] == "B.Cu"
+    # D-23.2 (ADR-0012, extendido sesión 27): fill=True (default) persiste el
+    # vivo ya arreglado por refill+enforce con un save_board() incondicional.
+    assert bridge.saved == ["proj.kicad_pcb"]
 
     audit = project / ".kicad-mcp" / "audit.jsonl"
     entries = [json.loads(x) for x in audit.read_text().splitlines()]
@@ -290,6 +309,36 @@ async def test_add_zone_polygon_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_
     payload = _json(result)
     assert payload["filled"] is False
     assert bridge.added_zones[0]["fill"] is False
+    # D-23.2 (extendido sesión 27): fill=False no dispara refill+enforce, así
+    # que no hay nada que persistir — el path se queda igual que antes de
+    # sesión 27 (vivo≠disco, como cualquier otra mutación sin save explícito).
+    assert bridge.saved == []
+
+
+@pytest.mark.unit
+async def test_add_zone_fill_true_persist_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D-23.2 (ADR-0012, extendido sesión 27): si el ``save_board()``
+    posterior al refill+enforce falla, ``add_zone(fill=True)`` levanta
+    ``POST_ZONE_PERSIST_FAILED`` — el vivo ya tiene la zona rellenada con el
+    clearance arreglado, pero eso no llegó a disco."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    bridge = _FakeBridge(fail_save_after=0)
+    mcp = _make_server(bridge)
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "add_zone", {"net": "GND", "layer": "B.Cu", "bbox": [0.0, 0.0, 50.0, 40.0]}
+        )
+    assert result.isError
+    text = _text(result)
+    assert "POST_ZONE_PERSIST_FAILED" in text
+    # La zona SÍ se creó y el refill+enforce SÍ corrieron en el vivo — sólo
+    # la persistencia falló.
+    assert bridge.added_zones
+    assert bridge.enforce_hole_clearance_calls == 1
+    assert len(bridge.saved) == 1
 
 
 @pytest.mark.unit
@@ -523,6 +572,33 @@ async def test_fill_zones_refills_all_and_is_idempotent(
     assert payload1["zones_filled"] == 1  # sólo la de cobre, no la keepout
     assert payload2["zones_filled"] == 1
     assert bridge.refill_calls == 2
+    # D-23.2 (ADR-0012, extendido sesión 27): cada llamada persiste el vivo
+    # ya arreglado por refill+enforce con un save_board() incondicional.
+    assert bridge.saved == ["proj.kicad_pcb", "proj.kicad_pcb"]
+
+
+@pytest.mark.unit
+async def test_fill_zones_persist_failed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """D-23.2 (ADR-0012, extendido sesión 27): si el ``save_board()``
+    posterior al refill+enforce falla, ``fill_zones`` levanta
+    ``POST_ZONE_PERSIST_FAILED`` — el vivo ya tiene el clearance arreglado,
+    pero eso no llegó a disco."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    zones = [
+        _zone("Z1", "copper", "GND", "B.Cu", [(0.0, 0.0), (50.0, 0.0), (50.0, 40.0), (0.0, 40.0)])
+    ]
+    bridge = _FakeBridge(zones=zones, fail_save_after=0)
+    mcp = _make_server(bridge)
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("fill_zones", {})
+    assert result.isError
+    text = _text(result)
+    assert "POST_ZONE_PERSIST_FAILED" in text
+    # El refill+enforce SÍ corrieron en el vivo — sólo la persistencia falló.
+    assert bridge.refill_calls == 1
+    assert bridge.enforce_hole_clearance_calls == 1
+    assert len(bridge.saved) == 1
 
 
 @pytest.mark.unit
@@ -536,6 +612,7 @@ async def test_fill_zones_stale_zone_id(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert result.isError
     assert "ZONE_ID_STALE" in _text(result)
     assert bridge.refill_calls == 0
+    assert bridge.saved == []
 
 
 # --- delete_zone ---------------------------------------------------------------

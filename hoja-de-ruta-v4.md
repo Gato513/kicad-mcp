@@ -114,7 +114,8 @@ NO expandir capabilities. NO escalar complejidad prematuramente.
 | 27 | Generalización D-23.2 a `fill_zones` + `add_zone(fill=True)` + tests | Tests de regresión análogos al de sesión 24, verdes | ✅ **Cerrada 2026-07-24, contrato aplicado a 3 tools, ADR-0012 extendido.** Ver `docs/historico/sesiones/27-reporte.md`. |
 | N | Sesión de investigación P4.0-style: mecanismo `solder_mask_bridge` de KiCad (retoma P1) | Mecanismo aislado con confianza, ver `docs/investigacion/26-solder-mask-ant1.md` §5-§6 | Agendable post-27, requerido antes de retomar el fix de P1. |
 | 28 | Dogfooding 6 con las tres tools D-23.2 + primera aplicación empírica D-26.1 | Nota ≥9, ratifica sesión 27, sin P0/P1 nuevos | ✅ **Cerrada 2026-07-25, nota 9.7, 2do verde consecutivo.** D-23.2 ratificado 9/9 en 3 tools. D-26.1 ratificado con matiz metodológico (a corregir en D7). D-27.1 ratificado en producción. F-D5-01 no reapareció. Ver `docs/historico/sesiones/28-reporte.md`. |
-| 29 | Dogfooding 7 con aislamiento correcto D-26.1 + variación geométrica controlada + protocolo F-D6-01 | Nota ≥9, D-26.1 aislado sin confusor de orden, geometría distinta a D5/D6, sin P0/P1 nuevos — 3er verde consecutivo | ← **Siguiente** (busca 3er verde consecutivo del criterio de cierre de Fase 3). |
+| 29 | Dogfooding 7 con aislamiento correcto D-26.1 + variación geométrica controlada + protocolo F-D6-01 | Nota ≥9, D-26.1 aislado sin confusor de orden, geometría distinta a D5/D6, sin P0/P1 nuevos — 3er verde consecutivo | ✅ Cerrada 2026-07-25, nota 9.8, 3er verde consecutivo. Criterio de cierre Fase 3 cumplido. Ver docs/historico/sesiones/29-reporte.md |
+| 30 | **Planificación estratégica Fase 4** | — | ← Siguiente. Decisión del arquitecto + humano sobre contenido de Fase 4 (release / expansión / escalada de complejidad / combinación). Antes de agendar sesiones de código. |
 
 **Criterio de cierre de Fase 3 (habilita Fase 4):**
 - ≥2-3 dogfoodings consecutivos verdes (nota ≥9) sobre misma placa.
@@ -123,22 +124,28 @@ NO expandir capabilities. NO escalar complejidad prematuramente.
 - P1 conocido resuelto.
 - Estabilidad sostenida.
 
-**Estado del criterio (post-sesión 28):**
+**Excepción aplicada al cierre real (sesión 29):** P1 solder mask ANT1
+sigue abierto — el criterio original lo pedía resuelto, pero el
+arquitecto y el humano decidieron cerrar Fase 3 igual, moviendo P1 a
+deuda arrastrada de Fase 4 (no bloquea el fixture despertador, ver
+`docs/BACKLOG.md`). Los otros 4 criterios se cumplen sin excepción.
+
+**Estado del criterio (post-sesión 29):**
 - ✅ D5 verde (primer dogfooding de Fase 3, sesión 25, nota 9.5).
 - ✅ D6 verde (segundo dogfooding de Fase 3, sesión 28, nota 9.7).
-- ⏳ D7 pendiente (sesión 29) — busca 3er verde consecutivo.
-- ✅ Generalización D-23.2 completada (sesión 27) y ratificada 15/15
-  en producción hasta cierre D6.
-- ⏳ Aislamiento correcto de D-26.1 pendiente (D7 sesión 29 primera
-  prueba metodológicamente limpia).
-- ⚠️ P1 solder mask ANT1 sigue abierto — no bloqueante para
-  continuidad de Fase 3, pero bloqueante para el cierre de Fase 3.
+- ✅ **D7 verde (tercer dogfooding de Fase 3, sesión 29, nota 9.8) —
+  criterio cumplido.**
+- ✅ Generalización D-23.2 completada (sesión 27) y ratificada 25/25
+  en producción real total.
+- ✅ D-26.1 aislado sin confusor (D7 sesión 29, V4.a=6 → V4.b=0).
+- ⚠️ P1 solder mask ANT1 sigue abierto como deuda arrastrada a Fase 4
+  (no bloqueó Fase 3, no expuesto en el fixture despertador con
+  `pad_to_mask_clearance = 0`).
 
-**Nueva nota:** si D7 sale verde con aislamiento correcto de D-26.1
-+ 3er verde consecutivo del criterio, corresponde iniciar preparación
-de Fase 4 en la sesión siguiente (30), con la excepción de P1 solder
-mask ANT1 que puede quedar como deuda arrastrada a Fase 4 si la
-investigación no aparece antes.
+**Fase 3 formalmente cerrada 2026-07-25.** La hoja-de-ruta-v4.md se
+mantiene como documento histórico de referencia. Nueva hoja de ruta
+(v5 o similar) se abre en sesión 30 según planificación estratégica de
+Fase 4.
 
 **Escalada de complejidad (Fase 4):** SOLO tras cierre de Fase 3.
 Escenarios candidatos: placas con >30 footprints, múltiples planos, capas
@@ -160,6 +167,14 @@ Cambio de disposición respecto a Fase 2 (v3 no lo articulaba):
   regresión del último fix mergeado hasta que se pruebe lo contrario.**
   Esto es distinto de Fase 2, donde un P0 nuevo se sospechaba gap.
   Investigación mandatoria antes de continuar.
+
+**Nota post-Fase 3:** la interpretación "un P0 nuevo se sospecha
+regresión hasta prueba en contrario" fue apropiada durante Fase 3
+(consolidación). En Fase 4 esta disposición puede necesitar ajuste
+según el objetivo estratégico elegido (por ejemplo, si Fase 4 incluye
+escalada de complejidad, un P0 nuevo puede ser gap legítimo, no
+regresión). La sesión 30 va a definir la interpretación operacional
+que aplique en Fase 4.
 
 ---
 

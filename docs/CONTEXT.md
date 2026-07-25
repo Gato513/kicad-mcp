@@ -61,6 +61,68 @@ Piezas clave que todo cambio debe respetar:
   9.0 — sin 11/nightlies), dependencias nuevas en `pyproject.toml`. Todas
   requieren aprobación humana explícita.
 
+## Fases del proyecto
+
+### Fase 1 (histórica): construcción del núcleo — sesiones 1-15
+Diseño arquitectónico, primera implementación del bridge, primeras tools.
+Cerrada con D1/D2 (dogfoodings tempranos).
+
+### Fase 2 (histórica): hardening — sesiones 16-24
+Cierre de bugs P0/P1 identificados en dogfoodings, contrato D-23.2 en
+route_board (ADR-0012). Cerrada con generalización D-23.2 a fill_zones y
+add_zone en sesión 27.
+
+### Fase 3 (histórica): consolidación y aumento progresivo de confianza — sesiones 25-29
+Ratificación estadística del contrato D-23.2 en las tres tools mediante
+dogfoodings verdes sobre variable controlada. Cierre 2026-07-25 con 3
+verdes consecutivos (D5=9.5, D6=9.7, D7=9.8), D-23.2 en 25/25 en producción
+real, D-26.1 ratificado sin confusor, F-D6-01 y F-D5-01 cerrados.
+
+### Fase 4 (activa): preparación para Open Source como proyecto de referencia — sesiones 30+
+
+**Ambición estratégica:** convertir la arquitectura estable de Fase 3 en un
+proyecto Open Source de alta calidad, con evidencia suficiente para respaldar
+cada decisión importante. NO es expansión desordenada de capabilities.
+
+**Criterio de decisión de Fase 4:** cada decisión se evalúa preguntando si
+aumenta calidad, mantenibilidad, confianza, o experiencia de futuros
+colaboradores. Ver D-30.2.
+
+**Secuencia acordada** (ver `hoja-de-ruta-v5.md` para detalle):
+
+1. **Investigación P1 solder mask ANT1** (sesión 30) — cierre de la única
+   deuda técnica arrastrada de Fase 3 antes de exponer el proyecto.
+2. **Validation Suite: primera validación de nivel A** (sesión 31) —
+   primer dogfooding sobre placa ajena al despertador. Doble función:
+   escalada de complejidad + arranque de la Suite.
+3. **Validaciones de nivel B y C** (sesiones 32-33) — cobertura ampliada
+   antes de release.
+4. **Preparación de release Open Source** (sesión 34+) — docs, licencia,
+   ADRs, guía de contribución, limpieza del repositorio. **Solo cuando**
+   las 3 validaciones anteriores hayan cerrado exitosamente.
+5. **Features nuevas** (post-release) — según necesidad detectada en uso
+   real o por adopción de colaboradores, no por especulación.
+
+**Deuda arrastrada de Fase 3:** P1 solder mask ANT1 (sesión 30 la atiende
+como primer objetivo).
+
+**Principios metodológicos vigentes en Fase 4:**
+- D-30.1: estrategia de validación explícita antes de implementar.
+- D-30.2: éxito por confianza, no por código.
+- D-30.3: comparación cuantitativa contra ground truth en Validation Suite.
+- D-30.4: criterio de diversidad para admisión a Validation Suite.
+- D-27.1: restore no destructivo del entorno GUI vivo (heredada).
+- D-28.1: cambios de orden de fases requieren AskUserQuestion (heredada).
+- D-28.2: barrido completo al generar diffs de decisiones (heredada).
+
+**Interpretación de resultados en Fase 4** (nota de transición):
+La interpretación "un P0 nuevo se sospecha regresión hasta prueba en
+contrario" fue apropiada durante Fase 3 (consolidación sobre variable
+controlada). En Fase 4, con placas ajenas al despertador, un P0 nuevo
+puede ser gap legítimo del flujo sobre decisiones de diseño no ejercitadas
+antes — no regresión. La sesión 30 (primera de Fase 4) va a establecer
+la interpretación operacional específica según lo que emerja.
+
 ## Estado actual: Fase 3 — consolidación
 
 El proyecto pasó de **Fase 2** (descubrimiento acelerado: ciclo intensivo
@@ -69,14 +131,15 @@ aumento progresivo de confianza, arranca en sesión 25). El objetivo de Fase 3
 ya no es "encontrar causa raíz" sino "ganar confianza estadística en que las
 causas raíz eliminadas realmente no vuelven".
 
-**Estado (post-sesión 28, 2026-07-25):** Fase 3 en curso, 2 verdes
-consecutivos sobre variable controlada (D5=9.5, D6=9.7). Contrato
-D-23.2 ratificado 9/9 en las tres tools en dogfooding real (route_board,
-fill_zones, add_zone(fill=True)). D-26.1 ratificado con matiz
-metodológico (confusor de orden de fases). D-27.1 ratificado en
-producción. F-D5-01 no reapareció. Próxima sesión: 29 = D7 con
-aislamiento correcto de D-26.1 + variación geométrica controlada, buscando
-3er verde consecutivo (criterio de cierre de Fase 3).
+Estado (post-sesión 29, 2026-07-25): **Fase 3 CERRADA con criterio de
+convergencia cumplido** — 3 verdes consecutivos (D5=9.5, D6=9.7,
+D7=9.8), D-26.1 ratificado sin confusor, D-23.2 acumulado 25/25 en
+producción real (route_board 12/12 + fill_zones 7/7 + add_zone 6/6, 0
+divergencias), F-D6-01 cerrado como variabilidad inherente
+Freerouting/JVM. Deuda arrastrada a Fase 4: P1 solder mask ANT1
+(investigación pendiente, no bloqueante). Próxima sesión: 30 =
+planificación estratégica de Fase 4 (decisión del arquitecto y del
+humano sobre release / expansión funcional / escalada de complejidad).
 
 **Qué cerró Fase 2:** F-D4-02 — el último P0 conocido (bug de orden de
 medición + falta de persistencia en `route_board`, causaba que el DRC
@@ -175,10 +238,15 @@ más condicionan trabajo futuro:
   cambio no introduce errores nuevos en placas con DRC preexistente (D-24.2):
   `run_drc()` inicial registra el residual, mediciones posteriores comparan
   solo deltas.
-- **Refill obligatorio post-colocación masiva antes de leer baseline DRC**
-  (D-26.1, sesión 26): `move_footprint` no dispara refill de zonas; un
-  baseline leído inmediatamente después de mover pads sobre un plano ya
-  filleado mide fill rancio, no el estado real. Ver C7 abajo.
+- **D-26.1 (ratificado sin confusor, sesión 29 D7):** refill obligatorio
+  post-colocación pre-baseline DRC. `move_footprint` no dispara refill de
+  zonas — sin `fill_zones()` explícito entre colocación masiva y baseline
+  DRC, el baseline mide fill rancio. Ratificación empírica limpia en D7
+  (V4.a=6 violaciones fantasma, V4.b=0 tras `fill_zones()`), con layout
+  distinto de D5/D6 y orden de fases correcto (D-28.1). El fenómeno
+  depende del orden de fases y del footprint set, no del layout específico
+  — aplicable a cualquier flujo con este patrón. Ver `docs/DECISIONES.md`
+  y C7 abajo.
 - **D-28.1 — Cambios de orden de fases requieren AskUserQuestion**
   (operacional, ver `docs/DECISIONES.md`). Cambio de orden de fases en un
   brief es cambio de metodología, no de implementación, y contamina el
@@ -216,7 +284,7 @@ condicionan decisiones de arquitectura o pueden bloquear un dogfooding futuro:
 |---|---|---|
 | R12 | Tools de escritura de esquemático son puramente aditivas (sin CRUD) | Abierto, no ejercitado en D3/D4/24 |
 | R13 | `get_world_context(kind="sch")` falla con símbolos `#PWR*`/`#FLG*` | Ratificado en D4, workaround `export_netlist()` |
-| R14 | `fill_zones`/`add_zone(fill=True)` no garantizaban el contrato disco==memoria | Cerrado en las tres tools (D-23.2 extendido, sesión 27); ratificado 15/15 en producción hasta D6 |
+| R14 | `fill_zones`/`add_zone(fill=True)` no garantizaban el contrato disco==memoria | **CERRADO** — D-23.2 ratificado 25/25 en producción real tras Fase 3 (D5+D6+D7), ninguna corrida con divergencia |
 | R16 | Loop de vías de `enforce_hole_clearance` posiblemente código muerto | Deuda técnica (D-23.3), no tocar en Fase 3 salvo evidencia nueva |
 | R9 | `Freerouting gui.enabled=true` cuelga la JVM | Mitigado en código, issue upstream pendiente |
 

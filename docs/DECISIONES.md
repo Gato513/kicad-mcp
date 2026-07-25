@@ -102,6 +102,16 @@ Documentación autoritativa: ADR-0012 sección "Extensión de alcance
   conteo/composición del baseline respecto a lo que D5 midió sin ese paso,
   es evidencia dura de la validez de D-26.1.
 
+  **Ratificación empírica (sesión 29 D7):** V4.a=6 violaciones no-triviales
+  (3× hole_clearance J1 NPTH, 1× hole_clearance ANT1, 1× clearance ANT1,
+  1× solder_mask_bridge ANT1) vs V4.b=0 tras `fill_zones()` explícito.
+  Bit-exacto al patrón que D5 registró — confirma que el fenómeno depende
+  del orden de fases y del footprint set, no del layout específico. D7
+  ejecutó con coordenadas distintas de D5/D6 y ratificó el mismo patrón.
+  Con este resultado D-26.1 pasa de "ratificado con matiz metodológico"
+  (estado post-D6) a "ratificado sin confusor". Aplicable a cualquier
+  flujo con `add_zone(fill=true) → move_footprint × N → run_drc()`.
+
 ### Sobre esquemático
 - **D-19b.1**: `lib_symbol_mismatch` NO se resuelve con "Update Symbols from Library" — es destructivo cuando el símbolo local diverge intencionalmente (rompió 6 pines en sesión 19b).
 - **D-19b.2**: el neteo de esquemático es por coincidencia de texto de label, no por proximidad geométrica ni wire físico. No-Connect no severa una red si el pin conserva su label. Cualquier tool de mutación de sch debe respetar esto.
@@ -216,6 +226,146 @@ ADR dedicado.
 **Consecuencia operacional:** los diffs de consolidación pueden ser
 más largos de lo que parecía inicialmente. Es preferible un diff largo
 correcto a uno corto con drift.
+
+### D-30.1 — Estrategia de validación explícita para sesiones con hipótesis técnica
+
+**Contexto:** durante Fase 3, la disciplina "verificar contra la realidad
+del sistema, no contra la aritmética propia" emergió como aprendizaje
+recurrente (sesión 24: fix Opción X verificado en vivo contra KiCad real;
+sesión 26: fix acordado refutado por verificación empírica antes del merge).
+Ese instinto operacional se convirtió en factor determinante de la calidad
+alcanzada en el cierre de Fase 3. Formalizarlo como regla lo convierte de
+instinto en criterio replicable.
+
+**Decisión:** toda sesión que tenga como objetivo **modificar el
+comportamiento del sistema o validar una hipótesis técnica** debe incluir
+en su prompt, ANTES de cualquier implementación, un bloque explícito con
+los siguientes 4 puntos:
+
+1. **Hipótesis** que se pretende validar.
+2. **Evidencia que confirmaría** la hipótesis.
+3. **Evidencia que refutaría** la hipótesis.
+4. **Estrategia para proteger** el cambio frente a regresiones.
+
+**Criterio de aplicabilidad:** el criterio NO es el tipo de sesión sino si
+existe un comportamiento del sistema cuya validez queremos demostrar.
+
+**Aplica a:**
+- Sesiones de nuevas capacidades.
+- Sesiones de corrección de bugs.
+- Sesiones de refactor con impacto funcional.
+- Sesiones de investigación técnica.
+- Dogfoodings.
+
+**NO aplica a:**
+- Consolidación documental.
+- Reorganización del repositorio.
+- Limpieza de documentación.
+- Trabajo administrativo (releases, versionado, etc.).
+
+**Consecuencia operacional (arquitecto):** si al redactar un prompt de sesión
+no puedo llenar claramente los 4 puntos, el prompt no está listo. Vuelve a
+fase de diseño hasta que el problema esté suficientemente entendido para
+formular hipótesis y criterios de refutación. Un prompt que arranca sin
+D-30.1 completo es un prompt que va a producir código sin criterio de
+validación — exactamente lo que Fase 3 nos enseñó a evitar.
+
+**Consecuencia operacional (ejecutor):** el bloque D-30.1 del prompt es
+lectura obligatoria antes de tocar código. Si el ejecutor encuentra que la
+hipótesis no encaja con lo que observa en el estado real del sistema,
+`AskUserQuestion` obligatoria antes de proceder.
+
+### D-30.2 — Criterio de éxito de Fase 4: aumento de confianza
+
+**Contexto:** en Fase 3 el criterio dominante era convergencia técnica
+(¿está estable la arquitectura?). Fase 4 tiene ambición distinta: proyecto
+de referencia Open Source, no expansión de capabilities. El criterio de
+éxito de cada sesión cambia en consecuencia.
+
+**Decisión:** durante Fase 4, el éxito de una sesión se mide principalmente
+por el aumento de confianza que aporta al proyecto, no por el volumen de
+código escrito. Esto orienta las decisiones tácticas:
+
+- Una sesión de investigación que cierra sin fix pero con causa raíz
+  identificada aumenta confianza (patrón sesión 23, sesión 26).
+- Una sesión de dogfooding sin fricciones aumenta confianza (patrón
+  D5/D6/D7).
+- Una sesión que agrega feature sin evidencia clara de necesidad, sin
+  hipótesis D-30.1, o sin protección contra regresiones NO aumenta
+  confianza — incluso si el código funciona.
+
+**Aplicación:** cuando surja tensión entre "escribir más código" y
+"consolidar evidencia sobre el código que ya existe", elegir consolidar.
+
+### D-30.3 — Definición operacional de "igualmente válido" en Validation Suite
+
+**Contexto:** la Validation Suite compara el flujo automatizado del proyecto
+contra placas fabricadas por sus autores originales (ground truth). Sin
+definición operacional de "igualmente válido", la comparación degrada a
+juicio subjetivo.
+
+**Decisión (versión mínima, sujeta a revisión post-3 validaciones):**
+
+Una PCB producida por el flujo automatizado se considera "igualmente
+válida" respecto al ground truth si cumple los 4 criterios simultáneamente:
+
+1. **DRC** (booleano, obligatorio): 0 errores, 0 warnings — o warnings
+   documentados y compartidos con el ground truth.
+2. **Longitud total de tracks** (cuantitativo): dentro de ±30% del ground
+   truth.
+3. **Número de vías** (cuantitativo): dentro de ±20% del ground truth.
+4. **Área ocupada por cobre** (cuantitativo): dentro de ±25% del ground
+   truth (proxy de densidad).
+
+**Métricas de referencia registradas para cada validación:** además de los
+4 criterios de aceptación, el report de validación incluye la comparación
+completa (con y sin cumplimiento) para permitir revisión posterior de los
+umbrales.
+
+**Revisión de umbrales:** tras las primeras 3 validaciones cerradas
+(nivel A/B/C), evaluar si los ±30/±20/±25% son apropiados. Ajustar según
+evidencia. Si aparecen métricas útiles nuevas (tiempo de ruteo, jerarquía
+de nets ejercitada, etc.), agregarlas.
+
+**Fuera del criterio (deliberadamente):**
+- Estética del ruteo (subjetiva, imposible de operacionalizar).
+- Preferencias de colocación específicas (dominio del diseñador, no del
+  flujo).
+- Coincidencia exacta de decisiones — la comparación no es de igualdad,
+  es de validez equivalente.
+
+### D-30.4 — Criterio de diversidad para admisión a Validation Suite
+
+**Contexto:** sin criterio explícito de diversidad, es fácil terminar con
+N validaciones que ejercitan los mismos features. Eso infla el número de
+"placas probadas" sin ampliar cobertura real.
+
+**Decisión:** un proyecto candidato para entrar a la Validation Suite
+posterior al primero de cada nivel (A/B/C/D) debe agregar **al menos una
+feature no cubierta** en la matriz de cobertura vigente al momento de la
+admisión.
+
+**Features de interés (lista viva, no exhaustiva):**
+- Capas: 2, 4, 6+.
+- Planos: single, múltiples, mixto (potencia/GND separados).
+- Protocolos: USB, USB-C, ESP32, RF, I²C, SPI, CAN.
+- Familias: switching, lineal, digital, analógico, RF.
+- Estructura sch: jerárquico, plano, con símbolos custom.
+- Footprints: SMD estándar, THT, personalizados, BGA, QFN, flex.
+- Densidad: baja (<30%), media (30-50%), alta (>50%).
+
+**Consecuencia operacional:** cada proyecto candidato viene con una
+justificación de qué feature nueva aporta. Sin esa justificación, se
+rechaza y se busca otro.
+
+**Excepción:** el **primer proyecto de cada nivel** (A/B/C/D) puede
+seleccionarse por criterios distintos (simplicidad para nivel A, dificultad
+para nivel C, etc.) sin requisito de diversidad — es la ancla del nivel.
+
+**Aplicación de la matriz de cobertura:** vive en
+`validation-suite/reports/coverage-matrix.md` (a crear cuando se cierre
+la primera validación de nivel A). Se actualiza tras cada validación
+cerrada.
 
 ## 3. Decisiones superadas (referencia histórica, no vigentes)
 

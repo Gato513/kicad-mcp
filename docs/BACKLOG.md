@@ -22,8 +22,9 @@ solo al contrato JSON del test controlado — ver
 `docs/historico/sesiones/25-reporte.md`. **Alcance de la ratificación
 ampliado en sesión 27**: el contrato D-23.2 ya cubre las tres tools
 (`route_board`, `fill_zones`, `add_zone(fill=True)`) — ver P2 cerrado
-abajo. Ratificación estadística de la extensión pendiente de D6 (sesión
-28). Reabrir como P0 solo si una sesión futura lo ratifica como regresión.
+abajo. **Ratificado 25/25 en producción real hasta cierre D7 (sesión 29),
+sin divergencias.** Reabrir como P0 solo si una sesión futura lo ratifica
+como regresión.
 
 ## P1 — Solder mask bridge en ANT1 (re-estimado M/L, próximo paso = investigación) — ⚠️ ABIERTO, sesión 26 no lo cerró
 
@@ -88,6 +89,13 @@ timebox de la sesión.** Ver `docs/investigacion/26-solder-mask-ant1.md`
   se REVIRTIÓ en la misma sesión tras fallar la verificación, no está en
   el árbol de trabajo. Independiente del mecanismo, reutilizable por
   cualquier investigación futura sobre este tema.
+- **Estado en cierre de Fase 3:** vigente, deuda arrastrada a Fase 4.
+  No bloqueó ninguna sesión D5/D6/D7 (fixture despertador usa
+  `pad_to_mask_clearance = 0`, no está expuesto al bug). Investigación
+  P4.0-style abierta desde sesión 26
+  (`docs/investigacion/26-solder-mask-ant1.md`). La sesión
+  30 (planificación Fase 4) va a decidir cuándo agendar esta
+  investigación en el nuevo ciclo.
 
 ### P2 — Generalización D-23.2 a fill_zones y add_zone(fill=True) [CERRADO sesión 27]
 
@@ -99,8 +107,8 @@ timebox de la sesión.** Ver `docs/investigacion/26-solder-mask-ant1.md`
 - **Cambio:** `POST_ZONE_PERSIST_FAILED` compartido para las dos tools.
   Contrato D-23.2 ahora aplica a tres tools (`route_board`,
   `fill_zones`, `add_zone(fill=True)`).
-- **Ratificación estadística pendiente:** D6 (sesión 28) — primera
-  medición del contrato extendido en dogfooding real.
+- **Ratificado en Fase 3** con 3 dogfoodings verdes consecutivos (D5, D6,
+  D7); Fase 3 cerrada 2026-07-25.
 - **Reporte:** `docs/historico/sesiones/27-reporte.md`.
 
 ## P2 — Correcciones puntuales con evidencia repetida
@@ -176,7 +184,7 @@ que lo acotaba a "solo conectores" dejó un punto ciego: 2 `courtyards_overlap`
   toda colocación manual, no solo conectores — es un cambio de proceso/brief,
   no de código.
 
-## P3 — F-D5-01: isla GND sin vía al plano tras autoroute (vigilancia)
+### P3 → CERRADO (sesión 29 D7) — F-D5-01: isla GND sin vía al plano (incidente aislado)
 
 En D5 (sesión 25), tras la primera corrida de `route_board`, dos caps
 adyacentes (C2/C3, ambos GND) quedaron unidos entre sí por un track pero sin
@@ -190,44 +198,31 @@ contra la zona GND) — es un dato de comportamiento de Freerouting: el motor
 puede conectar pads dentro de un net entre sí sin garantizar conectividad
 global de esa isla al plano fillado.
 
-- **Severidad:** `info` — una sola ocurrencia no ratifica un patrón.
-- **Trigger explícito de promoción a P2 (investigación):** si **2
-  dogfoodings independientes** (geometrías de colocación distintas, no la
-  misma placa con el mismo layout) reproducen el mismo patrón — isla de
-  ≥2 pads del mismo net conectados entre sí pero sin vía al plano — se
-  promueve a P2 y se investiga si es sistemático de Freerouting con
-  columnas de decoupling caps muy juntos, o un caso borde específico de la
-  geometría de D5.
+- **Estado:** cerrado como observación puntual de D5, no patrón
+  sistemático.
+- **Evidencia:** trigger de promoción a P2 investigación era "2
+  dogfoodings independientes reproducen el patrón". Resultado final:
+  D5=1, D6=0, D7=0 → 1/3, no cumplido.
+- **Sin trigger de reapertura** salvo que reaparezca en futuros
+  dogfoodings.
 - **Origen:** F-D5-01, sesión 25. Ver `docs/historico/sesiones/25-reporte.md`
-  §Fricciones.
-- **Acción hoy:** ninguna — solo vigilar en D6/D7 (sesiones 28+).
+  y `docs/historico/sesiones/29-reporte.md` §Fricciones.
 
-## P3 vigilancia — F-D6-01: costo de re-ruteo parcial no barato
+### P3 → CERRADO (sesión 29 D7) — F-D6-01: variabilidad inherente Freerouting/JVM
 
-- **Contexto:** en D5 (sesión 25) se observaron 2 re-ruteos parciales
-  con costo ~9-10s. En D6 (sesión 28) se observaron 2 re-ruteos
-  parciales con costo 110-112s — con la misma placa, mismo footprint
-  set, mismo Freerouting. Con N=4 total, el rango es 9s-112s, tan
-  amplio como el de una corrida completa.
-- **Interpretación:** el "modelo barato" que D5 había sugerido con
-  solo 2 muestras no se sostiene. Hipótesis (no verificada): el costo
-  de re-ruteo parcial depende del grado de interconexión del net
-  borrado con el resto del board — un net con muchas conexiones a
-  otros nets tiene mayor costo que un net aislado.
-- **Estado:** P3 vigilancia. No bloquea uso semanal.
-- **Protocolo de investigación:** D7 (sesión 29) mide 2-3 re-ruteos
-  parciales adicionales para llegar a N=6-7 muestras. Si aparece patrón
-  identificable (correlación con interconexión del net, o con tamaño,
-  o con capas), documentar el patrón y actualizar modelo mental de
-  `route_ms` en docs. Si N=6-7 aún no muestra patrón, cerrar F-D6-01
-  como "variabilidad inherente de Freerouting" y documentar rango
-  esperable en `docs/CONTEXT.md` o `restricciones-kicad.md`.
-- **Trigger para promoción a P2 investigación:** solo si N=6-7 muestra
-  costo consistentemente >60s en re-ruteos parciales (más del doble
-  del techo actual de una corrida completa exitosa), lo que sería
-  regresión operacional inaceptable.
+- **Estado:** cerrado como variabilidad inherente. Sin acción de código.
+- **Evidencia:** 3 mediciones D7 (`+3V3`, `/SDA`, `/NSS`) + 2 D5 + 2 D6
+  = N=7 total. Sin patrón correlacional con grado de interconexión,
+  tamaño del net, ni capas involucradas. Comparación directa sobre
+  mismo net `/NSS`: D5=9-10s, D6=110-112s, D7=17.7s — varianza del
+  proceso, no propiedad determinística.
+- **Documentación transferida a `docs/specs/restricciones-kicad.md`:**
+  rango operativo esperable (9s-112s), advertencia "no asumir que un
+  re-ruteo parcial es proporcionalmente barato al tamaño del net".
+- **Sin trigger de reapertura** a menos que aparezcan corridas >600s
+  (timeout) o >60s consistentemente en flujos productivos.
 - **Origen:** F-D6-01, sesión 28. Ver `docs/historico/sesiones/28-reporte.md`
-  §Fricciones.
+  y `docs/historico/sesiones/29-reporte.md` §Fricciones.
 
 ## P4 — Diferidos sin urgencia (re-evaluar con evidencia nueva)
 

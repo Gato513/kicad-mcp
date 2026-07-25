@@ -69,15 +69,13 @@ aumento progresivo de confianza, arranca en sesión 25). El objetivo de Fase 3
 ya no es "encontrar causa raíz" sino "ganar confianza estadística en que las
 causas raíz eliminadas realmente no vuelven".
 
-**Estado (post-sesión 26, 2026-07-24):** Fase 3 en curso, sesión 26 cerrada
-sin fix (P1 solder mask ANT1 re-estimado M/L, requiere investigación
-P4.0-style antes de intentar fix). Hallazgo transferible D-26.1 (refill
-obligatorio pre-baseline DRC, ver C7 abajo). F-D4-02 / contrato D-23.2
-sigue ratificado 5/5. Próxima sesión: 27 = generalización D-23.2 a
-`fill_zones`/`add_zone(fill=True)` (no bloqueada por sesión 26). Detalle:
-`docs/historico/sesiones/25-reporte.md`,
-`docs/investigacion/26-solder-mask-ant1.md`,
-`docs/historico/sesiones/26-reporte.md`.
+**Estado (post-sesión 27, 2026-07-24):** Fase 3 en curso. Contrato D-23.2
+generalizado a las tres tools (route_board, fill_zones,
+add_zone(fill=True)) — sesión 27 mergeada, test de regresión 2/2 verde
+en vivo contra KiCad real. Base sólida para D6 sesión 28 (ratificación
+estadística de la generalización + primera aplicación empírica de
+D-26.1). P1 solder mask ANT1 sigue vigente, agenda de investigación
+pendiente post-D6.
 
 **Qué cerró Fase 2:** F-D4-02 — el último P0 conocido (bug de orden de
 medición + falta de persistencia en `route_board`, causaba que el DRC

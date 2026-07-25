@@ -28,7 +28,7 @@ cronológico; cada una es la fuente autoritativa de su tema.
 | [0009](adr/0009-port-rust-diferido-con-condiciones.md) | Port a Rust diferido | v0.4 condicional a evidencia de cuello de botella real (ver `historico/analisis/ANALISIS-ESTADO-Y-BACKLOG.md` §1.4 — el cuello es KiCad/IPC, no Python). |
 | [0010](adr/0010-borrado-de-cobre-sin-gate-g2.md) | Borrado de cobre sin Gate G2 | `delete_track`/`delete_via` no disparan elicitation destructiva. |
 | [0011](adr/0011-autorouting-route-board.md) | Autorouting con Freerouting | `route_board` delega ruteo a Freerouting headless, no al LLM. |
-| [0012](adr/0012-route-board-persist-contract.md) | Contrato disco==memoria==`err_post` | Sesión 24: `route_board` mide DRC y persiste **después** de refill+enforce; fix de F-D4-02. Ver D-23.2 abajo. **Vigente hoy solo en `route_board`** — `fill_zones`/`add_zone(fill=True)` sufren el mismo patrón sin corregir (R14 residual, generalización pendiente — paso 3 de `hoja-de-ruta-v4.md`). |
+| [0012](adr/0012-route-board-persist-contract.md) | Contrato disco==memoria==`err_post` | Sesión 24: `route_board` mide DRC y persiste **después** de refill+enforce; fix de F-D4-02. Ver D-23.2 abajo. **Extendido en sesión 27** a `fill_zones` y `add_zone(fill=True)` — ADR-0012 sección "Extensión de alcance (sesión 27)". |
 
 ## 2. Decisiones informales vigentes (no formalizadas como ADR)
 
@@ -44,7 +44,28 @@ y en los reportes de sesión referenciados.
 - **D-19.1**: Freerouting respeta `(plane)` del DSN como conectividad para el net dueño de la zona, **no** como exclusión para el resto de los nets. Contexto necesario para entender por qué el refill+enforce de ADR-0012 es imprescindible (sin él, otros nets podían enrutarse ignorando la zona GND).
 - **D-19c.1**: nunca aplicar `add_keepout_zone` antes de un `route_board` autorruteado desde cero — bloquea nets sistemáticamente. Aplicar keepouts *después* del ruteo.
 - **D-19c.2 / D-19d.1**: KiCad reasigna el net de una vía/track nueva al net del cobre físico bajo/cruzado (comportamiento de dominio, no bug). Cerrado en tool con verificación post-creación + `NET_ASSIGNMENT_MISMATCH`.
-- **D-23.2 (ADR-0012)**: `route_board`, al terminar OK, garantiza disco == memoria == `err_post` reportado — ver ADR-0012 para el contrato completo. Generalización a `fill_zones`/`add_zone(fill=True)` pendiente (ver `hoja-de-ruta-v4.md` paso 3, `docs/BACKLOG.md`).
+- **D-23.2 (ADR-0012)**: `route_board`, al terminar OK, garantiza disco == memoria == `err_post` reportado — ver ADR-0012 para el contrato completo.
+
+**D-23.2 extendido (sesión 27):** contrato disco==memoria aplicado a
+las tres tools:
+- `route_board` (sesión 24, `POST_ROUTE_PERSIST_FAILED`).
+- `fill_zones` (sesión 27, `POST_ZONE_PERSIST_FAILED`).
+- `add_zone(fill=True)` (sesión 27, `POST_ZONE_PERSIST_FAILED`).
+
+El campo `drc` del payload NO se agrega a `fill_zones`/`add_zone` — el
+contrato aplica al núcleo (disco==vivo), no a la ergonomía. Estas dos
+tools son baratas y frecuentes; agregar un `kicad-cli` post-operación
+las encarece varios segundos por llamada. El llamador que quiera DRC
+puede invocar `run_drc()` por su cuenta con contrato ahora fiel — que
+es el efecto real del fix.
+
+Códigos `POST_ROUTE_PERSIST_FAILED` y `POST_ZONE_PERSIST_FAILED`
+coexisten temporalmente. Semánticamente equivalentes; el llamador ya
+sabe qué tool invocó. Unificación en código compartido queda como
+deuda diferida P4 post-Fase 3 (ver `BACKLOG.md`).
+
+Documentación autoritativa: ADR-0012 sección "Extensión de alcance
+(sesión 27)".
 
 ### Sobre testing / verificación
 - **D-24.1 (patrón fixture helper runtime)**: preferir helpers que deriven
@@ -89,6 +110,38 @@ y en los reportes de sesión referenciados.
 ### Sobre proceso (vinculantes para quien redacta briefs de sesión)
 - **D-V3.6**: los briefs de dogfooding se generan ejecutando las tools del propio server, nunca redactando desde memoria/texto — regla nacida de fricciones repetidas (Riesgo 8, ocurrió 3 veces) donde el brief mismo era la fuente del error.
 - **Regla arquitectónica reforzada** (tras D-12.4 y hallazgo de sesión 19): antes de aceptar "X escala mal" o "X no funciona", exigir prueba de que X aislado también falla. Dos veces una conclusión de "no escala" resultó ser causada por un factor externo combinado (keepout + autorouter), no por X en sí.
+
+### D-27.1 — Restore no destructivo del entorno GUI vivo
+
+**Contexto:** cuando el entorno vivo (`/tmp/gui-test-project`) no
+coincide con la precondición esperada de una sesión (mtime más viejo,
+contenido residual de sesión anterior, fixture drift, etc.), se
+necesita un procedimiento estándar que no invalide el estado de KiCad
+abierto ni pierda información sobre lo que había antes.
+
+**Decisión (procedimiento estándar):**
+
+1. Respaldar los archivos del proyecto vivo a un directorio temporal
+   (backup no destructivo — permite forense si algo sale mal).
+2. Sobrescribir archivos en el mismo path desde el fixture requerido.
+   **NO usar `rm -rf` del directorio** — invalidaría el lock de KiCad
+   sobre el proyecto abierto.
+3. Sincronizar el editor vivo con `reload_board_from_disk()` sin
+   reiniciar la GUI.
+4. Confirmar el estado post-restore con `get_component_detail` +
+   `get_zones` (o equivalentes) coincidiendo con el README del fixture.
+
+**Requisito de proceso:** `AskUserQuestion` obligatoria al arquitecto
+ANTES de cualquier mutación del proyecto abierto — nunca decisión
+unilateral, aun cuando el patrón esté formalizado.
+
+**Precedentes que validaron el procedimiento:** sesión 24 (test de
+regresión F-D4-02) y sesión 27 (test de regresión generalización
+D-23.2). Ambas resolvieron el desvío sin reiniciar la GUI y sin
+pérdida de información.
+
+**No aplica a:** sesiones donde el arquitecto autoriza reinicio de
+KiCad de entrada, o sesiones sin KiCad abierto (unit tests, docs).
 
 ## 3. Decisiones superadas (referencia histórica, no vigentes)
 

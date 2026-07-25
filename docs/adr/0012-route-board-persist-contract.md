@@ -104,6 +104,57 @@ del cambio mínimo que cierra la evidencia disponible hoy.
   (extender el loop de vías) queda como refuerzo de robustez a evaluar con
   evidencia real de intermitencia — no antes.
 
+## Extensión de alcance (sesión 27)
+
+Con D-23.2 ratificado 5/5 en producción (2/2 regresión sesión 24 + 3/3
+dogfooding D5 sesión 25), la generalización que la sección anterior dejó
+diferida procedió en sesión 27.
+
+**Tools cubiertas por el contrato D-23.2, actualizado:** `route_board`,
+`fill_zones`, `add_zone(fill=true)`. `add_zone(fill=false)` queda fuera por
+diseño — sin fill no hay refill+enforce que persistir, ni bug conceptual que
+cerrar.
+
+**Hallazgo de la lectura previa a implementar:** la sospecha inicial de que
+`fill_zones`/`add_zone` no llamaban a `enforce_hole_clearance()` era
+incorrecta — ambas ya lo hacían desde sesión 21 (F-D3-01,
+`src/kicad_mcp/tools/pcb.py`, dentro de `fill_zones` y del `if fill:` de
+`add_zone`). Lo único que faltaba, en las dos, era la mitad "persistencia" del
+contrato: `save_board()` explícito tras el refill+enforce, con manejo de
+fallo visible y mtimes de snapshot recolectados **después** del save (mismo
+hallazgo #31 de sesión 24: recolectarlos antes deja `latest_disk_mtimes`
+stale y el propio guardado dispara un `EXTERNAL_EDIT_DETECTED` espurio en la
+siguiente lectura). El cambio quirúrgico resultó más chico que lo
+anticipado.
+
+**Código de error `POST_ZONE_PERSIST_FAILED`.** Compartido entre las dos
+tools nuevas (no uno por tool) — misma semántica en ambas: el pipeline de
+zona (refill + enforce si aplica) completó en el vivo, pero `save_board()`
+falló al persistirlo. `POST_ROUTE_PERSIST_FAILED` (existente, `route_board`)
+y `POST_ZONE_PERSIST_FAILED` (nuevo) son **semánticamente equivalentes** —
+se discriminan por origen del llamador (el agente ya sabe qué tool invocó),
+no por semántica de código. Unificarlos en un solo código queda como deuda
+de bajo impacto, diferida a después de que Fase 3 cierre.
+
+**Diferencia deliberada respecto a `route_board`: sin campo `drc` en el
+payload.** `route_board` ya reportaba `drc.err_post` en su contrato JSON
+desde sesión 17 (P2.2) — extender esa medición a él fue continuidad de
+contrato. `fill_zones`/`add_zone` nunca tuvieron un campo `drc`; agregarlo
+habría sido un cambio de contrato JSON en dos tools baratas y de uso
+frecuente (`fill_zones` se llama de forma idempotente en flujos existentes,
+ver `tests/test_zones_e2e_gui.py`), sumando un `run_drc()` (subprocess
+`kicad-cli`, del orden de segundos) a cada llamada. Para estas dos tools el
+contrato D-23.2 se reduce a su núcleo — **disco == vivo** — sin medir ni
+reportar DRC. El `run_drc()` que el agente ya puede invocar por su cuenta es
+lo que pasa a ser fiel al estado persistido, que es el objetivo real del
+contrato.
+
+**`add_zone(fill=true)`, detalle de implementación:** el `store.register()`
+de mtimes de disco vive dentro del mismo `if fill:` que dispara el
+refill+enforce+save; la rama `fill=false` conserva `register(state,
+mtimes=None)` (snapshot vivo, sin persistencia) — comportamiento sin cambios
+respecto a antes de sesión 27.
+
 ## Alternativas descartadas
 
 - **Opción Y — inyectar keepout real al DSN por-net vs zona:** previene el

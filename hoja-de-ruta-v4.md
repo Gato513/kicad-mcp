@@ -48,13 +48,15 @@ activada, investigación sesión 23, fix sesión 24 Opción X mergeada
   Post-sesión 24: disco == memoria == `err_post` reportado al terminar OK.
 - Test de regresión GUI para D-23.2 (gate del merge, 2/2 corridas en vivo
   contra Freerouting real).
-- **Contrato D-23.2 ratificado en producción real, 5/5 corridas sin
-  excepción** (2/2 test de regresión sesión 24 + 3/3 D5, sesión 25 — `err_post`
+- **Contrato D-23.2 ratificado en `route_board` (5/5 corridas producción
+  real)** (2/2 test de regresión sesión 24 + 3/3 D5, sesión 25 — `err_post`
   == `run_drc()` independiente, mtime cambia post-save, cero
   `EXTERNAL_EDIT_DETECTED` espurio). El workaround manual de refill que el
-  fixture de D3 documentaba como obligatorio quedó obsoleto. **Alcance:
-  `route_board` solamente** — `fill_zones`/`add_zone(fill=True)` no
-  generalizados todavía (paso 3, sesión 27).
+  fixture de D3 documentaba como obligatorio quedó obsoleto. Extensión a
+  `fill_zones` y `add_zone(fill=True)` (sesión 27) pendiente de
+  ratificación estadística — D6 sesión 28 es primera medición. Segunda
+  ratificación por dogfooding pendiente para D7 (post D6 verde, si
+  aplica).
 - Zonas y keepouts operativos.
 - Revert humano eliminado (D-V3.1).
 - Freerouting operativo con reglas DSN (D-V3.5) y edge clearance
@@ -73,9 +75,13 @@ activada, investigación sesión 23, fix sesión 24 Opción X mergeada
   en el valor que su propia fórmula calcula — mecanismo de
   `solder_mask_bridge` no aislado. Re-estimado M/L. Ver `docs/BACKLOG.md`
   P1 y `docs/investigacion/26-solder-mask-ant1.md`.
-- P2 top: generalización D-23.2 a `fill_zones` y `add_zone(fill=True)`
-  (mismo patrón conceptual, mismo bug latente). **Condición de entrada
-  cumplida** — D5 ratificó el patrón en `route_board` (sesión 27).
+- P2 top (generalización D-23.2 a `fill_zones`/`add_zone(fill=True)`):
+  **cerrado en sesión 27**, mergeado a `master`. Ver
+  `docs/historico/sesiones/27-reporte.md`.
+- **D-26.1 (refill obligatorio pre-baseline)** pendiente primera
+  aplicación empírica en dogfooding — D6 sesión 28 es primera prueba.
+  Sin `fill_zones()` obligatorio entre colocación masiva y baseline DRC,
+  el baseline mide fill rancio (sesión 26 §2).
 - P3: F-D5-01 (isla GND sin vía al plano, sesión 25) — vigilancia, sin
   acción hasta 2 dogfoodings independientes que reproduzcan el patrón.
 - P3-P4: R12 (CRUD de sch), R13 (`get_world_context(kind="sch")` con
@@ -105,21 +111,26 @@ NO expandir capabilities. NO escalar complejidad prematuramente.
 |---|---|---|---|
 | 25 | **Dogfooding 5** con baseline dinámico + V1/V2/V3 reforzadas | Nota ≥9, V2 3/3 con mtime cambio y sin `EXTERNAL_EDIT_DETECTED` espurio, delta V4 sin violaciones nuevas | ✅ **Completada — 9.5/10.** Gate cumplido sin excepción: V2 3/3 limpio, delta V4 = 1 hallazgo menor resuelto misma sesión (F-D5-01). Ver `docs/historico/sesiones/25-reporte.md`. |
 | 26 | Fix P1 solder mask bridge ANT1 + test de regresión | Test verde, sin regresiones en tests existentes | ⚠️ **Completada — investigación abierta, sin fix.** Hipótesis de D5 refutada, bug confirmado real, fix diseñado NO verificado contra KiCad real — mecanismo no aislado. P1 sigue abierto, re-estimado M/L. Ver `docs/investigacion/26-solder-mask-ant1.md` y `docs/historico/sesiones/26-reporte.md`. |
-| 27 | Generalización D-23.2 a `fill_zones` + `add_zone(fill=True)` + tests | Tests de regresión análogos al de sesión 24, verdes | ⏭️ **Siguiente.** Condición de entrada (D5 verde) cumplida, no bloqueada por sesión 26. |
+| 27 | Generalización D-23.2 a `fill_zones` + `add_zone(fill=True)` + tests | Tests de regresión análogos al de sesión 24, verdes | ✅ **Cerrada 2026-07-24, contrato aplicado a 3 tools, ADR-0012 extendido.** Ver `docs/historico/sesiones/27-reporte.md`. |
 | N | Sesión de investigación P4.0-style: mecanismo `solder_mask_bridge` de KiCad (retoma P1) | Mecanismo aislado con confianza, ver `docs/investigacion/26-solder-mask-ant1.md` §5-§6 | Agendable post-27, requerido antes de retomar el fix de P1. |
-| 28 | **Dogfooding 6** con misma placa despertador | Nota ≥9, ratifica sesión 27, sin P0/P1 nuevos | Pendiente. |
+| 28 | **Dogfooding 6** con las tres tools D-23.2 + primera aplicación empírica D-26.1 | Nota ≥9, ratifica sesión 27, sin P0/P1 nuevos | ← **Siguiente.** |
 | 29+ | Iterar hasta convergencia si D6 abre pendientes | — | Pendiente. |
 
 **Criterio de cierre de Fase 3 (habilita Fase 4):**
 - ≥2-3 dogfoodings consecutivos verdes (nota ≥9) sobre misma placa.
-- P1 (solder mask ANT1) resuelto y ratificado — **reabierto tras sesión 26**,
-  requiere sesión de investigación dedicada antes de reintentar el fix.
-- Generalización D-23.2 completada y ratificada. **Nota (sesión 26):**
-  D-26.1 (refill obligatorio pre-baseline DRC, `docs/DECISIONES.md`)
-  también pendiente de ratificación en D6 — es hallazgo transferible de
-  proceso, sin sesión de fix propia, no una generalización de código.
-- Sin P0 nuevos en la superficie ratificada.
+- Generalizaciones completadas y ratificadas.
+- Sin P0 nuevos.
+- P1 conocido resuelto.
 - Estabilidad sostenida.
+
+**Estado del criterio (post-sesión 27):**
+- ✅ D5 verde (primer dogfooding de Fase 3, sesión 25).
+- ✅ Generalización D-23.2 completada (sesión 27).
+- ⏳ D6 pendiente (sesión 28) — segunda ratificación por dogfooding +
+  primera para la extensión + primera para D-26.1.
+- ⚠️ P1 solder mask ANT1 sigue abierto — no bloqueante para continuidad
+  de Fase 3, pero bloqueante para el cierre. **Reabierto tras sesión 26**,
+  requiere sesión de investigación dedicada antes de reintentar el fix.
 
 **Escalada de complejidad (Fase 4):** SOLO tras cierre de Fase 3.
 Escenarios candidatos: placas con >30 footprints, múltiples planos, capas

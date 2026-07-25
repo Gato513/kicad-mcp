@@ -19,10 +19,11 @@ Ninguno abierto hoy. **F-D4-02 cerrado y ratificado con evidencia 5/5**
 post-save, cero `EXTERNAL_EDIT_DETECTED` espurio, sin ninguna excepción en
 las 5 corridas). El cierre generaliza al board vivo en producción real, no
 solo al contrato JSON del test controlado — ver
-`docs/historico/sesiones/25-reporte.md`. **Alcance de la ratificación:
-`route_board` solamente** — `fill_zones`/`add_zone(fill=True)` siguen sin
-generalizar (P2 abajo, sesión 27). Reabrir como P0 solo si una sesión futura
-lo ratifica como regresión.
+`docs/historico/sesiones/25-reporte.md`. **Alcance de la ratificación
+ampliado en sesión 27**: el contrato D-23.2 ya cubre las tres tools
+(`route_board`, `fill_zones`, `add_zone(fill=True)`) — ver P2 cerrado
+abajo. Ratificación estadística de la extensión pendiente de D6 (sesión
+28). Reabrir como P0 solo si una sesión futura lo ratifica como regresión.
 
 ## P1 — Solder mask bridge en ANT1 (re-estimado M/L, próximo paso = investigación) — ⚠️ ABIERTO, sesión 26 no lo cerró
 
@@ -88,22 +89,19 @@ timebox de la sesión.** Ver `docs/investigacion/26-solder-mask-ant1.md`
   el árbol de trabajo. Independiente del mecanismo, reutilizable por
   cualquier investigación futura sobre este tema.
 
-## P2 — Generalización D-23.2 a `fill_zones` / `add_zone(fill=True)` (Fase 3, paso 3)
+### P2 — Generalización D-23.2 a fill_zones y add_zone(fill=True) [CERRADO sesión 27]
 
-Aplicar a `fill_zones` y `add_zone(fill=True)` el mismo patrón de
-reordenamiento de medición + persistencia incondicional confirmado en
-`route_board` (ADR-0012). Ambas tools sufren hoy el mismo patrón de "no
-persiste el refill" que tenía `route_board` antes de sesión 24 (R14
-residual).
-
-- **Condición:** ✅ cumplida — D5 (sesión 25) ratificó el patrón de
-  `route_board` en producción con evidencia 5/5. Listo para iniciar (sesión
-  27) — **no bloqueado por P1**: sesión 26 dejó P1 abierto (investigación sin
-  cerrar, no un fix pendiente de aplicar), y P1/D-23.2 son ortogonales
-  (mask bridge vs. contrato de persistencia). Iniciar 27 sin esperar a P1.
-- **Origen:** D-23.2, nota de sesión 24 sobre `add_zone`/`fill_zones`.
-- **Esfuerzo estimado:** M (sesión dedicada + tests de regresión, siguiendo
-  el patrón ya probado en `route_board`).
+- **Estado:** cerrado 2026-07-24, mergeado a master.
+- **Evidencia:** test de regresión GUI 2/2 verde contra KiCad 10.0.4
+  real (`tests/test_pcb_session27_zone_persist_gui.py`, 69s por
+  corrida). ADR-0012 extendido con sección "Extensión de alcance
+  (sesión 27)".
+- **Cambio:** `POST_ZONE_PERSIST_FAILED` compartido para las dos tools.
+  Contrato D-23.2 ahora aplica a tres tools (`route_board`,
+  `fill_zones`, `add_zone(fill=True)`).
+- **Ratificación estadística pendiente:** D6 (sesión 28) — primera
+  medición del contrato extendido en dogfooding real.
+- **Reporte:** `docs/historico/sesiones/27-reporte.md`.
 
 ## P2 — Correcciones puntuales con evidencia repetida
 
@@ -228,6 +226,16 @@ Nice-to-have, para después de convergencia de Fase 3 (Fase 4).
   innecesario tras las mejoras de contrato JSON de sesiones 17/19/24.
 - **Bbox de validación por Edge.Cuts real** (hoy es footprints ± 100mm) —
   deseable, no bloqueante.
+- **Unificación de `POST_ROUTE_PERSIST_FAILED` y `POST_ZONE_PERSIST_FAILED`**:
+  sesión 27 introdujo `POST_ZONE_PERSIST_FAILED` para `fill_zones` y
+  `add_zone(fill=True)`. Semánticamente equivalente a
+  `POST_ROUTE_PERSIST_FAILED` (sesión 24, `route_board`). Coexisten
+  temporalmente por decisión conservadora (no tocar `route_board` en
+  sesión 27). Deuda: unificar en un solo código compartido (por ejemplo
+  `PERSIST_CONTRACT_FAILED` o `TOOL_PERSIST_FAILED`), deprecando los dos
+  actuales. Impacto bajo — el contrato JSON de las tools no cambia (los
+  códigos siguen exportándose como strings; el llamador puede aceptar
+  ambos). Prioridad post-Fase 3, no bloqueante.
 
 ## Higiene menor (sin severidad, cuando haya tiempo)
 

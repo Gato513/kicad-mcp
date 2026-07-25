@@ -69,13 +69,14 @@ aumento progresivo de confianza, arranca en sesión 25). El objetivo de Fase 3
 ya no es "encontrar causa raíz" sino "ganar confianza estadística en que las
 causas raíz eliminadas realmente no vuelven".
 
-**Estado (post-sesión 27, 2026-07-24):** Fase 3 en curso. Contrato D-23.2
-generalizado a las tres tools (route_board, fill_zones,
-add_zone(fill=True)) — sesión 27 mergeada, test de regresión 2/2 verde
-en vivo contra KiCad real. Base sólida para D6 sesión 28 (ratificación
-estadística de la generalización + primera aplicación empírica de
-D-26.1). P1 solder mask ANT1 sigue vigente, agenda de investigación
-pendiente post-D6.
+**Estado (post-sesión 28, 2026-07-25):** Fase 3 en curso, 2 verdes
+consecutivos sobre variable controlada (D5=9.5, D6=9.7). Contrato
+D-23.2 ratificado 9/9 en las tres tools en dogfooding real (route_board,
+fill_zones, add_zone(fill=True)). D-26.1 ratificado con matiz
+metodológico (confusor de orden de fases). D-27.1 ratificado en
+producción. F-D5-01 no reapareció. Próxima sesión: 29 = D7 con
+aislamiento correcto de D-26.1 + variación geométrica controlada, buscando
+3er verde consecutivo (criterio de cierre de Fase 3).
 
 **Qué cerró Fase 2:** F-D4-02 — el último P0 conocido (bug de orden de
 medición + falta de persistencia en `route_board`, causaba que el DRC
@@ -143,9 +144,17 @@ repo); historial de dogfooding: `docs/ROADMAP.md`.
 Índice completo con ADR y decisiones informales: `docs/DECISIONES.md`. Las que
 más condicionan trabajo futuro:
 
-- **Contrato disco==memoria==reportado** (ADR-0012 / D-23.2): hoy garantizado
-  solo en `route_board`. `fill_zones` y `add_zone(fill=True)` todavía no lo
-  cumplen — es la generalización pendiente de Fase 3 (paso 3 de la secuencia).
+- **D-23.2 (ratificado en 3 tools, ratificación estadística en curso):**
+  contrato disco==memoria aplicado a `route_board` (sesión 24, ADR-0012),
+  `fill_zones` (sesión 27, extensión ADR-0012), `add_zone(fill=True)`
+  (sesión 27, extensión ADR-0012). Acumulado 15/15 corridas verdes en
+  producción real hasta cierre D6 (2 test regresión sesión 24 + 3 D5 + 3
+  D6 en route_board; 2 test regresión sesión 27 + 2 D6 en fill_zones; 2
+  test regresión sesión 27 + 1 D6 en add_zone). Sin divergencias
+  registradas. Ratificación estadística en curso — D7 sesión 29 apunta a
+  3er verde consecutivo para cerrar criterio de convergencia Fase 3. Ver
+  `docs/DECISIONES.md` §2 y ADR-0012 §"Extensión de alcance (sesión 27)"
+  para detalles.
 - **KIID sobre coordenadas/radio** para desambiguar cobre (`delete_track`,
   `delete_via`) — D-V3.3.
 - **Reglas del board viajan al DSN de Freerouting** (edge clearance vía
@@ -170,6 +179,20 @@ más condicionan trabajo futuro:
   (D-26.1, sesión 26): `move_footprint` no dispara refill de zonas; un
   baseline leído inmediatamente después de mover pads sobre un plano ya
   filleado mide fill rancio, no el estado real. Ver C7 abajo.
+- **D-28.1 — Cambios de orden de fases requieren AskUserQuestion**
+  (operacional, ver `docs/DECISIONES.md`). Cambio de orden de fases en un
+  brief es cambio de metodología, no de implementación, y contamina el
+  experimento si se hace sin consultar. Origen: D6 invirtió el orden
+  plano-vs-colocación respecto al brief sin AskUserQuestion, introduciendo
+  confusor en la ratificación de D-26.1.
+- **D-28.2 — Deuda del arquitecto: barrido completo al generar diffs de
+  decisiones.** Cuando se actualiza una decisión en el proyecto, hacer
+  barrido de TODOS los sitios donde la decisión puede aparecer
+  (CONTEXT.md, ADR, BACKLOG, ROADMAP, hoja-de-ruta), no solo el más
+  obvio. Origen: consolidación post-sesión 27 actualizó D-23.2 en
+  DECISIONES.md y "estado en una línea" del CONTEXT, pero omitió la
+  sección §"Decisiones vigentes" del mismo CONTEXT — un dogfooding lo
+  detectó como drift. Ver `docs/DECISIONES.md`.
 
 ## Caveats operacionales
 
@@ -193,7 +216,7 @@ condicionan decisiones de arquitectura o pueden bloquear un dogfooding futuro:
 |---|---|---|
 | R12 | Tools de escritura de esquemático son puramente aditivas (sin CRUD) | Abierto, no ejercitado en D3/D4/24 |
 | R13 | `get_world_context(kind="sch")` falla con símbolos `#PWR*`/`#FLG*` | Ratificado en D4, workaround `export_netlist()` |
-| R14 | `fill_zones`/`add_zone(fill=True)` no garantizan el contrato disco==memoria | Cerrado en `route_board`; residual abierto hasta generalización D-23.2 |
+| R14 | `fill_zones`/`add_zone(fill=True)` no garantizaban el contrato disco==memoria | Cerrado en las tres tools (D-23.2 extendido, sesión 27); ratificado 15/15 en producción hasta D6 |
 | R16 | Loop de vías de `enforce_hole_clearance` posiblemente código muerto | Deuda técnica (D-23.3), no tocar en Fase 3 salvo evidencia nueva |
 | R9 | `Freerouting gui.enabled=true` cuelga la JVM | Mitigado en código, issue upstream pendiente |
 

@@ -143,6 +143,80 @@ pérdida de información.
 **No aplica a:** sesiones donde el arquitecto autoriza reinicio de
 KiCad de entrada, o sesiones sin KiCad abierto (unit tests, docs).
 
+### D-28.1 — Cambios de orden de fases del brief requieren AskUserQuestion
+
+**Contexto:** en dogfoodings y sesiones de fix, el brief define un orden
+específico de fases (ej. contorno → plano → colocación → refill →
+baseline). El agente ejecutor puede tener razones para desviarse del
+orden (por ejemplo, réplica exacta de un estado histórico, o
+conveniencia operacional). Esos desvíos son legítimos como
+implementación, pero el orden de fases suele estar diseñado para aislar
+variables metodológicas — cambiar el orden puede contaminar el
+experimento sin que se note hasta el análisis.
+
+**Precedente:** D6 (sesión 28) invirtió el orden plano-vs-colocación
+respecto al brief (que prescribía plano ANTES de colocar, orden de D5).
+El agente colocó primero y creó el plano después, con intención
+legítima (réplica exacta del layout D5 vía coordenadas heredadas). Pero
+ese orden por sí solo evitó el fill rancio que D-26.1 pretendía
+mitigar, contaminando la ratificación empírica de D-26.1. El agente lo
+detectó honestamente en el análisis y lo documentó, pero el confusor
+quedó en la evidencia.
+
+**Decisión:** cualquier cambio de orden de fases respecto al brief
+requiere **`AskUserQuestion` obligatoria al arquitecto ANTES de
+ejecutar**, con explicación del cambio propuesto y el motivo. El
+arquitecto evalúa si el cambio es metodológicamente aceptable, si
+requiere ajustes al brief, o si conviene mantener el orden original.
+
+**No aplica a:** cambios de implementación dentro de una fase (ej.
+qué footprint mover primero dentro de "Fase 3: colocación"). El
+criterio de discriminación es: ¿cambia el estado observable entre
+mediciones? Si sí, es cambio de orden de fases y requiere consulta.
+
+**Antecedente relacionado:** D-27.1 (restore no destructivo del entorno
+GUI vivo) también exige AskUserQuestion antes de mutar el proyecto
+abierto. D-28.1 extiende el principio de "cambios metodológicos
+requieren consulta" al orden de fases del propio brief.
+
+### D-28.2 — Barrido completo de sitios al generar diffs de decisiones (deuda del arquitecto)
+
+**Contexto:** el arquitecto genera diffs de consolidación tras cada
+sesión relevante. Una decisión arquitectónica puede aparecer en
+múltiples documentos (CONTEXT.md secciones "Estado", "Decisiones
+vigentes"; DECISIONES.md; ADR; BACKLOG; ROADMAP; hoja-de-ruta; docstrings
+de código). Actualizar solo el sitio más obvio genera drift documental
+que puede persistir varias sesiones sin ser detectado.
+
+**Precedente:** consolidación post-sesión 27 actualizó D-23.2 en
+`docs/DECISIONES.md §2` y "estado en una línea" del `docs/CONTEXT.md`,
+pero omitió `docs/CONTEXT.md §"Decisiones vigentes"` que seguía
+diciendo que D-23.2 solo cubría `route_board`. El drift fue detectado
+en D6 sesión 28 por el agente ejecutor del dogfooding — no debería
+haber sido tarea de un dogfooding detectar drift documental.
+
+**Decisión:** cuando el arquitecto genera diffs de consolidación sobre
+una decisión, hacer barrido mental completo de dónde puede aparecer
+esa decisión antes de commitear:
+
+- `docs/CONTEXT.md` — secciones "Estado", "Decisiones vigentes",
+  "Fases del proyecto", riesgos, hallazgos, backlog resumido.
+- `docs/DECISIONES.md` — entrada de la decisión + entradas relacionadas
+  que puedan referenciarla.
+- `docs/adr/*.md` — ADR de la decisión + ADRs que la citen.
+- `docs/BACKLOG.md` — items que la mencionen (cerrados o vigentes).
+- `docs/ROADMAP.md` — historial de sesiones que la cite.
+- `hoja-de-ruta-v4.md` (o versión vigente) — secuencia + estado técnico.
+- Docstrings en código que la referencien.
+
+**No aplica a:** decisiones marginales o triviales que aparecen en
+un solo sitio. Aplica a cualquier decisión con `D-N.M` asignado o con
+ADR dedicado.
+
+**Consecuencia operacional:** los diffs de consolidación pueden ser
+más largos de lo que parecía inicialmente. Es preferible un diff largo
+correcto a uno corto con drift.
+
 ## 3. Decisiones superadas (referencia histórica, no vigentes)
 
 - **D-V3.1** (revert humano post-route): superada por recarga programática (`Board.revert()`, sesión 18) — ya no hay contacto humano por route.

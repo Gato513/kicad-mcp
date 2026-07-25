@@ -202,6 +202,33 @@ global de esa isla al plano fillado.
   §Fricciones.
 - **Acción hoy:** ninguna — solo vigilar en D6/D7 (sesiones 28+).
 
+## P3 vigilancia — F-D6-01: costo de re-ruteo parcial no barato
+
+- **Contexto:** en D5 (sesión 25) se observaron 2 re-ruteos parciales
+  con costo ~9-10s. En D6 (sesión 28) se observaron 2 re-ruteos
+  parciales con costo 110-112s — con la misma placa, mismo footprint
+  set, mismo Freerouting. Con N=4 total, el rango es 9s-112s, tan
+  amplio como el de una corrida completa.
+- **Interpretación:** el "modelo barato" que D5 había sugerido con
+  solo 2 muestras no se sostiene. Hipótesis (no verificada): el costo
+  de re-ruteo parcial depende del grado de interconexión del net
+  borrado con el resto del board — un net con muchas conexiones a
+  otros nets tiene mayor costo que un net aislado.
+- **Estado:** P3 vigilancia. No bloquea uso semanal.
+- **Protocolo de investigación:** D7 (sesión 29) mide 2-3 re-ruteos
+  parciales adicionales para llegar a N=6-7 muestras. Si aparece patrón
+  identificable (correlación con interconexión del net, o con tamaño,
+  o con capas), documentar el patrón y actualizar modelo mental de
+  `route_ms` en docs. Si N=6-7 aún no muestra patrón, cerrar F-D6-01
+  como "variabilidad inherente de Freerouting" y documentar rango
+  esperable en `docs/CONTEXT.md` o `restricciones-kicad.md`.
+- **Trigger para promoción a P2 investigación:** solo si N=6-7 muestra
+  costo consistentemente >60s en re-ruteos parciales (más del doble
+  del techo actual de una corrida completa exitosa), lo que sería
+  regresión operacional inaceptable.
+- **Origen:** F-D6-01, sesión 28. Ver `docs/historico/sesiones/28-reporte.md`
+  §Fricciones.
+
 ## P4 — Diferidos sin urgencia (re-evaluar con evidencia nueva)
 
 Nice-to-have, para después de convergencia de Fase 3 (Fase 4).

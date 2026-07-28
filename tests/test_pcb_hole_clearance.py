@@ -52,9 +52,22 @@ class _Drill:
         self.diameter = _Vec2(dia_nm, dia_nm)
 
 
+class _CopperLayer:
+    def __init__(self, w_nm: int, h_nm: int) -> None:
+        self.size = _Vec2(w_nm, h_nm)
+
+
 class _Padstack:
-    def __init__(self, dia_nm: int) -> None:
+    def __init__(
+        self, dia_nm: int, pad_w_nm: int | None = None, pad_h_nm: int | None = None
+    ) -> None:
         self.drill = _Drill(dia_nm)
+        # sin tamaño de cobre modelado (default) -> lista vacía, igual que un
+        # pad sin capa de cobre (sesión 30: mask_term queda en 0, sin
+        # cambio de comportamiento respecto a sesión 21-29 para estos tests).
+        self.copper_layers = (
+            [] if pad_w_nm is None else [_CopperLayer(pad_w_nm, pad_h_nm or pad_w_nm)]
+        )
 
 
 class _Pad:
@@ -66,11 +79,13 @@ class _Pad:
         y_nm: int,
         dia_nm: int,
         pad_type: int,
+        pad_w_nm: int | None = None,
+        pad_h_nm: int | None = None,
     ) -> None:
         self.number = number
         self.net = _Net(net_name) if net_name else _Net("")
         self.position = _Vec2(x_nm, y_nm)
-        self.padstack = _Padstack(dia_nm)
+        self.padstack = _Padstack(dia_nm, pad_w_nm, pad_h_nm)
         self.pad_type = pad_type
 
 
@@ -293,3 +308,46 @@ def test_list_pad_holes_reports_ref_net_kind_diameter() -> None:
     assert by_ref["J1"].net_name is None
     assert by_ref["J1"].kind == "npth"
     assert by_ref["J1"].diameter_mm == pytest.approx(0.9906, abs=1e-4)
+
+
+@pytest.mark.unit
+def test_enforce_hole_clearance_mask_term_dominates_when_larger(tmp_path: Path) -> None:
+    """Sesión 30 (``docs/investigacion/30-solder-mask-ant1.md``): con
+    ``pad_to_mask_clearance`` alto, el término de MÁSCARA (cobre del pad +
+    clearance de máscara) domina sobre el término de agujero (drill +
+    ``min_hole_clearance``) — regresión del P1 ``solder_mask_bridge`` en
+    ANT1, revertido en sesión 26 por falta de este test.
+
+    ANT1: drill 2.0mm (r=1.0), cobre 3.0x3.0mm (r=1.5).
+    Con pad_to_mask_clearance=0.3 (sin .kicad_pro -> defaults: hole_clearance
+    0.25, mask_to_copper_clearance 0.0):
+    - término de agujero: 1.0 + 0.25 + 0.02 = 1.27mm
+    - término de máscara: 1.5 + 0.3  + 0.02 = 1.82mm  <- domina
+    """
+    pcb_path = tmp_path / "proj.kicad_pcb"
+    pcb_path.write_text("(kicad_pcb (setup (pad_to_mask_clearance 0.3)))")
+
+    zone = _FakeExistingZone(ZoneType.ZT_COPPER, "GND_plane", "GND", [LAYER_B_CU])
+    ant1 = _Pad(
+        "1",
+        "Net-(ANT1-A)",
+        144_500_000,
+        89_000_000,
+        2_000_000,
+        PadType.PT_PTH,
+        pad_w_nm=3_000_000,
+        pad_h_nm=3_000_000,
+    )
+    raw = _FakeRawBoard(zones=[zone], footprints=[_Footprint("ANT1", [ant1])], tracks=[])
+    bridge = _bridge()
+    board = BoardHandle(_raw=raw)
+
+    created = bridge.enforce_hole_clearance(board, pcb_path)
+
+    assert created == 1
+    keepouts = [z for z in raw.get_zones() if getattr(z, "type", None) == ZoneType.ZT_RULE_AREA]
+    assert len(keepouts) == 1
+    vertex = next(node for node in keepouts[0].outline.outline if node.has_point)
+    cx_nm, cy_nm = 144_500_000, 89_000_000
+    radius_mm = ((vertex.point.x - cx_nm) ** 2 + (vertex.point.y - cy_nm) ** 2) ** 0.5 / 1_000_000
+    assert radius_mm == pytest.approx(1.82, abs=1e-3)

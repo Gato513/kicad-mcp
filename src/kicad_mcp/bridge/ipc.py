@@ -273,6 +273,11 @@ class PadHole:
     p. ej. los 3 agujeros de montaje de un conector Tag-Connect). Para pads
     ovalados, ``diameter_mm`` toma el lado MAYOR del drill (conservador: una
     exclusión más grande nunca es menos segura que una más chica).
+
+    ``pad_w_mm``/``pad_h_mm`` (sesión 30, re-aterrizado tras revertirse en
+    sesión 26): tamaño de cobre del pad, ``Mm(0.0)`` para NPTH (sin cobre) o
+    llamadores que no lo modelan. Habilitan el término de máscara de
+    ``enforce_hole_clearance`` — ver ``docs/investigacion/30-solder-mask-ant1.md``.
     """
 
     ref: str
@@ -282,6 +287,8 @@ class PadHole:
     y_mm: Mm
     diameter_mm: Mm
     kind: str  # "pth" | "npth"
+    pad_w_mm: Mm = Mm(0.0)
+    pad_h_mm: Mm = Mm(0.0)
 
 
 @dataclass(frozen=True)
@@ -547,17 +554,28 @@ usado en otras validaciones geométricas del bridge."""
 
 
 def _circle_vertices_mm(
-    cx_mm: float, cy_mm: float, radius_mm: float, n: int = 16
+    cx_mm: float, cy_mm: float, radius_mm: float, n: int = 64
 ) -> tuple[tuple[float, float], ...]:
     """Aproxima un círculo con ``n`` vértices (sesión 21, ``enforce_hole_clearance``).
 
     Mismo criterio de sesión 19 para exclusiones circulares
     (``docs/investigacion/19-zonas-ipc.md`` §Riesgos: "12-16 vértices,
-    suficiente para RF"). 16 es conservador para los radios pequeños
-    (<2mm) típicos de agujeros PTH/NPTH — el polígono queda ligeramente
-    INSCRITO en el círculo real, así que se prefiere sobre-excluir (radio ya
-    incluye el margen de seguridad, ver ``enforce_hole_clearance``) en vez de
-    compensar el apotema.
+    suficiente para RF"). El polígono queda INSCRITO en el círculo real
+    (vértices exactos al radio pedido, apotema = ``radius_mm·cos(π/n)``).
+
+    Con N=16 (sesión 21-29) el déficit de apotema a radios ~1.8mm es de
+    ~0.035mm, MAYOR que ``_HOLE_CLEARANCE_MARGIN_MM`` (0.02mm) — el fill de
+    KiCad hace valer el keepout hasta el punto medio de cada arista, no
+    hasta el vértice, así que el margen no lo absorbía. Causa raíz aislada
+    del P1 ``solder_mask_bridge`` (sesión 30,
+    ``docs/investigacion/30-solder-mask-ant1.md``): confirmado por
+    medición directa que el fill respeta exactamente el apotema del
+    polígono, no un círculo ideal. N=64 reduce el déficit a ~0.002mm a ese
+    mismo radio (``cos(π/64)`` ≈ 0.99880), muy por debajo del margen
+    existente — se prefiere subir N sobre dividir el radio por
+    ``cos(π/n)`` porque no altera el radio EFECTIVO ya validado en D3-D7
+    (converge al círculo que la fórmula original ya pretendía, en vez de
+    agrandar la exclusión).
     """
     import math
 
@@ -595,6 +613,9 @@ def _list_pad_holes_raw(raw_board: Any) -> tuple[PadHole, ...]:
             net_name = str(net.name) if net is not None and net.name else None
             pos = pad.position
             kind = "npth" if pad.pad_type == PadType.PT_NPTH else "pth"
+            copper = pad.padstack.copper_layers
+            pad_w_mm = nm_to_mm(Nm(int(copper[0].size.x))) if copper else Mm(0.0)
+            pad_h_mm = nm_to_mm(Nm(int(copper[0].size.y))) if copper else Mm(0.0)
             out.append(
                 PadHole(
                     ref=ref,
@@ -604,6 +625,8 @@ def _list_pad_holes_raw(raw_board: Any) -> tuple[PadHole, ...]:
                     y_mm=nm_to_mm(Nm(int(pos.y))),
                     diameter_mm=nm_to_mm(Nm(dia_nm)),
                     kind=kind,
+                    pad_w_mm=pad_w_mm,
+                    pad_h_mm=pad_h_mm,
                 )
             )
     return tuple(out)
@@ -1920,17 +1943,27 @@ class IpcBridge:
         ``_AUTO_KEEPOUT_PREFIX``) antes de recalcular, así llamadas repetidas
         (p. ej. varios ``route_board`` seguidos) no acumulan duplicados.
 
-        Radio de exclusión = radio del agujero + ``min_hole_clearance`` del
-        proyecto (``rules_reader``, único punto que lee esa regla — kipy no
-        la expone vía IPC, confirmado en la investigación) +
-        ``_HOLE_CLEARANCE_MARGIN_MM``. Se protege contra TODO agujero de pad
-        (PTH con net distinto de la zona, o NPTH sin net — siempre ajeno) y
-        toda vía de net distinto, sin filtrar por capa (simplificación
-        deliberada: el MVP no modela vías ciegas/enterradas, así que toda vía
-        atraviesa el board completo — sobre-proteger una capa donde el
-        agujero no tiene cobre es inofensivo, ver investigación §4 nota de
-        diseño). Devuelve la cantidad de keepouts de protección creados (0
-        si ninguna zona de cobre lo necesitaba).
+        Radio de exclusión de PADS (sesión 30, generalización tras
+        ``docs/investigacion/30-solder-mask-ant1.md``) = máximo entre dos
+        términos, cada uno + ``_HOLE_CLEARANCE_MARGIN_MM``:
+        - término de agujero: radio del drill + ``min_hole_clearance`` del
+          proyecto (protege contra clearance de cobre-a-agujero, F-D3-01).
+        - término de máscara: radio de COBRE del pad +
+          ``max(pad_to_mask_clearance, solder_mask_to_copper_clearance)``
+          (protege contra ``solder_mask_bridge`` — el fill puede acercarse
+          más de lo debido a la apertura de máscara si el keepout solo
+          cubre el agujero, que puede ser más chico que el cobre).
+        Ambos leídos de ``rules_reader`` (único punto que expone estas
+        reglas — kipy no las da vía IPC). VÍAS conservan solo el término de
+        agujero (D-23.3/R16, fuera de alcance de sesión 30 — una vía no
+        tiene pad de cobre ancho como un PTH). Se protege contra TODO
+        agujero de pad (PTH con net distinto de la zona, o NPTH sin net —
+        siempre ajeno) y toda vía de net distinto, sin filtrar por capa
+        (simplificación deliberada: el MVP no modela vías ciegas/enterradas,
+        así que toda vía atraviesa el board completo — sobre-proteger una
+        capa donde el agujero no tiene cobre es inofensivo, ver
+        investigación §4 nota de diseño). Devuelve la cantidad de keepouts
+        de protección creados (0 si ninguna zona de cobre lo necesitaba).
         """
         from kipy.board_types import Zone
         from kipy.proto.board.board_types_pb2 import ZoneType
@@ -1957,6 +1990,9 @@ class IpcBridge:
 
                 rules = load_project_rules(pcb_path)
                 hole_clearance_mm = rules.min_hole_clearance_mm
+                mask_clearance_mm = max(
+                    rules.pad_to_mask_clearance_mm, rules.solder_mask_to_copper_clearance_mm
+                )
 
                 pad_holes = _list_pad_holes_raw(raw_board)
                 vias = [it for it in raw_board.get_tracks() if type(it).__name__ == "Via"]
@@ -1974,11 +2010,16 @@ class IpcBridge:
                     for hole in pad_holes:
                         if hole.net_name is not None and hole.net_name == zone_net:
                             continue  # mismo net: conexión legítima, no ajeno
-                        radius_mm = (
+                        hole_term_mm = (
                             float(hole.diameter_mm) / 2.0
                             + hole_clearance_mm
                             + _HOLE_CLEARANCE_MARGIN_MM
                         )
+                        pad_copper_radius_mm = max(float(hole.pad_w_mm), float(hole.pad_h_mm)) / 2.0
+                        mask_term_mm = (
+                            pad_copper_radius_mm + mask_clearance_mm + _HOLE_CLEARANCE_MARGIN_MM
+                        )
+                        radius_mm = max(hole_term_mm, mask_term_mm)
                         keepout = Zone()
                         keepout.type = ZoneType.ZT_RULE_AREA
                         keepout.name = f"{_AUTO_KEEPOUT_PREFIX}pad_{hole.ref}_{hole.pad_number}"

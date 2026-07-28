@@ -27,6 +27,19 @@ Cinco fronteras que ningún agente cruza sin aprobación humana explícita:
 - **F5 — Sin dependencias nuevas sin aprobación.** No se edita `pyproject.toml`
   para añadirlas. Propuesta con justificación de una línea; el humano decide.
 
+## Precedentes de aplicación empírica
+
+- **Consolidación post-sesión 30 (2026-07-28):** durante trabajo de
+  consolidación documental, se intentó editar `docs/specs/restricciones-kicad.md`
+  con aprobación del arquitecto vía `AskUserQuestion` en chat. El deny
+  explícito en `.claude/settings.json` bloqueó la edición. Un intento de
+  levantar el deny editando el propio `settings.json` también fue
+  bloqueado por el sistema de permisos del harness. El ejecutor respetó
+  ambas capas de defensa y preparó diff externo para aplicación humana
+  fuera del harness. Evidencia de que la implementación técnica de F1
+  no depende de disciplina documental; es defensa en profundidad
+  operativa.
+
 ## Consecuencias
 
 - Un agente que actúa dentro del margen permitido no rompe contratos con

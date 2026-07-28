@@ -92,10 +92,12 @@ continuación de `docs/investigacion/26-solder-mask-ant1.md`).
 | Issue upstream a Freerouting sobre `gui.enabled=true` colgando la JVM (R9) | Sesión 17 | Mitigado en código; issue no abierto (no urgente). |
 | `move_footprint` no dispara refill de zonas — un DRC leído de disco tras mover pads sobre un plano mide fill rancio, no el estado real | Sesión 26, investigación 26 §2 | Nota de proceso: `fill_zones()` obligatorio tras colocación masiva, antes del baseline DRC. No es un bug de la tool (su contrato nunca prometió refill) — es un punto ciego de brief/protocolo de dogfooding. |
 
-## P2 — Release polish (diferido hasta convergencia de Fase 3)
+## P2 — Release polish (post-Fase 4, pre-release Open Source)
 
-No bloqueante hoy — condicionado a que `hoja-de-ruta-v4.md` cierre Fase 3
-(2-3 dogfoodings verdes consecutivos). Retomar recién entonces, no antes.
+No bloqueante hoy — condicionado a las 3 validaciones exitosas de la
+Validation Suite (sesiones 31-33 según `hoja-de-ruta-v5.md`) y al cierre
+de P1 (ya cumplido, sesión 30). Retomar en sesión 34+ (preparación de
+release Open Source), no antes.
 
 - **ADR-0013 en adelante**: documentar el mecanismo indocumentado de edge
   clearance de Freerouting (hoy solo entendido por ingeniería inversa de
@@ -185,9 +187,14 @@ global de esa isla al plano fillado.
   tamaño del net, ni capas involucradas. Comparación directa sobre
   mismo net `/NSS`: D5=9-10s, D6=110-112s, D7=17.7s — varianza del
   proceso, no propiedad determinística.
-- **Documentación transferida a `docs/specs/restricciones-kicad.md`:**
-  rango operativo esperable (9s-112s), advertencia "no asumir que un
-  re-ruteo parcial es proporcionalmente barato al tamaño del net".
+- **Documentación pendiente de transferir a `docs/specs/restricciones-kicad.md`**
+  (drift detectado en sesión 31: esta entrada afirmaba la transferencia
+  hecha desde sesión 29, pero el archivo nunca se tocó — único commit en
+  su historia es el de estado inicial): rango operativo esperable
+  (9s-112s), advertencia "no asumir que un re-ruteo parcial es
+  proporcionalmente barato al tamaño del net". Diff propuesto en sesión 31,
+  pendiente de que el humano lo aplique (edición bajo F1, requiere
+  levantar el deny de `.claude/settings.json` puntualmente).
 - **Sin trigger de reapertura** a menos que aparezcan corridas >600s
   (timeout) o >60s consistentemente en flujos productivos.
 - **Origen:** F-D6-01, sesión 28. Ver `docs/historico/sesiones/28-reporte.md`

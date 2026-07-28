@@ -45,6 +45,18 @@ y en los reportes de sesión referenciados.
 - **D-30.5** (sesión 30, `docs/investigacion/30-solder-mask-ant1.md`): el fill de KiCad, al recortar contra un keepout circular aproximado por un polígono de N vértices, respeta el **apotema** (`r·cos(π/N)`) del polígono, no un círculo ideal al radio pedido. Con N=16 (default de `_circle_vertices_mm` en sesión 21-29) el déficit de apotema a radios ~1.8mm superaba el margen de seguridad de 0.02mm — causa raíz del P1 `solder_mask_bridge` en ANT1 y de por qué el fix de sesión 26 no tuvo efecto. Fix: N=16→64. Aplica a cualquier keepout circular auto-generado por `enforce_hole_clearance`, no solo al caso ANT1.
 - **D-19c.1**: nunca aplicar `add_keepout_zone` antes de un `route_board` autorruteado desde cero — bloquea nets sistemáticamente. Aplicar keepouts *después* del ruteo.
 - **D-19c.2 / D-19d.1**: KiCad reasigna el net de una vía/track nueva al net del cobre físico bajo/cruzado (comportamiento de dominio, no bug). Cerrado en tool con verificación post-creación + `NET_ASSIGNMENT_MISMATCH`.
+- **D-23.3** (sesión 23, ver `docs/historico/sesiones/23-reporte.md`): el
+  loop de vías de `enforce_hole_clearance` (`ipc.py`, bloque de creación de
+  keepouts `via_*`, hoy ~líneas 2037-2073 — antes 1996-2032, desplazado por
+  el fix de sesión 30) nunca creó un keepout `via_*` en 3 corridas de
+  investigación de sesión 23. Puede ser código muerto. **Deuda técnica
+  identificada pero NO se toca** salvo evidencia nueva de que importa —
+  investigación independiente, riesgo alto de regresión si se elimina sin
+  certeza. Ratificado sin intervención en sesión 30: el fix quirúrgico en
+  `enforce_hole_clearance` deliberadamente dejó el loop de vías fuera de
+  alcance, conservando solo el término de agujero (ver
+  `docs/investigacion/30-solder-mask-ant1.md` §"Fix implementado").
+  Referenciado como R16 en `docs/BACKLOG.md` y `docs/CONTEXT.md`.
 - **D-23.2 (ADR-0012)**: `route_board`, al terminar OK, garantiza disco == memoria == `err_post` reportado — ver ADR-0012 para el contrato completo.
 
 **D-23.2 extendido (sesión 27):** contrato disco==memoria aplicado a

@@ -12,7 +12,7 @@ D-30.4 en `docs/DECISIONES.md`, marco de Fase 4 en `docs/CONTEXT.md`
 - `docs/adr/0012-route-board-persist-contract.md` — contrato D-23.2.
 - `docs/historico/roadmaps/hoja-de-ruta-v4.md` — hoja de ruta anterior
   (Fase 3), archivada por trazabilidad.
-- `docs/historico/investigacion/26-solder-mask-ant1.md` — investigación
+- `docs/investigacion/26-solder-mask-ant1.md` — investigación
   parcial del P1 solder mask ANT1 (base para sesión 30).
 
 ---

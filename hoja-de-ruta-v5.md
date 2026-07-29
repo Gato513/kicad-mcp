@@ -37,9 +37,9 @@ no por el volumen de código escrito.
 
 | Sesión | Contenido | Estado |
 |---|---|---|
-| 30 | **Investigación P4.0-style del P1 solder mask ANT1** — única deuda técnica arrastrada de Fase 3, cierre honesto sin fix si no se llega. Aplica D-30.1. | ← Siguiente |
-| 31 | **Validation Suite: primera validación de nivel A** — primer dogfooding sobre placa ajena al despertador. Fusiona escalada de complejidad + arranque de Suite. | Pendiente |
-| 32 | **Validation Suite: nivel B** — proyecto de complejidad media. Aplica criterio de diversidad (D-30.4). | Pendiente |
+| 30 | **Investigación P4.0-style del P1 solder mask ANT1** — única deuda técnica arrastrada de Fase 3, cierre honesto sin fix si no se llega. Aplica D-30.1. | ✅ Cerrada |
+| 31 | **Validation Suite: primera validación de nivel A** — primer dogfooding sobre placa ajena al despertador. Fusiona escalada de complejidad + arranque de Suite. | ✅ Cerrada (31→31b→31c) |
+| 32 | **Validation Suite: nivel B** — proyecto de complejidad media. Aplica criterio de diversidad (D-30.4). | ← En curso |
 | 33 | **Validation Suite: nivel C** — proyecto complejo. Aplica criterio de diversidad. | Pendiente |
 | 34+ | **Preparación de release Open Source** — solo cuando las 3 validaciones hayan cerrado. Docs, licencia, ADRs, guía de contribución, limpieza del repositorio. | Pendiente |
 | post-release | **Features nuevas según demanda real** — no por especulación. | Sin agendar |

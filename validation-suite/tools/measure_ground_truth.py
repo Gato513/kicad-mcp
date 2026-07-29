@@ -74,6 +74,38 @@ capa con más cobre, dividido por ``board_area_mm2`` — proxy barato de
 densidad para la matriz de cobertura D-30.4, no pretende ser una métrica
 de fabricación).
 
+## Extensiones de sesión 32 (``schema_version`` 1.0 → 1.1, aditivas)
+
+Reflexiones heredadas de sesión 31c: el ratio global de tracks/vías no
+distingue "sub-ruteo uniforme" de "topología distinta en nets grandes", y
+"0 errores DRC nuevos" no distingue severidad. Estas claves son **puramente
+aditivas** — ninguna clave de 1.0 cambia de nombre ni de significado.
+
+- ``track_length_by_net_mm``: igual que ``total_track_length_mm`` pero
+  agrupado por ``track.GetNetname()`` — habilita el análisis por-net
+  (top 5 por delta absoluto/porcentual) de sesión 32 en adelante.
+- ``via_count_by_net``: igual que ``via_count`` pero agrupado por net —
+  descompone el ratio de vías (diagnóstico de 31c: umbral mal calibrado
+  para bases pequeñas).
+- ``drc_by_rule``: ``_run_drc`` ya parseaba el JSON de ``kicad-cli`` para
+  colapsar en ``errors``/``warnings`` por severidad; esta clave agrega un
+  segundo conteo por ``v.get("type")`` (el rule id crudo de KiCad:
+  ``solder_mask_bridge``, ``unconnected_items``, ``silk_over_copper``,
+  etc.), fusionando ``violations`` + ``unconnected_items`` igual que antes.
+  Es la fuente para la tabla DRC separada por severidad (eléctrico /
+  estructural / cosmético) — la taxonomía de buckets vive en el reporte de
+  sesión, no en este script, porque es una interpretación, no una medición.
+- ``orphan_vias``: vías sin ningún ítem conectado más allá de sí mismas.
+  Usa ``board.GetConnectivity().GetConnectedItems(via)`` — verificado
+  empíricamente (sesión 32) que ese conjunto incluye la propia vía, así que
+  una vía aislada devuelve exactamente 1 elemento (ella misma); cualquier
+  cosa por encima de 1 significa que hay al menos un track o pad
+  topológicamente conectado. Cross-check con
+  ``TestTrackEndpointDangling(via, aIgnoreTracksInPads=False)`` — se
+  registra pero no decide por sí solo (puede marcar "dangling" un extremo
+  de track sano que simplemente termina en una vía intermedia). Vigilancia
+  del patrón F-D5-01 / F-V1c-01 (vía o isla GND sin conectividad cerrada).
+
 ## Chequeos de cordura
 
 - ``union_mm2 <= aditivo_mm2 + 1e-6`` por capa (tolerancia de redondeo
@@ -104,7 +136,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 try:
     import pcbnew
@@ -120,11 +152,15 @@ except ImportError as exc:  # pragma: no cover - depende del intérprete del sis
     sys.exit(2)
 
 
-def _run_drc(pcb_path: Path) -> dict[str, int]:
+def _run_drc(pcb_path: Path) -> dict[str, Any]:
     """Corre DRC vía kicad-cli con los mismos flags que
     ``src/kicad_mcp/bridge/rules.py::run_drc`` y devuelve conteos por
     severidad, fusionando ``violations`` + ``unconnected_items`` igual que
     ``rules.py::_build_report``/``_iter_drc_violations``.
+
+    Sesión 32 agrega ``by_rule`` (conteo por ``type`` crudo de KiCad, misma
+    fusión violations+unconnected) — aditivo, no cambia ``errors``/
+    ``warnings``.
     """
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".json", delete=False, dir=str(pcb_path.parent)
@@ -153,11 +189,18 @@ def _run_drc(pcb_path: Path) -> dict[str, int]:
         tmp_path.unlink(missing_ok=True)
 
     counts: Counter[str] = Counter()
+    by_rule: Counter[str] = Counter()
     for v in payload.get("violations", []):
         counts[str(v.get("severity", "warning"))] += 1
+        by_rule[str(v.get("type", "unknown"))] += 1
     for v in payload.get("unconnected_items", []):
         counts[str(v.get("severity", "warning"))] += 1
-    return {"errors": counts.get("error", 0), "warnings": counts.get("warning", 0)}
+        by_rule[str(v.get("type", "unconnected_items"))] += 1
+    return {
+        "errors": counts.get("error", 0),
+        "warnings": counts.get("warning", 0),
+        "by_rule": dict(by_rule),
+    }
 
 
 def _nm2_to_mm2(value_nm2: float) -> float:
@@ -238,6 +281,56 @@ def _board_area_mm2(board: Any) -> float:
     return pcbnew.ToMM(bbox.GetWidth()) * pcbnew.ToMM(bbox.GetHeight())
 
 
+def _track_length_by_net(segments_and_arcs: list[Any]) -> dict[str, float]:
+    """``total_track_length_mm`` descompuesto por net (sesión 32, reflexión
+    #1 de 31c). Mismo criterio de longitud (``GetLength()``, excluye vías).
+    """
+    by_net: dict[str, float] = {}
+    for t in segments_and_arcs:
+        name = t.GetNetname()
+        by_net[name] = by_net.get(name, 0.0) + pcbnew.ToMM(t.GetLength())
+    return {k: round(v, 4) for k, v in by_net.items()}
+
+
+def _via_count_by_net(vias: list[Any]) -> dict[str, int]:
+    """``via_count`` descompuesto por net (sesión 32) — descompone el ratio
+    de vías para diagnosticar el sesgo de base pequeña reportado en 31c.
+    """
+    by_net: dict[str, int] = {}
+    for v in vias:
+        name = v.GetNetname()
+        by_net[name] = by_net.get(name, 0) + 1
+    return by_net
+
+
+def _orphan_vias(board: Any, vias: list[Any]) -> list[dict[str, Any]]:
+    """Vías sin ningún ítem conectado más allá de sí mismas (vigilancia
+    F-D5-01 / F-V1c-01, sesión 32).
+
+    ``CONNECTIVITY_DATA.GetConnectedItems(via)`` incluye la propia vía en el
+    resultado (verificado empíricamente contra pcbnew 10.0.4 en sesión 32) —
+    una vía topológicamente aislada devuelve exactamente 1 elemento (ella
+    misma). ``TestTrackEndpointDangling`` se registra como cross-check
+    informativo, no decide sola (puede marcar dangling un extremo sano que
+    simplemente termina en una vía intermedia de un track continuo).
+    """
+    conn = board.GetConnectivity()
+    orphans: list[dict[str, Any]] = []
+    for v in vias:
+        connected = conn.GetConnectedItems(v)
+        if len(connected) <= 1:
+            pos = v.GetPosition()
+            orphans.append(
+                {
+                    "net": v.GetNetname(),
+                    "x_mm": round(pcbnew.ToMM(pos.x), 4),
+                    "y_mm": round(pcbnew.ToMM(pos.y), 4),
+                    "dangling_cross_check": bool(conn.TestTrackEndpointDangling(v, False)),
+                }
+            )
+    return orphans
+
+
 def measure(pcb_path: Path) -> dict[str, Any]:
     board = pcbnew.LoadBoard(str(pcb_path))
     method_notes: list[str] = []
@@ -313,6 +406,7 @@ def measure(pcb_path: Path) -> dict[str, Any]:
         "method": method,
         "drc_errors": drc["errors"],
         "drc_warnings": drc["warnings"],
+        "drc_by_rule": drc["by_rule"],
         "total_track_length_mm": round(total_track_length_mm, 4),
         "via_count": len(vias),
         "copper_area_mm2": round(copper_area_mm2, 4),
@@ -325,6 +419,9 @@ def measure(pcb_path: Path) -> dict[str, Any]:
         "track_segment_count": len(segments_and_arcs),
         "zone_count": len(zones_copper),
         "density_pct": density_pct,
+        "track_length_by_net_mm": _track_length_by_net(segments_and_arcs),
+        "via_count_by_net": _via_count_by_net(vias),
+        "orphan_vias": _orphan_vias(board, vias),
         "method_notes": method_notes,
     }
 

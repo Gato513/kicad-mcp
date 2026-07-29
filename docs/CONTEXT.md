@@ -4,11 +4,11 @@ Consolidado desde `docs/historico/CONTEXT-v7.md` (post-sesión 24, 2026-07-23)
 en la reorganización documental de 2026-07-24. Visión de largo plazo para que
 un arquitecto externo entienda el sistema, sus decisiones y su estado sin
 revisar el histórico completo. No es el punto de entrada del agente ejecutor
-— para eso está `CLAUDE.md` + `hoja-de-ruta-v4.md` + `docs/BACKLOG.md` (ver
+— para eso está `CLAUDE.md` + `hoja-de-ruta-v5.md` + `docs/BACKLOG.md` (ver
 `docs/INDEX.md`).
 
 Este documento **resume**; no duplica. El detalle de cada decisión vive en
-`docs/DECISIONES.md`, la dirección estratégica vigente en `hoja-de-ruta-v4.md`
+`docs/DECISIONES.md`, la dirección estratégica vigente en `hoja-de-ruta-v5.md`
 (raíz del repo; `docs/ROADMAP.md` es un resumen de estado, ya no repite la
 secuencia), los pendientes priorizados en `docs/BACKLOG.md`. La cronología
 completa de sesiones, métricas comparativas y hallazgos técnicos puntuales
@@ -117,6 +117,10 @@ insuficiente a radios ~1.8mm) y fix aterrizado (N=16→64 +
 - D-30.4: criterio de diversidad para admisión a Validation Suite.
 - D-30.5: mecanismo de apotema en keepouts circulares (sesión 30, cierre P1).
 - D-31.1: convenciones estructurales de la Validation Suite (sesión 31).
+- D-31c.1: cross-check obligatorio contra ADRs vigentes al fijar el marco
+  de un prompt de sesión (sesión 31c).
+- D-32.1: criterio DRC separado por severidad (eléctrico/estructural/
+  cosmético) para el criterio DRC de D-30.3 (sesión 32).
 - ADR-0013: refs duplicados/sin anotar se resuelven por anotación, no
   borrado — `set_footprint_ref` + pre-check `DUPLICATE_REFS` en
   `route_board` (sesión 31b, cierre F-V1-02). ADR-0010 intacta.
@@ -159,9 +163,33 @@ Fase 1-3— nunca ejercitó, no una regresión del código.
    5 ("aprendizaje metodológico") con elementos de 2 ("éxito con matiz de
    umbrales"). Ver `validation-suite/level-a/anavi-dev-mic/validation-report.md`,
    `metrics.md` y `docs/historico/sesiones/31c-reporte.md`.
-3-5. Sin cambios — condicionados al cierre de la Validation Suite Nivel A
-   (ahora cumplido). Próxima sesión: **32 (Nivel B)**, candidato a
-   confirmar siguiendo el patrón de admisión de Bloque 0 de sesión 31.
+3. Validation Suite Nivel B — **✅ cerrada (sesión 32).** Candidato
+   prescrito (ANAVI Miracle Emitter) refutado en Bloque 0 (sin
+   diversidad D-30.4 real, escala menor que Nivel A); admitido
+   `anavi-macro-pad-12` (63 footprints, 48 nets, OSHWA certificado).
+   Flujo canónico completo: `route_board` completó (42/42 nets
+   ruteables, 0 bloqueadas) tras un primer intento con timeout (óptimo
+   local real del router, no falta de tiempo — variabilidad consistente
+   con F-D6-01). **3 de 4 criterios D-30.3 cumplen** (tracks −4.05%,
+   vías +20.00% exacto en el borde, cobre +3.23%) — mejor resultado que
+   Nivel A (1/4). DRC no cumple por conectividad GND puntual. Segundo
+   punto de evidencia H2: con base de vías 15x mayor que Nivel A, el
+   umbral ±20% resultó razonablemente calibrado (borde, no falla
+   amplia) — apoya normalizar por tamaño de base, no cambiar el umbral.
+   **Hallazgo independiente de robustez:** `route_board(refill=true)`
+   puede fallar en silencio su paso de refill de seguridad
+   (`F-V2-REFILL-SILENCIOSO`, P0/P1, confirmado reproducible también en
+   el audit log de sesión 31c) — agenda de sesión de fix intermedia
+   antes de sesión 33. **Reincidencia confirmada del patrón F-D5-01/
+   F-V1c-01** (3ª instancia, ahora `F-V2-VIA-HUERFANA`) — promovido a P1
+   investigación Fase 4. Escenario de cierre: 3 ("éxito con matiz de
+   fricciones P2/P3") con elementos de 2. Ver
+   `validation-suite/level-b/anavi-macro-pad-12/validation-report.md`,
+   `metrics.md` y `docs/historico/sesiones/32-reporte.md`.
+4-5. Sin cambios — condicionados al cierre de las 3 validaciones. Próxima
+   sesión: **33 (Nivel C)**, candidato a confirmar siguiendo el patrón
+   de admisión de Bloque 0 de sesiones 31/32. Evaluar si
+   `F-V2-REFILL-SILENCIOSO` amerita una sesión de fix intermedia antes.
 
 ## Estado actual: Fase 3 — consolidación (histórico, cerrada sesión 29)
 

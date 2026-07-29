@@ -460,6 +460,51 @@ exige hipótesis/evidencia/refutación/protección dentro de una sesión;
 D-31c.1 exige cross-check de ADRs vigentes al diseñar el prompt mismo,
 antes de que la sesión arranque).
 
+### D-32.1 — Criterio DRC separado por severidad (eléctrico / estructural / cosmético)
+
+**Contexto:** sesión 31c descubrió que "0 errores DRC nuevos" (el
+criterio literal de D-30.3) no distingue severidad — un delta de
+conteo idéntico puede ocultar una composición completamente distinta
+(tipos nuevos graves vs. tipos nuevos cosméticos). Sesión 32 aplicó la
+descomposición por primera vez de forma sistemática y confirmó su valor:
+el ground truth y el output de ANAVI Macro Pad 12 mostraron un delta de
+conteo total casi idéntico (175→179, +4), pero la tabla separada reveló
+que el 100% del delta neto era eléctrico (2 `unconnected_items` + 2
+`track_dangling`) mientras estructural y cosmético permanecían casi
+intactos — exactamente el tipo de distinción que un conteo total oculta.
+
+**Decisión:** formalizar la taxonomía de 3 buckets para el criterio DRC
+de D-30.3 en toda validación futura de la Suite:
+
+- **Eléctricos** (estricto — 0 nuevos): `unconnected_items`,
+  `shorting_items`, `clearance`, `hole_clearance`, `hole_to_hole`,
+  `track_dangling`, `via_dangling`, `copper_edge_clearance`,
+  `starved_thermal`.
+- **Estructurales** (moderado — registrar deltas, no falla automática):
+  `solder_mask_bridge`, `courtyards_overlap`, `malformed_courtyard`,
+  `footprint_type_mismatch`, `lib_footprint_mismatch`,
+  `lib_footprint_issues`, `invalid_outline`, `zones_intersect`.
+- **Cosméticos** (informativo): `silk_over_copper`, `silk_overlap`,
+  `silk_edge_clearance`, `silk_mask_clearance`, `text_height`,
+  `text_thickness`.
+
+Un rule id de KiCad no catalogado se clasifica como **estructural** por
+defecto (conservador) y se anota explícitamente. El pass/fail del
+criterio DRC de D-30.3 se evalúa sobre **eléctricos + estructurales**,
+no sobre el total; el conteo total se sigue reportando para
+comparabilidad histórica.
+
+**Fuente de datos:** `validation-suite/tools/measure_ground_truth.py`
+(schema 1.1, sesión 32) ya expone `drc_by_rule` (conteo por tipo,
+fusionando `violations`+`unconnected_items` igual que `_run_drc`
+original) — la clasificación en buckets es una interpretación sobre esa
+salida, no requiere cambios adicionales al script.
+
+**Aplicación:** vigente para sesión 33 en adelante. No reabre el
+criterio DRC "0 errores/warnings o compartidos con el ground truth" de
+D-30.3 en sí — lo refina operacionalmente, mismo espíritu que D-30.5
+refinó el mecanismo de `enforce_hole_clearance` sin reabrir D-23.2.
+
 ## 3. Decisiones superadas (referencia histórica, no vigentes)
 
 - **D-V3.1** (revert humano post-route): superada por recarga programática (`Board.revert()`, sesión 18) — ya no hay contacto humano por route.

@@ -13,6 +13,56 @@ aproximado de severidad.
 
 ## P0 — Bloqueantes de dogfooding / release
 
+### F-V2-REFILL-SILENCIOSO — `route_board(refill=true)` puede no persistir el refill sin ningún error visible — ABIERTO (sesión 32)
+
+**Origen:** sesión 32, segunda Validation Suite (Nivel B, ANAVI Macro Pad 12).
+
+**Mecanismo confirmado** (`src/kicad_mcp/tools/pcb.py`): el bloque
+post-ruteo de refill+`enforce_hole_clearance`+`save_board`
+(`pcb.py:2728-2733`, activado por `refill=true`) sólo se ejecuta si
+`reloaded is True`. `reloaded` depende de que
+`bridge.reload_board_from_disk(open_board)` no lance `KicadMcpError`
+(`pcb.py:2701-2710`) — una operación de **mutación**, deliberadamente
+**sin reintento** ante `AS_BUSY` transitorio (D-07.1). Si falla una sola
+vez, la excepción se descarta en silencio
+(`except KicadMcpError: reloaded = False`) y **todo** el paso de
+seguridad que corrige que "Freerouting NO respeta el plano GND como
+zona de exclusión" (D-19.1) se salta — sin `POST_ROUTE_PERSIST_FAILED`,
+sin ningún error, `route_board` devuelve un payload de éxito normal con
+`refill: true` solicitado pero silenciosamente no honrado.
+
+**Reproducible en 2 sesiones independientes, no un fluke:** el audit log
+de `/tmp/gui-test-project` conserva la llamada `route_board` original de
+**sesión 31c** (`2026-07-29T11:13:58`) mostrando el mismo patrón exacto:
+`"reloaded": false, "zones_refilladas": 0`. Sesión 31c ejecutó su propio
+"Refill final" explícito pocos minutos después sin cruzar estos campos
+contra la promesa de `refill=true` — el hallazgo nunca se documentó
+porque el paso ya prescripto en el flujo canónico (D-23.2) lo
+enmascaraba. En sesión 32, esto dejó 259 violaciones DRC reales (236
+`clearance` + 23 `hole_clearance`, 100% contra la zona GND) sin resolver
+hasta recuperación manual (`reload_board_from_disk()` + `fill_zones()`
+explícitos).
+
+**Por qué es P0 y no sólo P2:** rompe la garantía D-23.2/ADR-0012
+("disco == memoria == err_post reportado") — el caso exacto que ese
+contrato existe para prevenir — sin ninguna señal de error. Cualquier
+uso de `route_board(refill=true)` que confíe en esa promesa sin un paso
+de refill explícito adicional recibiría un board con clearance real
+contra el plano GND sin saberlo.
+
+**Recomendación de fix** (sesión intermedia, patrón 31b, antes de sesión
+33): (a) desacoplar el refill+persistencia en disco de
+`reload_board_from_disk` — son operaciones lógicamente independientes
+(una sincroniza el editor vivo, la otra corrige y persiste el archivo);
+(b) si se mantiene la dependencia, surfacear un código de error
+explícito (ej. `POST_ROUTE_REFILL_SKIPPED`) en vez de éxito silencioso;
+(c) evaluar si esta mutación en particular (re-sincronizar estado, no
+aplicar un cambio de diseño) amerita excepción documentada al criterio
+general de D-07.1 de no reintentar mutaciones.
+
+**Ver:** `validation-suite/level-b/anavi-macro-pad-12/validation-report.md`
+§Fricciones para el detalle completo.
+
 ### F-V1-02 — `route_board` falla enteramente con refs de footprint duplicados/sin anotar — ✅ CERRADO sesión 31b
 
 **Origen:** sesión 31, primera Validation Suite (Nivel A, ANAVI Dev Mic).
@@ -175,30 +225,43 @@ código **nunca leía Edge.Cuts**, iba directo al fallback (margen de
 - **Sin ADR** — implementa comportamiento ya documentado, sin cambiar
   contrato externo (DoD #4, "aclaración de comportamiento").
 
-## P2 — Vía GND no conectada a pad de 0.30mm post-`route_board`+refill (F-V1c-01)
+## P1 (investigación Fase 4) — Conectividad GND no cierra tras refill (F-D5-01 / F-V1c-01 / F-V2-VIA-HUERFANA) — PROMOVIDO sesión 32
 
-**Origen:** sesión 31c (reintento de Validation Suite Nivel A, ANAVI Dev
-Mic, tras los fixes de 31b). DRC de cierre post-`route_board`+refill
-final: 18 errores (17 `solder_mask_bridge` + **1 `unconnected_items`**),
-vs los 18 del ground truth (17 `solder_mask_bridge` + 1
-`starved_thermal`) — mismo conteo total, tipo distinto en el 18°.
+**3ª instancia confirmada del patrón → cumple el trigger de promoción
+explícito** ("2 dogfoodings/validaciones independientes reproducen el
+patrón" para F-D5-01 original; el criterio análogo de sesión 32 exigía
+específicamente una 3ª instancia en régimen distinto, ahora cumplido).
 
-- **Síntoma:** una vía `[GND]` en F.Cu-B.Cu (pos `129.88,76.582`) no
-  conecta con el pad GND de MK1 (pos `126.5,75.567`), un pad de sólo
-  0.30×0.30mm — el pad GND más pequeño del board.
-- **Contexto:** Freerouting colocó la vía como parte de la conectividad
-  GND (D-19.1: respeta el plano como conectividad del net dueño); algo en
-  la geometría de un pad tan chico (0.30mm) dejó la conexión sin cerrar
-  incluso después del refill final protegido por D-23.2/ADR-0012.
-- **Severidad:** P2, no P0/P1 — 14/15 nets ruteables + GND completaron
-  sin problema; sólo 1 pad de conectividad GND quedó sin cerrar. No
-  bloqueó el flujo canónico ni impidió medir las 4 métricas D-30.3.
-- **No investigado en profundidad** en sesión 31c (fuera de alcance del
-  reintento — sesión 31c no toca `src/` salvo P0/P1 trivial). Candidato
-  para investigación si reaparece en Nivel B/C con pads igual de chicos.
-- **Ver** `validation-suite/level-a/anavi-dev-mic/metrics.md` para el
-  detalle completo y el análisis de impacto sobre el criterio DRC de
-  D-30.3.
+| # | Sesión | Board | Síntoma exacto |
+|---|---|---|---|
+| 1 | 25 (dogfooding D5) | despertador | isla GND sin vía al plano |
+| 2 | 31c (Nivel A) | anavi-dev-mic | 1 vía GND (F.Cu-B.Cu) no conectada a un pad de 0.30×0.30mm (MK1) |
+| 3 | 32 (Nivel B) | anavi-macro-pad-12 | 2 pads GND (J4/J5 pad 3) no conectados al plano/track tras refill |
+
+**Origen sesión 32:** DRC de cierre post-`route_board`+refill de
+recuperación (ver F-V2-REFILL-SILENCIOSO arriba — este hallazgo apareció
+*después* de la recuperación manual, no es un artefacto del refill
+fallido): 20 errores totales, de los cuales 2 `unconnected_items` nuevos
+vs los 19 del ground truth. `_orphan_vias` (script extendido,
+`measure_ground_truth.py` schema 1.1) confirmó **0 vías huérfanas** — el
+mecanismo de esta 3ª instancia es a nivel de *pad* (conectividad
+pad-a-zona/track), distinto del mecanismo de 31c (vía aislada), pero el
+síndrome de fondo (conectividad GND que sobrevive al refill sin cerrar)
+es el mismo.
+
+- **Severidad:** el trigger de promoción eleva esto a **P1 investigación
+  Fase 4** — agenda de sesión de investigación (patrón sesión 23/26,
+  P4.0-style) antes o junto con sesión 33. No bloquea sesión 32 ni 33 en
+  sí (14/15 → 42/42 nets ruteables completaron en ambos casos).
+- **Hipótesis de trabajo para la investigación:** el común denominador
+  en las 3 instancias es GND específicamente (nunca otro net) y pads/vías
+  en los bordes de la topología de ruteo (esquinas, conectores THT
+  grandes en 32 vs. pad chico en 31c) — sugiere que el mecanismo podría
+  ser sobre clearance/thermal-relief del refill de zona en geometrías
+  específicas, no aleatorio.
+- **Ver** `validation-suite/level-a/anavi-dev-mic/metrics.md` (instancia 2)
+  y `validation-suite/level-b/anavi-macro-pad-12/metrics.md` (instancia 3)
+  para el detalle completo de cada aparición.
 
 ## P2 — Correcciones puntuales con evidencia repetida
 
@@ -211,6 +274,7 @@ vs los 18 del ground truth (17 `solder_mask_bridge` + 1
 | Doc del lock no-reentrante del bridge (`self._lock` no es reentrante) | Sesión 19d | Pendiente: documentar en `bridge/README.md` o similar. |
 | Issue upstream a Freerouting sobre `gui.enabled=true` colgando la JVM (R9) | Sesión 17 | Mitigado en código; issue no abierto (no urgente). |
 | `move_footprint` no dispara refill de zonas — un DRC leído de disco tras mover pads sobre un plano mide fill rancio, no el estado real | Sesión 26, investigación 26 §2 | Nota de proceso: `fill_zones()` obligatorio tras colocación masiva, antes del baseline DRC. No es un bug de la tool (su contrato nunca prometió refill) — es un punto ciego de brief/protocolo de dogfooding. |
+| `route_board`/netclasses descartan silenciosamente `diff_pair_width`/`diff_pair_gap`/`diff_pair_via_gap` (`bridge/rules_reader.py:217`) — el flujo no puede dirigir el ruteo de un par diferencial por netclass, aunque el `.kicad_pro` lo declare | Sesión 32 (hallazgo estructural, H1b reformulada) | Abierto. Verificado además que **ningún** proyecto ANAVI del catálogo (dev-mic, miracle-emitter, word-clock, macro-pad-12) asigna netclasses en la práctica (`"nets": []` en todos) — la brecha de código nunca fue ejercitada por ningún candidato real hasta ahora. Candidato a Nivel C/D si aparece un board con asignación real. |
 
 ## P2 — Release polish (post-Fase 4, pre-release Open Source)
 

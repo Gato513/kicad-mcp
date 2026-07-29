@@ -6,36 +6,44 @@ Se actualiza tras cada validación admitida (no necesariamente cerrada —
 un proyecto ADMITIDO en Bloque 0 ya aporta a la diversidad, aunque el
 Bloque 2/3 no cierre; ver nota al pie).
 
-| Feature | despertador (interno, Fase 1-3) | anavi-dev-mic (Nivel A-01, sesión 31→31b→31c) |
-|---|---|---|
-| Capas: 2 | ✓ | ✓ |
-| Capas: 4+ | | |
-| Plano GND: single | ✓ | ✓ (B.Cu, plano completo, ruteado y refilleado post-route) |
-| Plano GND: múltiple/mixto | | |
-| MCU: AVR/ATtiny | ✓ | |
-| MCU: ESP8266/ESP32 | | |
-| MCU: RP2040 (vía módulo XIAO) | | ✓ |
-| Interfaces: I²C | ✓ | |
-| Interfaces: UART | | |
-| Interfaces: USB-C | | ✓ (vía módulo XIAO, no en el board directamente) |
-| Interfaces: micrófono digital (PDM) | | ✓ (MP23DB01HPTR) |
-| Potencia: 12V + MOSFETs | | |
-| Footprints: THT | ✓ (conectores) | ✓ (J1/J2 headers, mounting holes) |
-| Footprints: SMD estándar | ✓ | ✓ |
-| Footprints: módulo grande (>15×15mm) | | ✓ (XIAO RP2040, 18.9×18.0mm) |
-| Footprints: sin anotar / refs duplicados | | ✓ (4× `REF**` — origen de F-V1-02, resuelto sesión 31b con `set_footprint_ref`) |
-| Footprints: sólo-mecánicos (sin net) | | ✓ (mounting holes) |
-| Footprints: decorativos (logo, 0 pads) | | ✓ (`G***`) |
-| Netclasses múltiples explícitas | | ✓ (`Default`/`usb`/`vcc`, aunque `usb`/`vcc` sin nets asignadas) |
-| Contorno: rectangular | ✓ | |
-| Contorno: octagonal (esquinas cortadas) | | ✓ |
-| Densidad: baja (<30%) | | |
-| Densidad: media (30-50%) | | |
-| Densidad: alta (>50%) | ✓ (~94% B.Cu ruteado) | ✓ (93.42% B.Cu output, 70.18% B.Cu ground truth) |
-| Migración de formato KiCad | | no aplicó (ground truth ya nativo KiCad 10) |
-| DRC 0/0 en ground truth | n/a (fixture interno) | ✗ — admitido con excepción documentada (18 errores preexistentes al autor) |
-| `route_board` end-to-end sobre board externo (2 capas, 20 nets) | ✓ (interno) | ✓ — 15/15 nets ruteables completadas, 79 tracks, 6 vías, `route_ms` 184.8s (sesión 31c) |
-| Validación D-30.3 cerrada (4 criterios medidos) | n/a | ✓ — medidos los 4 (1/4 cumple umbral: cobre; ver `metrics.md` y análisis H2), sesión 31c |
+| Feature | despertador (interno, Fase 1-3) | anavi-dev-mic (Nivel A-01, sesión 31→31b→31c) | anavi-macro-pad-12 (Nivel B-01, sesión 32) |
+|---|---|---|---|
+| Capas: 2 | ✓ | ✓ | ✓ |
+| Capas: 4+ | | | |
+| Plano GND: single | ✓ | ✓ (B.Cu, plano completo, ruteado y refilleado post-route) | ✓ (B.Cu; GT usa 2 zonas GND, flujo usa 1 — patrón heredado D-26.1) |
+| Plano GND: múltiple/mixto | | | |
+| MCU: AVR/ATtiny | ✓ | | |
+| MCU: ESP8266/ESP32 | | | |
+| MCU: RP2040 (vía módulo XIAO) | | ✓ | ✓ |
+| Interfaces: I²C | ✓ | | ✓ (conector I2C dedicado) |
+| Interfaces: UART | | | |
+| Interfaces: USB-C | | ✓ (vía módulo XIAO, no en el board directamente) | ✓ (vía módulo XIAO, no en el board directamente — confirmado: sin cobre propio de USB-C) |
+| Interfaces: micrófono digital (PDM) | | ✓ (MP23DB01HPTR) | |
+| Potencia: 12V + MOSFETs | | | |
+| Footprints: THT | ✓ (conectores) | ✓ (J1/J2 headers, mounting holes) | ✓ (J1-J6 conectores 3-pin, mounting holes) |
+| Footprints: SMD estándar | ✓ | ✓ | ✓ |
+| Footprints: módulo grande (>15×15mm) | | ✓ (XIAO RP2040, 18.9×18.0mm) | ✓ (XIAO RP2040, mismo módulo) |
+| Footprints: sin anotar / refs duplicados | | ✓ (4× `REF**` — origen de F-V1-02, resuelto sesión 31b con `set_footprint_ref`) | ✓ (4× `REF**` mounting holes — **presentes también en el ground truth sin anotar**, resuelto con `set_footprint_ref`, ADR-0013) |
+| Footprints: sólo-mecánicos (sin net) | | ✓ (mounting holes) | ✓ (mounting holes) |
+| Footprints: decorativos (logo, 0 pads) | | ✓ (`G***`) | ✓ (`G***`) |
+| Netclasses múltiples explícitas | | ✓ (`Default`/`usb`/`vcc`, aunque `usb`/`vcc` sin nets asignadas) | ✓ (mismo patrón `Default`/`usb`/`vcc` sin asignación — confirmado en 4/4 proyectos ANAVI verificados) |
+| **Matriz de teclas con diodo por tecla** | | | ✓ (12 switches × 12 diodos, topología en malla — NUEVO) |
+| **Backlighting por tecla (LED+resistor 1:1)** | | | ✓ (12 LED + 12 resistor — NUEVO) |
+| **Footprints hot-swap (sockets)** | | | ✓ (`keyswitches:Kailh_socket_MX` — NUEVO) |
+| Contorno: rectangular | ✓ | | ✓ |
+| Contorno: octagonal (esquinas cortadas) | | ✓ | |
+| Densidad: baja (<30%) | | | |
+| Densidad: media (30-50%) | | | |
+| Densidad: alta (>50%) | ✓ (~94% B.Cu ruteado) | ✓ (93.42% B.Cu output, 70.18% B.Cu ground truth) | ✓ (90.07% B.Cu output, 63.88% B.Cu ground truth) |
+| **Migración de formato KiCad (real)** | | no aplicó (ground truth ya nativo KiCad 10) | ✓ (KiCad 6→10, primera migración real de la Suite — DRC post ⊂ DRC pre, sin categorías nuevas) |
+| DRC 0/0 en ground truth | n/a (fixture interno) | ✗ — admitido con excepción documentada (18 errores preexistentes al autor) | ✗ — mismo precedente (19 errores preexistentes) |
+| `route_board` end-to-end sobre board externo | ✓ (interno) | ✓ — 15/15 nets ruteables completadas, 79 tracks, 6 vías, `route_ms` 184.8s (sesión 31c) | ✓ — 42/42 nets ruteables completadas, 429 tracks, 36 vías, `route_ms` 328.9s (sesión 32, tras 1 intento con timeout) |
+| Validación D-30.3 cerrada (4 criterios medidos) | n/a | ✓ — medidos los 4 (1/4 cumple umbral: cobre; ver `metrics.md` y análisis H2), sesión 31c | ✓ — medidos los 4 (**3/4 cumplen**: tracks, vías, cobre; ver `metrics.md` y análisis H2), sesión 32 |
+
+**Escala (referencia de tamaño, no una fila de feature per se):**
+despertador 23 fp/19 nets · anavi-dev-mic 13 fp/20 nets · anavi-macro-pad-12
+**63 fp/48 nets** (~3x Nivel A — primera entrada en rango "complejidad
+media" real de la Suite).
 
 ## Nota sobre la historia de esta validación (sesión 31 → 31b → 31c)
 
@@ -50,3 +58,18 @@ los 4 hayan cumplido el umbral (sólo cobre cumple; ver `metrics.md`
 §Veredicto final y el análisis H2 sobre por qué los otros 3 no
 necesariamente indican una placa inválida). Detalle completo en
 `validation-report.md` y `docs/historico/sesiones/31c-reporte.md`.
+
+## Nota sobre sesión 32 (Nivel B-01)
+
+`anavi-macro-pad-12` cerró en una sola sesión (a diferencia del ciclo de
+3 de Nivel A). El candidato prescrito por el prompt (ANAVI Miracle
+Emitter) fue refutado en Bloque 0 por no aportar diversidad D-30.4 real
+ni alcanzar escala de Nivel B — la re-selección está documentada en
+`validation-suite/level-b/anavi-macro-pad-12/README.md`. 3 de 4 criterios
+D-30.3 cumplen — mejor resultado que Nivel A — pero la sesión produjo un
+hallazgo de robustez independiente más significativo que el resultado
+cuantitativo en sí: `route_board(refill=true)` puede fallar en silencio
+su paso de refill de seguridad (`F-V2-REFILL-SILENCIOSO`, P0/P1,
+confirmado reproducible también en el audit log de sesión 31c — nunca
+antes documentado). Detalle completo en `validation-report.md`,
+`metrics.md` y `docs/historico/sesiones/32-reporte.md`.

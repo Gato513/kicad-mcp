@@ -352,6 +352,93 @@ def _footprint_to_data(fp: Any, *, capture_kiid: bool) -> FootprintData:
     )
 
 
+# --- Bbox de validación: unión Edge.Cuts + enjambre de footprints (F-V1-01) -
+#
+# Margen sobre el contorno Edge.Cuts cuando existe. Este bbox es un guardia
+# de permisividad para ``move_footprint``/``add_track``/``add_via``
+# (rechaza coordenadas absurdas), no un límite de fabricación — eso lo hace
+# DRC. 10mm cubre redondeo de punto flotante y el "parking" de un footprint
+# justo afuera del borde durante colocación, sin dejar pasar un ``1e6``.
+_BBOX_OUTLINE_MARGIN_MM = 10.0
+# Margen sobre el enjambre de posiciones de footprints cuando no hay
+# contorno (o además del contorno, ver ``_bbox_with_margin``). Histórico,
+# sin cambios — sesión 04.
+_BBOX_SWARM_MARGIN_MM = 100.0
+
+
+def _edge_cuts_bbox_nm(raw_board: Any) -> tuple[float, float, float, float] | None:
+    """Bbox en nm (min_x, min_y, max_x, max_y) del contorno Edge.Cuts, o
+    ``None`` si el board no tiene ninguna forma en esa capa (sesión 31b,
+    F-V1-01).
+
+    Extraído de ``board_outline`` para que ese método, ``board_bbox_mm`` y
+    ``read_board_context`` compartan un único escaneo de ``get_shapes()``
+    sin duplicar la lógica de filtrado por capa.
+
+    No toma ``self._lock`` (no es un método de instancia): se invoca desde
+    dentro del bloque ``with self._lock`` ya adquirido por el llamador —
+    ``self._lock`` es un ``threading.Lock`` NO reentrante (ver
+    ``_verify_created_net_or_revert`` más abajo para el mismo patrón), así
+    que llamar a ``board_outline`` (que sí toma el lock) desde dentro de
+    otro método ya bajo lock causaría deadlock.
+    """
+    from kipy.proto.board.board_types_pb2 import BoardLayer
+
+    xs: list[float] = []
+    ys: list[float] = []
+    for shape in raw_board.get_shapes():
+        if getattr(shape, "layer", None) == BoardLayer.BL_Edge_Cuts:
+            bb = shape.bounding_box()
+            xs.extend([float(bb.pos.x), float(bb.pos.x + bb.size.x)])
+            ys.extend([float(bb.pos.y), float(bb.pos.y + bb.size.y)])
+    if not (xs and ys):
+        return None
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _bbox_with_margin(
+    edge_bbox_nm: tuple[float, float, float, float] | None,
+    swarm_xs_mm: list[float],
+    swarm_ys_mm: list[float],
+) -> BBoxMm:
+    """Bbox de validación: unión de Edge.Cuts (± ``_BBOX_OUTLINE_MARGIN_MM``)
+    y enjambre de footprints (± ``_BBOX_SWARM_MARGIN_MM``), lo que exista de
+    los dos (sesión 31b, F-V1-01).
+
+    Unión, no "preferir uno u otro": el único modo de daño de este guardia
+    es el falso rechazo (el bug que esto arregla — con footprints apilados
+    lejos del contorno real, el enjambre solo nunca cubría el board real).
+    Un falso *aceptado* de más no cuesta nada. La unión hace el fix
+    estrictamente no regresivo — nunca devuelve un rango más chico que el
+    que ya devolvía el código anterior.
+
+    Pura aritmética, sin IPC — invocable desde cualquier lado, dentro o
+    fuera de un bloque con lock.
+    """
+    lo_x: list[float] = []
+    lo_y: list[float] = []
+    hi_x: list[float] = []
+    hi_y: list[float] = []
+    if edge_bbox_nm is not None:
+        min_x, min_y, max_x, max_y = edge_bbox_nm
+        m = _BBOX_OUTLINE_MARGIN_MM
+        lo_x.append(nm_to_mm(Nm(int(min_x))) - m)
+        lo_y.append(nm_to_mm(Nm(int(min_y))) - m)
+        hi_x.append(nm_to_mm(Nm(int(max_x))) + m)
+        hi_y.append(nm_to_mm(Nm(int(max_y))) + m)
+    if swarm_xs_mm and swarm_ys_mm:
+        m = _BBOX_SWARM_MARGIN_MM
+        lo_x.append(min(swarm_xs_mm) - m)
+        lo_y.append(min(swarm_ys_mm) - m)
+        hi_x.append(max(swarm_xs_mm) + m)
+        hi_y.append(max(swarm_ys_mm) + m)
+    if not lo_x:
+        # Ni contorno ni footprints: no hay bbox útil: rango grande que no
+        # rechaza nada razonable (1e6 mm es el borde razonable de KiCad).
+        return BBoxMm(Mm(-1e6), Mm(-1e6), Mm(1e6), Mm(1e6))
+    return BBoxMm(Mm(min(lo_x)), Mm(min(lo_y)), Mm(max(hi_x)), Mm(max(hi_y)))
+
+
 def _layer_int_to_str(layer_value: int) -> str:
     """``BoardLayer`` enum int → nombre canónico de KiCad (``F.Cu``, ``B.Cu``…).
 
@@ -1422,35 +1509,24 @@ class IpcBridge:
     def board_bbox_mm(self, board: BoardHandle) -> BBoxMm:
         """Bounding box del board en milímetros.
 
-        Preferencia: usar la superficie declarada del board (Edge.Cuts).
-        Fallback: unión de bounding boxes de todos los footprints. En el
-        MVP nos apoyamos en un bbox amplio: el objetivo del check es
-        rechazar coordenadas absurdas, no ser pixel-perfect.
+        Unión de dos fuentes cuando existen (sesión 31b, F-V1-01 — hasta
+        entonces el docstring prometía preferir Edge.Cuts pero el código
+        nunca lo leía): superficie declarada del board (Edge.Cuts, ±
+        ``_BBOX_OUTLINE_MARGIN_MM``) y enjambre de posiciones de todos los
+        footprints (± ``_BBOX_SWARM_MARGIN_MM``). El objetivo del check es
+        rechazar coordenadas absurdas, no ser pixel-perfect — ver
+        ``_bbox_with_margin`` para el porqué de la unión en vez de
+        preferir una sola fuente.
         """
         with self._lock:
             self._detect_restart()
 
             def _do() -> BBoxMm:
                 items = list(board.raw.get_footprints())
-                if not items:
-                    # Board vacío: no hay bbox útil; devolvemos un rango grande
-                    # que no rechaza nada razonable (1e6 mm es el borde
-                    # razonable de KiCad).
-                    return BBoxMm(Mm(-1e6), Mm(-1e6), Mm(1e6), Mm(1e6))
-                xs: list[float] = []
-                ys: list[float] = []
-                for fp in items:
-                    pos = fp.position
-                    xs.append(nm_to_mm(Nm(int(pos.x))))
-                    ys.append(nm_to_mm(Nm(int(pos.y))))
-                # Margen de 100 mm alrededor del enjambre de footprints.
-                margin = 100.0
-                return BBoxMm(
-                    Mm(min(xs) - margin),
-                    Mm(min(ys) - margin),
-                    Mm(max(xs) + margin),
-                    Mm(max(ys) + margin),
-                )
+                xs = [float(nm_to_mm(Nm(int(fp.position.x)))) for fp in items]
+                ys = [float(nm_to_mm(Nm(int(fp.position.y)))) for fp in items]
+                edge = _edge_cuts_bbox_nm(board.raw)
+                return _bbox_with_margin(edge, xs, ys)
 
             return self._run_supervised_read("board_bbox_mm", _do)
 
@@ -1487,8 +1563,12 @@ class IpcBridge:
         202 refs, sesión 07 §T5). En una sola iteración construye:
 
         - ``refs``: refs para la validación ``COMPONENT_NOT_FOUND`` + similares.
-        - ``bbox``: bounding box con margen (misma semántica de
-          ``board_bbox_mm`` — ver docstring de ese método).
+        - ``bbox``: bounding box con margen — unión de Edge.Cuts y enjambre
+          de footprints (misma semántica de ``board_bbox_mm``, sesión 31b
+          F-V1-01 — ver ``_bbox_with_margin``). Antes de la sesión 31b esta
+          era una copia inline del cálculo viejo de ``board_bbox_mm`` que
+          nunca leía Edge.Cuts — el bug real vivía acá, no en
+          ``board_bbox_mm`` (que no tiene consumidores en ``src/``).
         - ``footprints``: snapshot completo con ``kiid`` capturado (habilita
           ``bridge.move_footprint(..., kiid=...)`` y la verificación puntual
           por KIID de D-08.2).
@@ -1496,6 +1576,12 @@ class IpcBridge:
         Retry-elegible (D-08.3): es lectura idempotente y corre siempre antes
         de cualquier escritura, por construcción — es imposible que reintentar
         duplique una mutación.
+
+        Paga un ``get_shapes()`` extra respecto a la versión pre-31b (para
+        ``_edge_cuts_bbox_nm``) — costo aceptado: mucho más barato que la
+        alternativa de reentrar el lock llamando a ``board_outline``
+        (deadlock, ``self._lock`` no es reentrante) o duplicar la lectura de
+        footprints en una segunda op supervisada.
         """
         with self._lock:
             self._detect_restart()
@@ -1511,16 +1597,8 @@ class IpcBridge:
                     xs.append(float(data.x_mm))
                     ys.append(float(data.y_mm))
                     fps_data.append(data)
-                if not fps_data:
-                    bbox = BBoxMm(Mm(-1e6), Mm(-1e6), Mm(1e6), Mm(1e6))
-                else:
-                    margin = 100.0
-                    bbox = BBoxMm(
-                        Mm(min(xs) - margin),
-                        Mm(min(ys) - margin),
-                        Mm(max(xs) + margin),
-                        Mm(max(ys) + margin),
-                    )
+                edge = _edge_cuts_bbox_nm(board.raw)
+                bbox = _bbox_with_margin(edge, xs, ys)
                 return BoardContext(
                     refs=tuple(refs),
                     bbox=bbox,
@@ -2086,22 +2164,14 @@ class IpcBridge:
         (sin el margen de validación de ``board_bbox_mm``) para que el agente
         vea el área ocupada por la colocación.
         """
-        from kipy.proto.board.board_types_pb2 import BoardLayer
-
         with self._lock:
             self._detect_restart()
 
             def _do() -> tuple[BBoxMm, str]:
                 raw_board = board.raw
-                xs: list[float] = []
-                ys: list[float] = []
-                for shape in raw_board.get_shapes():
-                    if getattr(shape, "layer", None) == BoardLayer.BL_Edge_Cuts:
-                        bb = shape.bounding_box()
-                        xs.extend([float(bb.pos.x), float(bb.pos.x + bb.size.x)])
-                        ys.extend([float(bb.pos.y), float(bb.pos.y + bb.size.y)])
-                if xs and ys:
-                    min_x, min_y, max_x, max_y = min(xs), min(ys), max(xs), max(ys)
+                edge = _edge_cuts_bbox_nm(raw_board)
+                if edge is not None:
+                    min_x, min_y, max_x, max_y = edge
                     w_mm = (max_x - min_x) / 1_000_000
                     h_mm = (max_y - min_y) / 1_000_000
                     return (
@@ -2341,6 +2411,52 @@ class IpcBridge:
                     message=f"Footprint {ref} no está en el board (post-validación).",
                     hint="Snapshot del board cambió entre la validación y la mutación.",
                 )
+
+    def set_footprint_ref(self, board: BoardHandle, kiid: str, new_ref: str) -> None:
+        """Renombra el reference designator del footprint identificado por ``kiid``.
+
+        Sesión 31b (F-V1-02): resuelve refs duplicados/sin anotar por
+        ANOTACIÓN, no por borrado — ver ADR-0013 (narrows explícitamente
+        rechaza `delete_footprint`/borrado: un footprint con ref
+        duplicado es exactamente igual de caro de reinstanciar que uno
+        con ref único, ADR-0010 sigue vigente sin excepción).
+
+        A diferencia de ``fp.position`` (ADR-0008: el getter de kipy
+        devuelve una copia del proto, hay que usar el setter completo),
+        ``fp.reference_field.text.value`` escribe en vivo sobre el proto
+        interno — la cadena ``FootprintInstance.reference_field`` →
+        ``Field.text`` → ``BoardText.value`` usa ``proto_ref=`` sin
+        ``CopyFrom`` en kipy 0.7.1 (``board_types.py`` líneas 2037-2038,
+        1056-1058, 735-737). Verificado con un spike contra KiCad 10.0.4
+        real antes de este fix (sesión 31b, Paso 0): el cambio persiste
+        en una relectura fresca vía ``get_footprints()``.
+
+        Precondición: el llamador ya validó que ``kiid`` corresponde a un
+        footprint existente cuyo ``ref`` está duplicado — esa validación
+        vive en la tool (``pcb.py``), no acá; este método es la
+        escritura pura.
+        """
+        from kipy.proto.common.types.base_types_pb2 import KIID as _KIID_proto
+
+        with self._lock:
+            self._detect_restart()
+            with self._supervise("set_footprint_ref"):
+                raw_board = board.raw
+                kiid_proto = _KIID_proto()
+                kiid_proto.value = kiid
+                items = _get_items_by_id_or_empty(raw_board, [kiid_proto])
+                target_fp = items[0] if items else None
+                if target_fp is None:
+                    raise KicadMcpError(
+                        code=ErrorCode.COMPONENT_NOT_FOUND,
+                        message=f"Footprint con kiid={kiid} no está en el board (post-validación).",
+                        hint=(
+                            "Snapshot del board cambió entre la validación y la mutación; "
+                            "volvé a leer y reintentar."
+                        ),
+                    )
+                target_fp.reference_field.text.value = new_ref
+                raw_board.update_items(target_fp)
 
     def add_track(
         self,

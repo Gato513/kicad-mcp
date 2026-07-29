@@ -226,6 +226,7 @@ audit line JSONL por cada mutación aceptada o rechazada.
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
 | `move_footprint` | Mueve un footprint del PCB a (x_mm, y_mm) — NO dispara refill de zonas; llamar `fill_zones()` antes de interpretar `run_drc()` si se movieron pads sobre un plano (sesión 26, investigación 26) | `ref`, `x_mm`, `y_mm`, `base_snap?` | confirm | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
+| `set_footprint_ref` | Renombra UNA instancia de un reference designator duplicado/sin anotar (ADR-0013, sesión 31b, F-V1-02) — sólo opera si `ref` está compartido por 2+ footprints; sin `kiid` lista candidatos (`data.candidates`), nunca resuelve a ciegas. Sin cascada (tracks/zonas intactos) | `ref`, `new_ref`, `kiid?`, `base_snap?` | confirm | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `DUPLICATE_REFS`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
 | `add_track` | Track entre punto/pad y punto/pad (`REF.PAD`), mezclables por extremo | `net`, `start_x_mm?`, `start_y_mm?`, `end_x_mm?`, `end_y_mm?`, `from_pad?`, `to_pad?`, `width_mm?=0.25`, `layer?="F.Cu"`, `base_snap?` | confirm | `NET_NOT_FOUND`, `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `NET_ASSIGNMENT_MISMATCH`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
 | `add_via` | Via pasante en (x_mm, y_mm) asignada a un net | `x_mm`, `y_mm`, `net`, `size_mm?=0.8`, `drill_mm?=0.4`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `NET_ASSIGNMENT_MISMATCH`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
 | `delete_track` | Borra track/arco por `id` (de `get_tracks`) o el más cercano a `(net, near_x_mm, near_y_mm)` | `id?`, `net?`, `near_x_mm?`, `near_y_mm?`, `base_snap?` | confirm | `NET_NOT_FOUND`, `INVALID_PARAMS`, `TRACK_ID_STALE`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `PROJECT_NOT_FOUND` |
@@ -241,13 +242,13 @@ audit line JSONL por cada mutación aceptada o rechazada.
 | `get_zones` | Lista zonas de cobre y keepouts filtradas por `layer`/`net`/`kind`, con `id` estable (sesión 19, P4.1) | `layer?`, `net?`, `kind?="copper"\|"keepout"`, `max_tokens?` | detail | `NET_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 | `fill_zones` | Refill de TODAS las zonas de cobre del board; `zone_id?` sólo valida existencia, no acota el refill (kipy no tiene fill selectivo — sesión 19, P4.3) — devuelve JSON `{zones_filled, duration_ms, snap_id}`. Sesión 27 (D-23.2, ADR-0012): persiste a disco el refill+enforce_hole_clearance del vivo, incondicionalmente, antes de retornar | `zone_id?`, `base_snap?` | JSON | `ZONE_ID_STALE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `POST_ZONE_PERSIST_FAILED` |
 | `delete_zone` | Borra una zona (cobre o keepout) por `id` (de `get_zones`) — sesión 19, P4.4 | `id`, `base_snap?` | confirm | `ZONE_ID_STALE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
-| `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO — devuelve JSON estructurado (sesión 17, P2.2; campo `zones` añadido sesión 19, P4.3), no un confirm de texto. Sesión 24 (D-23.2, ADR-0012): `drc.err_post` se mide y persiste post refill+enforce | `max_passes?`, `timeout_s?=600`, `refill?=true` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED`, `POST_ROUTE_PERSIST_FAILED` |
+| `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO — devuelve JSON estructurado (sesión 17, P2.2; campo `zones` añadido sesión 19, P4.3), no un confirm de texto. Sesión 24 (D-23.2, ADR-0012): `drc.err_post` se mide y persiste post refill+enforce. Sesión 31b (ADR-0013): pre-check `DUPLICATE_REFS` corre ANTES del subprocess de exportación DSN — refs de footprint duplicados hacen fallar `pcbnew.ExportSpecctraDSN` enteramente, se detectan temprano con `data.duplicates` en vez de un `KICAD_CLI_FAILED` opaco | `max_passes?`, `timeout_s?=600`, `refill?=true` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED`, `POST_ROUTE_PERSIST_FAILED`, `DUPLICATE_REFS` |
 | `get_footprint_neighbors` | Vecinos de un footprint en un radio: pads/tracks/vías/holes ajenos + distancia al borde del board (sesión 21, P1, F-D3-04) | `ref`, `radius_mm?=5.0`, `include_pads?=true`, `include_tracks?=true`, `include_vias?=true`, `include_holes?=true`, `include_edge?=true`, `max_tokens?` | JSON | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 
 **Flag `live_stale` (sesión 14, D-14.1; recarga automática sesión 18, P3.1,
 D-V3.1).** Mientras `route_board` haya dejado un ruteo en disco que el editor
-vivo no refleja, `move_footprint`, `add_track`, `add_via`, `delete_track`,
-`delete_via` y `save_board` FALLAN con `EXTERNAL_EDIT_DETECTED` (código
+vivo no refleja, `move_footprint`, `set_footprint_ref`, `add_track`, `add_via`,
+`delete_track`, `delete_via` y `save_board` FALLAN con `EXTERNAL_EDIT_DETECTED` (código
 existente, F3 intacta: el disco cambió por fuera del editor vivo). Desde la
 sesión 18, `route_board` intenta destrabar el flag **automáticamente**
 llamando a `reload_board_from_disk()` justo después de escribir el ruteo (ver
@@ -834,8 +835,9 @@ coordenadas pedidas (tolerancia 1e-3 mm). Divergencia → `KICAD_CLI_FAILED`
 Parámetro común `base_snap` (sesión 04 T4, aditivo):
 - Ausente → la mutación procede sin verificación de coherencia con el
   estado que vio el agente (comportamiento pre-v0.3) — **excepto** en
-  `save_board`/`add_track`/`add_via`/`delete_track`/`delete_via`, donde el
-  guard de mtime de P3.2 (abajo) corre igual, con o sin `base_snap`.
+  `save_board`/`add_track`/`add_via`/`delete_track`/`delete_via`/
+  `set_footprint_ref` (sesión 31b), donde el guard de mtime de P3.2
+  (abajo) corre igual, con o sin `base_snap`.
 - Presente y no está en el Snapshot Store → `SNAPSHOT_STALE`; el hint
   instruye pedir `get_world_context` de nuevo (retención = 10 snapshots
   por proceso servidor).
@@ -848,7 +850,8 @@ Parámetro común `base_snap` (sesión 04 T4, aditivo):
 **Guard de mtime sin `base_snap` (sesión 18, P3.2, red de seguridad
 complementaria a D-14.1; extendido sesión 19 P4 a las tools de zonas).**
 `save_board`, `add_track`, `add_via`, `delete_track`, `delete_via` y —desde
-la sesión 19— `add_zone`, `add_keepout_zone`, `fill_zones`, `delete_zone`
+la sesión 19— `add_zone`, `add_keepout_zone`, `fill_zones`, `delete_zone` y
+—desde sesión 31b— `set_footprint_ref`
 (las tools de mayor riesgo de pisar disco) comparan el mtime ACTUAL del
 `.kicad_pcb` contra el último snapshot de
 **disco** que cualquier tool de este proceso registró (`route_board`,
@@ -942,6 +945,7 @@ catálogo para no prometer una superficie que no existe.
 | `NET_ASSIGNMENT_MISMATCH` | Sesión 19d. `add_track`/`add_via` verifican el net real post-creación contra lo pedido — KiCad reasigna el ítem al net del cobre físico bajo su geometría (confirmado en vivo, 19c Bloque 1 + 19d.0); en mismatch la tool revierte la creación (el board queda sin cambio neto) | No | El punto/trazado pisa cobre de otro net; verificar coordenadas con `get_tracks(bbox=...)` o borrar el cobre ajeno primero. `data`: `requested_net`, `actual_net`, `at` (mm) |
 | `POST_ROUTE_PERSIST_FAILED` | Sesión 24 (D-23.2, ADR-0012, cierre F-D4-02). `route_board` ruteó y corrió su refill+enforce interno con éxito (el board VIVO ya tiene el clearance arreglado) pero `save_board()` falló al persistirlo a disco — distinto de `EXTERNAL_EDIT_DETECTED` (que indica una edición externa; acá el propio proceso no pudo escribir) | Sí, tras liberar KiCad | El board vivo tiene el estado correcto; reintentar `save_board()` manual o descartar los cambios. `data`: `pcb`, `live_has_fix` |
 | `POST_ZONE_PERSIST_FAILED` | Sesión 27 (extensión de D-23.2, ADR-0012). `fill_zones` o `add_zone(fill=true)` corrieron su refill+enforce interno con éxito (el board VIVO ya tiene el clearance arreglado) pero `save_board()` falló al persistirlo a disco — semánticamente equivalente a `POST_ROUTE_PERSIST_FAILED`; discriminado por origen del llamador, no por semántica (unificar los dos códigos queda como deuda de bajo impacto post-Fase 3) | Sí, tras liberar KiCad | El board vivo tiene el estado correcto; reintentar `save_board()` manual o descartar los cambios. `data`: `pcb`, `live_has_fix` |
+| `DUPLICATE_REFS` | Sesión 31b (ADR-0013, F-V1-02). Dos usos: (1) pre-check de `route_board` — 2+ footprints comparten reference designator en el board, `pcbnew.ExportSpecctraDSN` falla enteramente en ese estado; (2) `set_footprint_ref` sin `kiid` (o con uno stale) sobre un `ref` ya duplicado — ambigüedad, nunca se resuelve a ciegas | Sí, tras anotar/elegir kiid | (1) Instruir: `set_footprint_ref(ref, new_ref, kiid=...)` para cada ref duplicado, `data.duplicates: [{ref, kiids}]`. (2) Elegir un kiid de `data.candidates: [{kiid, x_mm, y_mm, value}]` y reintentar |
 
 Reglas de la taxonomía: los códigos son SCREAMING_SNAKE en inglés (estables
 ante cambios de idioma de la UI); `message` y `hint` en el idioma de la
@@ -1009,3 +1013,11 @@ Emisores actuales:
   `data.pad_net: str | None`, `data.pad_pos: [x_mm, y_mm]`,
   `data.clearance_mm: float` (sesión 16, D-16.4). El agente ubica el pad
   ofensor sin volver a pedir `get_component_detail`.
+- `DUPLICATE_REFS` de `route_board` (pre-check) →
+  `data.duplicates: list[{ref: str, kiids: list[str]}]` (sesión 31b,
+  ADR-0013) — uno o más grupos de refs duplicados detectados antes del
+  subprocess de exportación DSN. `DUPLICATE_REFS` de `set_footprint_ref`
+  (ambigüedad, mismo espíritu que `delete_track`/`delete_via`) →
+  `data.candidates: list[{kiid: str, x_mm: float, y_mm: float, value:
+  str}]` — todas las instancias que comparten el `ref` pedido; el agente
+  elige el `kiid` correcto en vez de resolver a ciegas.

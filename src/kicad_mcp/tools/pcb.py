@@ -20,6 +20,7 @@ import json
 import math
 import os
 import time
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -112,6 +113,25 @@ def _find_target(footprints: tuple[FootprintData, ...], ref: str) -> FootprintDa
         message=f"Footprint {ref} no está en el snapshot leído.",
         hint="Bug interno: ref validado pero no localizado en el snapshot.",
     )
+
+
+def _find_duplicate_refs(
+    footprints: tuple[FootprintData, ...],
+) -> list[tuple[str, list[str]]]:
+    """Refs compartidos por 2+ footprints, con sus KIIDs (sesión 31b, F-V1-02).
+
+    Ordenado por ref para salida determinista. Compartido entre la tool
+    ``set_footprint_ref`` (ambigüedad — sin target, lista candidatos) y el
+    pre-check de ``route_board`` (``pcbnew.ExportSpecctraDSN`` falla
+    enteramente con refs duplicados en el board, sin importar su
+    posición — confirmado empíricamente en sesión 31).
+    """
+    counts = Counter(fp.ref for fp in footprints)
+    return [
+        (ref, [fp.kiid for fp in footprints if fp.ref == ref])
+        for ref, n in sorted(counts.items())
+        if n >= 2
+    ]
 
 
 def _derive_post_state(
@@ -891,6 +911,134 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             tokens_est=estimate_tokens(confirmation),
             snap_id=snap_id,
             extra=extra,
+        )
+        return confirmation
+
+    @mcp.tool(
+        name="set_footprint_ref",
+        description=(
+            "Renombra UNA instancia de un reference designator duplicado/sin anotar "
+            "(ej. 4x 'REF**') a un ref único. Sin kiid, lista las instancias candidatas."
+        ),
+    )
+    def set_footprint_ref(
+        ref: str,
+        new_ref: str,
+        kiid: str | None = None,
+        base_snap: int | None = None,
+    ) -> str:
+        # Sesión 31b (F-V1-02): ExportSpecctraDSN (pcbnew) falla enteramente
+        # con refs duplicados en el board, sin importar su posición
+        # (confirmado en sesión 31: quitar 3 de 4 instancias de "REF**" hizo
+        # pasar la exportación de ok=False,size=0 a ok=True,size=2.4MB). La
+        # resolución es ANOTAR, no borrar — ADR-0013 rechaza explícitamente
+        # un delete_footprint general (ADR-0010: footprints siguen detrás de
+        # G2, que no existe; un footprint con ref duplicado es igual de caro
+        # de reinstanciar que uno con ref único, acotar el trigger no cambia
+        # ese costo). Esta tool sólo opera cuando ``ref`` YA está duplicado
+        # — no puede usarse como delete_footprint disfrazado sobre un
+        # footprint con ref único.
+        with tool_call_timer() as timer:
+            _guard_live_stale()  # D-14.1
+            check_no_external_disk_edit(  # P3.2: red de seguridad, independiente de base_snap
+                get_default_store(), _resolve_root_schematic_or_pcb()
+            )
+            root = _project_root()
+            if base_snap is not None:
+                _check_base_snap(base_snap)
+            board = _resolve_board(bridge)
+
+            ctx = bridge.read_board_context(board)
+            matches = [fp for fp in ctx.footprints if fp.ref == ref]
+            err_params: dict[str, Any] = {"ref": ref, "new_ref": new_ref, "kiid": kiid}
+
+            if not matches:
+                # sorted(set(...)): ctx.refs puede tener duplicados por
+                # definición acá — sin dedupe, _similars ecoa el mismo ref
+                # varias veces en las sugerencias.
+                similars = _similars(ref, sorted(set(ctx.refs)))
+                hint = "refs similares: " + ", ".join(similars) if similars else "sin sugerencias"
+                _audit_error(root, "set_footprint_ref", err_params, ErrorCode.COMPONENT_NOT_FOUND)
+                raise KicadMcpError(
+                    code=ErrorCode.COMPONENT_NOT_FOUND,
+                    message=f"Footprint {ref} no existe en el board.",
+                    hint=hint,
+                )
+            if len(matches) < 2:
+                _audit_error(root, "set_footprint_ref", err_params, ErrorCode.INVALID_PARAMS)
+                raise KicadMcpError(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message=f"{ref} no está duplicado — sólo hay 1 footprint con ese ref.",
+                    hint=(
+                        "set_footprint_ref sólo resuelve refs compartidos por 2+ "
+                        "footprints; para un ref único no hay tool de renombrado."
+                    ),
+                )
+            match_kiids = {fp.kiid for fp in matches}
+            if kiid is None or kiid not in match_kiids:
+                # Ambigüedad: 2+ candidatos. NUNCA renombramos "el primero" a
+                # ciegas — mismo espíritu que _delete_copper (línea ~1420).
+                candidates = [
+                    {
+                        "kiid": fp.kiid,
+                        "x_mm": float(fp.x_mm),
+                        "y_mm": float(fp.y_mm),
+                        "value": fp.value,
+                    }
+                    for fp in matches
+                ]
+                stale = kiid is not None
+                _audit_error(root, "set_footprint_ref", err_params, ErrorCode.DUPLICATE_REFS)
+                raise KicadMcpError(
+                    code=ErrorCode.DUPLICATE_REFS,
+                    message=(
+                        f"kiid {kiid!r} no corresponde a ninguna instancia de {ref} "
+                        f"(re-leer y reintentar)."
+                        if stale
+                        else f"{len(matches)} footprints comparten el ref {ref}."
+                    ),
+                    hint="Elegí un kiid de data.candidates y reintentá con ese kiid.",
+                    data={"candidates": candidates},
+                )
+
+            backup_info = ensure_session_backup(root)  # Gate G1
+            bridge.set_footprint_ref(board, kiid, new_ref)
+
+            # Post-estado derivado localmente (cero IPC extra) — mismo
+            # espíritu que _derive_post_state, sin el verify-by-kiid de
+            # D-08.2 (esa optimización es para el hot path de move_footprint;
+            # acá el rename es un evento raro, derivar-y-confiar alcanza,
+            # igual que _delete_copper).
+            updated: list[FootprintData] = []
+            for fp in ctx.footprints:
+                if fp.kiid == kiid:
+                    updated.append(
+                        FootprintData(
+                            ref=new_ref,
+                            value=fp.value,
+                            x_mm=fp.x_mm,
+                            y_mm=fp.y_mm,
+                            pads=fp.pads,
+                            kiid=fp.kiid,
+                        )
+                    )
+                else:
+                    updated.append(fp)
+            new_state = build_state_from_snapshot(tuple(updated))
+            snap_id = get_default_store().register(new_state, mtimes=None)
+            audit_record(
+                root,
+                tool="set_footprint_ref",
+                params={"ref": ref, "new_ref": new_ref, "kiid": kiid, "base_snap": base_snap},
+                result={"snap": snap_id, "backup": backup_info.get("backup")},
+            )
+            confirmation = f"OK set_footprint_ref {ref} -> {new_ref} [snap:{snap_id}]"
+        log_tool_call(
+            tool_name="set_footprint_ref",
+            latency_ms=timer["latency_ms"],
+            tokens_est=estimate_tokens(confirmation),
+            snap_id=snap_id,
+            extra={"kiid": kiid, "base_snap": base_snap},
         )
         return confirmation
 
@@ -2493,6 +2641,32 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 live_saved = True
                 pre_footprints = bridge.read_board_context(open_board).footprints
                 zones_existentes = len(bridge.list_zones(open_board))
+
+            # F-V1-02 (sesión 31): pcbnew.ExportSpecctraDSN falla enteramente
+            # si dos o más footprints comparten reference designator, sin
+            # importar su posición (confirmado en sesión 31 quitando 3 de 4
+            # instancias de "REF**" en ANAVI Dev Mic: ok=False,size=0 →
+            # ok=True,size=2.4MB). Lo detectamos ANTES del DRC y del
+            # round-trip DSN/Freerouting (subprocess) para cambiar un
+            # KICAD_CLI_FAILED opaco con stderr crudo de pcbnew por un error
+            # legible y accionable (resolver con set_footprint_ref).
+            # Limitación conocida: sólo corre si el board está vivo y no
+            # stale — misma degradación best-effort que ``zones_existentes``
+            # arriba (``pre_footprints`` es ``()`` si el board no está abierto).
+            dups = _find_duplicate_refs(pre_footprints)
+            if dups:
+                raise KicadMcpError(
+                    code=ErrorCode.DUPLICATE_REFS,
+                    message=(
+                        f"{len(dups)} reference designator(s) duplicados; pcbnew no "
+                        "puede exportar el DSN de Freerouting en ese estado."
+                    ),
+                    hint=(
+                        "Anotá los refs duplicados con set_footprint_ref(ref, new_ref, "
+                        "kiid=...) — o en KiCad, Tools→Annotate — y reintentá route_board."
+                    ),
+                    data={"duplicates": [{"ref": r, "kiids": k} for r, k in dups]},
+                )
 
             # DRC pre-route: sólo para drc.err_preexistentes (P2.2). El
             # denominador de nets YA NO sale de acá (F-09).

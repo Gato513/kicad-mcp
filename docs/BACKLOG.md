@@ -13,7 +13,7 @@ aproximado de severidad.
 
 ## P0 — Bloqueantes de dogfooding / release
 
-### F-V1-02 — `route_board` falla enteramente con refs de footprint duplicados/sin anotar
+### F-V1-02 — `route_board` falla enteramente con refs de footprint duplicados/sin anotar — ✅ CERRADO sesión 31b
 
 **Origen:** sesión 31, primera Validation Suite (Nivel A, ANAVI Dev Mic).
 El diseño del autor trae 4 mounting holes con el reference designator
@@ -21,45 +21,54 @@ literal `REF**` compartido (footprints sólo-mecánicos, sin símbolo de
 esquemático — nunca fueron anotados; patrón real y no infrecuente en
 proyectos KiCad externos).
 
-- **Síntoma 1 (ya conocido, P2 histórico — ver abajo, escalado acá):**
-  `move_footprint(ref="REF**", ...)` resuelve por `fp.ref == ref` (primer
-  match, `src/kicad_mcp/tools/pcb.py:100-114`, `_find_target`) — sólo se
-  puede mover UNA de las 4 instancias. Las otras 3 quedan clavadas en su
-  posición original para siempre.
-- **Síntoma 2 (nuevo, root cause aislado con experimento controlado):**
-  `pcbnew.ExportSpecctraDSN()` — invocada por `_run_export_dsn` en
-  `src/kicad_mcp/bridge/autoroute.py:244-277`, paso 1 de `route_board` —
-  **devuelve `ok=False, size=0` cuando el board tiene refs de footprint
-  duplicados**, sin importar la posición de esos footprints. Confirmado
-  quitando 3 de las 4 instancias `REF**` en una copia de prueba: la
-  exportación pasó de fallar a `ok=True, size=2.4MB`. Esto bloquea
-  `route_board` **por completo** — no es sólo ruido de DRC, es la
-  imposibilidad de generar el `.dsn` que consume Freerouting.
-- **Por qué no es un fix trivial de `src/`:** `ExportSpecctraDSN` es
-  función interna de `pcbnew` (KiCad), no código del proyecto. Nuestro
-  código podría detectar refs duplicados ANTES de exportar y fallar con un
-  error claro (`COMPONENT_REF_DUPLICATE` o similar) en vez del genérico
-  `KICAD_CLI_FAILED` actual — eso sí sería un fix pequeño y mejoraría el
-  diagnóstico — pero NO desbloquearía el ruteo. El desbloqueo real
-  requiere una forma de **eliminar o renombrar** las instancias
-  duplicadas, y no existe ninguna tool para eso (ver ítem histórico
-  "Asimetría `delete_track` sí / `delete_footprint` no" en §P2 más abajo
-  — sesión 31 es la primera evidencia concreta de que ese gap puede
-  escalar a P0 bloqueante, no sólo asimetría incómoda).
-- **Impacto en sesión 31:** H1a (estabilidad del flujo canónico) refutada
-  honestamente — la validación Nivel A (ANAVI Dev Mic) cerró SIN
-  completar el ruteo. Ver `validation-suite/level-a/anavi-dev-mic/
-  validation-report.md` y `docs/historico/sesiones/31-reporte.md`.
-- **Fix propuesto (sesión intermedia, antes de reintentar sesión 31/32):**
-  agregar `delete_footprint(ref, kiid=None)` al catálogo de tools —
-  direccionable por `kiid` cuando `ref` es ambiguo (mismo patrón que
-  `move_footprint` ya usa internamente para el lookup, sólo que no lo
-  expone al llamador). Alternativa complementaria: `move_footprint`
-  aceptando un parámetro opcional `kiid`/`instance_index` para
-  desambiguar sin necesidad de borrar.
+- **Síntoma 1 (ya conocido, P2 histórico — ver abajo, ahora resuelto):**
+  `move_footprint(ref="REF**", ...)` resolvía por `fp.ref == ref` (primer
+  match) — sólo podía mover UNA de las 4 instancias.
+- **Síntoma 2 (root cause aislado con experimento controlado en sesión
+  31):** `pcbnew.ExportSpecctraDSN()` — invocada por `_run_export_dsn`,
+  paso 1 de `route_board` — **devuelve `ok=False, size=0` cuando el
+  board tiene refs de footprint duplicados**, sin importar la posición
+  de esos footprints. Confirmado quitando 3 de las 4 instancias `REF**`
+  en una copia de prueba: la exportación pasó de fallar a `ok=True,
+  size=2.4MB`. Bloqueaba `route_board` **por completo**.
+- **Decisión de diseño (sesión 31b, investigación previa al fix):** el
+  fix obvio (`delete_footprint(ref, kiid)` general) se descartó — ADR-0010
+  dice explícitamente que borrar footprints sigue detrás de Gate G2 (que
+  no existe en código), y esa asimetría con `delete_track`/`delete_via`
+  es **deliberada**, no un vacío. Acotar el trigger a "ref duplicado" NO
+  cambia el argumento de ADR-0010: un footprint con ref duplicado es
+  igual de caro de reinstanciar que uno con ref único. Además, en el
+  caso real de ANAVI Dev Mic, las 4 `REF**` son mounting holes
+  **legítimas**, no basura — borrar 3 habría destruido el ground truth
+  de 13 footprints que sesión 31 ya midió.
+- **Fix real: anotar, no borrar.** Verificado con un spike GUI contra
+  KiCad 10.0.4 real (sesión 31b, Paso 0) que `fp.reference_field.text.value`
+  usa semántica de escritura en vivo en kipy (`proto_ref=`, sin
+  `CopyFrom` — a diferencia de `fp.position`, la trampa de ADR-0008).
+  Tool nueva: `set_footprint_ref(ref, new_ref, kiid=None)` — sólo opera
+  sobre refs YA duplicados (no puede usarse como delete_footprint
+  disfrazado), lista candidatos con `data.candidates` si `kiid` no se
+  especifica (nunca resuelve a ciegas, mismo espíritu que la ambigüedad
+  de `_delete_copper`). Complementado con un pre-check `DUPLICATE_REFS`
+  en `route_board` (falla ANTES del subprocess de exportación DSN, con
+  mensaje legible en vez del `KICAD_CLI_FAILED` opaco anterior).
+- **Ver ADR-0013** para el contrato completo (incluye el hallazgo
+  arquitectónico de la semántica `proto_ref=` de `reference_field`,
+  contraparte de ADR-0008).
+- **Verificación:** 12 tests unit (`_find_duplicate_refs`, pre-check de
+  `route_board`, tool `set_footprint_ref` — ambigüedad, kiid stale, ref
+  único rechazado, happy path) + 1 test `integration` contra pcbnew real
+  (`tests/fixtures/006_pcb_refs_duplicados/`) que congela el experimento
+  controlado de sesión 31 como regresión permanente.
+- **Impacto en sesión 31:** H1a (estabilidad del flujo canónico) fue
+  refutada honestamente en su momento — la validación Nivel A (ANAVI Dev
+  Mic) cerró SIN completar el ruteo. Con este fix, el reintento de
+  sesión 31 queda desbloqueado sobre el mismo `working/` ya preparado.
+  Ver `validation-suite/level-a/anavi-dev-mic/validation-report.md` y
+  `docs/historico/sesiones/31-reporte.md`.
 
-Fuera del ítem de arriba, ningún otro P0 abierto. **F-D4-02 cerrado y
-ratificado con evidencia 5/5**
+Ningún P0 abierto hoy (F-V1-02 arriba cerrado en sesión 31b). **F-D4-02
+cerrado y ratificado con evidencia 5/5**
 (2/2 test de regresión sesión 24 + 3/3 corridas de D5, sesión 25 —
 `err_post` coincidió exacto con `run_drc()` independiente, mtime cambió
 post-save, cero `EXTERNAL_EDIT_DETECTED` espurio, sin ninguna excepción en
@@ -126,37 +135,45 @@ continuación de `docs/investigacion/26-solder-mask-ant1.md`).
   D7); Fase 3 cerrada 2026-07-25.
 - **Reporte:** `docs/historico/sesiones/27-reporte.md`.
 
-## P1 — `board_bbox_mm` no implementa su propia preferencia declarada (Edge.Cuts)
+## P1 — bbox de validación no leía Edge.Cuts — ✅ CERRADO sesión 31b
 
 **Origen:** sesión 31, Bloque 2 (colocación sobre ANAVI Dev Mic).
-`src/kicad_mcp/bridge/ipc.py:1422-1452` (`board_bbox_mm`, consumida por
-`move_footprint`/`add_track` para validar `INVALID_PARAMS`): el docstring
-dice *"Preferencia: usar la superficie declarada del board (Edge.Cuts).
+`board_bbox_mm` (`src/kicad_mcp/bridge/ipc.py`) tenía un docstring que
+decía *"Preferencia: usar la superficie declarada del board (Edge.Cuts).
 Fallback: unión de bounding boxes de todos los footprints"* — pero el
-código **nunca lee Edge.Cuts**, va directo al fallback (margen de ±100mm
-alrededor del enjambre de posiciones de footprints).
+código **nunca leía Edge.Cuts**, iba directo al fallback (margen de
+±100mm alrededor del enjambre de posiciones de footprints).
 
-- **Cuándo importa:** si todos los footprints están agrupados lejos del
-  contorno real (ej. todos en `(0,0)`, que es exactamente el estado
-  inicial que la Validation Suite adoptó en sesión 31 para `working/` —
-  ver `validation-suite/tools/prepare_working.py`), el bbox calculado
-  (`swarm ± 100mm`) puede no cubrir el contorno Edge.Cuts real, y
-  `move_footprint`/`add_track` rechazan con `INVALID_PARAMS` cualquier
+- **Corrección de sesión 31b (investigación previa al fix):**
+  `board_bbox_mm` **no tiene ningún consumidor en `src/`** — el bug real
+  que sesión 31 pisó vivía en una copia inline **independiente** del
+  mismo cálculo dentro de `read_board_context` (el método que
+  `move_footprint`/`add_track`/`add_via` realmente usan vía
+  `ctx.bbox`). La entrada original de este ítem nombraba la función
+  equivocada por la misma razón estructural que causó el bug: dos
+  copias divergentes de la misma lógica.
+- **Cuándo importaba:** si todos los footprints están agrupados lejos
+  del contorno real (ej. todos en `(0,0)`, la convención de estado
+  inicial de `working/` en la Validation Suite —
+  `validation-suite/tools/prepare_working.py`), el bbox calculado
+  (`swarm ± 100mm`) podía no cubrir el contorno Edge.Cuts real, y
+  `move_footprint`/`add_track` rechazaban con `INVALID_PARAMS` cualquier
   coordenada dentro del board real. Sesión 31 lo confirmó con ANAVI Dev
   Mic: contorno en x∈[109,144], bbox aceptado x∈[-100,100] — sin
   intersección.
-- **Workaround aplicado en sesión 31 (sin tocar `src/`):** mover un
-  footprint a una posición intermedia DENTRO del rango inicialmente
-  válido primero (expande el swarm y por lo tanto el bbox aceptado en la
-  siguiente lectura), y recién después a la posición final. Un solo
-  "bootstrap" alcanza para desbloquear todo el board para el resto de la
-  colocación. Documentado en detalle en
-  `validation-suite/level-a/anavi-dev-mic/validation-report.md`.
-- **Fix propuesto:** ~10 líneas — leer Edge.Cuts (mismo patrón que ya usa
-  la construcción del bbox de `get_world_context`) y usarlo cuando exista
-  un contorno; el fallback swarm±100mm queda para boards sin contorno
-  todavía. Relevante para sesiones 32/33 de la Validation Suite, que
-  heredan la misma convención de estado inicial.
+- **Fix (sesión 31b):** helper lock-free `_edge_cuts_bbox_nm` extraído
+  de `board_outline` (evita re-adquirir `self._lock`, no reentrante —
+  `ipc.py:999-1003`), consumido por `board_outline`, `board_bbox_mm` Y
+  `read_board_context` vía el helper puro `_bbox_with_margin`. Semántica
+  final: **unión** de Edge.Cuts (±10mm) y enjambre de footprints
+  (±100mm), no "preferir uno u otro" — estrictamente no regresivo, nunca
+  devuelve un rango más chico que el código anterior.
+- **Verificación:** 12 tests unit nuevos en `tests/test_ipc.py`
+  (incluye un canario de deadlock que reemplaza `self._lock` por un
+  wrapper que lanza en re-entrada) + suite offline completa sin
+  regresiones.
+- **Sin ADR** — implementa comportamiento ya documentado, sin cambiar
+  contrato externo (DoD #4, "aclaración de comportamiento").
 
 ## P2 — Correcciones puntuales con evidencia repetida
 
@@ -165,7 +182,7 @@ alrededor del enjambre de posiciones de footprints).
 | `run_erc()` posiciones ÷100 | F-03 (D2), F-19b-12 (19b) | Abierto, confirmado 2 veces. |
 | `health()` no distingue `PROJECT_NOT_CONFIGURED` vs `PROJECT_PATH_NOT_FOUND` | F-02 | Abierto. |
 | `draw_board_outline` inmutable (sin `replace=true`/`delete`) | F-06 | Abierto. |
-| Asimetría `delete_track` sí / `delete_footprint` no | D-R3, D-R8 | Abierto, sin ADR. **Escalado a P0 en sesión 31 (F-V1-02)**: con refs duplicados/sin anotar, esta asimetría bloquea `route_board` por completo, no sólo incomoda. |
+| Asimetría `delete_track` sí / `delete_footprint` no | D-R3, D-R8 | Abierto, sin ADR — **sigue así deliberadamente**. Escaló a P0 en sesión 31 (F-V1-02: refs duplicados bloqueaban `route_board`), pero sesión 31b cerró ese caso sin tocar la asimetría — resolvió por anotación (`set_footprint_ref`), no por borrado. Ver ADR-0013: un `delete_footprint` general sigue rechazado, ADR-0010 vigente sin excepción. |
 | Doc del lock no-reentrante del bridge (`self._lock` no es reentrante) | Sesión 19d | Pendiente: documentar en `bridge/README.md` o similar. |
 | Issue upstream a Freerouting sobre `gui.enabled=true` colgando la JVM (R9) | Sesión 17 | Mitigado en código; issue no abierto (no urgente). |
 | `move_footprint` no dispara refill de zonas — un DRC leído de disco tras mover pads sobre un plano mide fill rancio, no el estado real | Sesión 26, investigación 26 §2 | Nota de proceso: `fill_zones()` obligatorio tras colocación masiva, antes del baseline DRC. No es un bug de la tool (su contrato nunca prometió refill) — es un punto ciego de brief/protocolo de dogfooding. |

@@ -17,12 +17,18 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from kipy.proto.board.board_types_pb2 import BoardLayer as _BoardLayer
 
 from kicad_mcp.bridge.ipc import (
+    _BBOX_OUTLINE_MARGIN_MM,
+    _BBOX_SWARM_MARGIN_MM,
+    BBoxMm,
     BoardHandle,
     IpcBridge,
     Mm,
     Nm,
+    _bbox_with_margin,
+    _edge_cuts_bbox_nm,
     _resolve_kicad_socket,
     _verify_created_net_or_revert,
     mm_to_nm,
@@ -132,17 +138,54 @@ def test_get_open_board_wraps_raw_board_in_handle() -> None:
 
 
 class _FakeFootprint:
-    def __init__(self, ref: str, x_nm: int, y_nm: int) -> None:
+    def __init__(self, ref: str, x_nm: int, y_nm: int, *, kiid: str = "", value: str = "") -> None:
         self.reference_field = type("_F", (), {"text": type("_T", (), {"value": ref})()})()
+        self.value_field = type("_F", (), {"text": type("_T", (), {"value": value})()})()
         self.position = type("_P", (), {"x": x_nm, "y": y_nm})()
+        # ``_footprint_to_data`` (read_board_context/snapshot_footprints)
+        # itera ``definition.pads`` y lee ``id.value`` — vacío/dummy por
+        # defecto para no romper los tests preexistentes que sólo usaban
+        # ``reference_field``/``position``.
+        self.definition = type("_D", (), {"pads": []})()
+        self.id = type("_Id", (), {"value": kiid or f"kiid-{ref}"})()
+
+
+class _FakeBoundingBox:
+    def __init__(self, x_nm: int, y_nm: int, w_nm: int, h_nm: int) -> None:
+        self.pos = type("_Pos", (), {"x": x_nm, "y": y_nm})()
+        self.size = type("_Size", (), {"x": w_nm, "y": h_nm})()
+
+
+class _FakeShape:
+    """Imita una ``kipy`` shape con capa + bbox — sólo lo que
+    ``_edge_cuts_bbox_nm`` consume (sesión 31b, F-V1-01)."""
+
+    def __init__(self, layer: int, x_nm: int, y_nm: int, w_nm: int, h_nm: int) -> None:
+        self.layer = layer
+        self._bbox = _FakeBoundingBox(x_nm, y_nm, w_nm, h_nm)
+
+    def bounding_box(self) -> _FakeBoundingBox:
+        return self._bbox
 
 
 class _FakeBoard:
-    def __init__(self, footprints: list[_FakeFootprint]) -> None:
+    def __init__(
+        self,
+        footprints: list[_FakeFootprint],
+        shapes: list[_FakeShape] | None = None,
+    ) -> None:
         self._fps = footprints
+        self._shapes = shapes or []
+        self.get_shapes_calls = 0
+        self.get_footprints_calls = 0
 
     def get_footprints(self) -> list[_FakeFootprint]:
+        self.get_footprints_calls += 1
         return list(self._fps)
+
+    def get_shapes(self) -> list[_FakeShape]:
+        self.get_shapes_calls += 1
+        return list(self._shapes)
 
 
 @pytest.mark.unit
@@ -167,6 +210,199 @@ def test_get_footprint_position_raises_component_not_found() -> None:
     with pytest.raises(KicadMcpError) as excinfo:
         bridge.get_footprint_position(board, "U99")
     assert excinfo.value.code is ErrorCode.COMPONENT_NOT_FOUND
+
+
+# --- bbox de validación: unión Edge.Cuts + enjambre de footprints (sesión 31b, F-V1-01) --
+#
+# Hallazgo de sesión 31 (Validation Suite, ANAVI Dev Mic): con los 13
+# footprints apilados en (0,0) (convención del estado inicial de
+# ``working/``) y Edge.Cuts definido lejos de ahí, el bbox de validación
+# (``read_board_context``/``board_bbox_mm``) nunca cubría el board real —
+# ``move_footprint``/``add_track`` rechazaban CUALQUIER coordenada dentro
+# del contorno real con ``INVALID_PARAMS``. El bug real vivía en
+# ``read_board_context`` (``board_bbox_mm`` no tiene consumidores en
+# ``src/``, ver Correction A de la investigación de sesión 31b).
+
+# Contorno fake: 100,50 -> 140,90 (nm, valores redondos para aritmética exacta).
+_EDGE_SHAPE = _FakeShape(
+    layer=_BoardLayer.BL_Edge_Cuts,
+    x_nm=100_000_000,
+    y_nm=50_000_000,
+    w_nm=40_000_000,
+    h_nm=40_000_000,
+)
+_NON_EDGE_SHAPE = _FakeShape(
+    layer=_BoardLayer.BL_F_SilkS, x_nm=0, y_nm=0, w_nm=1_000_000, h_nm=1_000_000
+)
+
+
+@pytest.mark.unit
+def test_edge_cuts_bbox_ignores_non_edge_layers() -> None:
+    """Sólo la capa Edge.Cuts contribuye — silkscreen u otras capas no."""
+    raw = _FakeBoard([], shapes=[_NON_EDGE_SHAPE])
+    assert _edge_cuts_bbox_nm(raw) is None
+
+    raw2 = _FakeBoard([], shapes=[_NON_EDGE_SHAPE, _EDGE_SHAPE])
+    edge = _edge_cuts_bbox_nm(raw2)
+    assert edge == (100_000_000.0, 50_000_000.0, 140_000_000.0, 90_000_000.0)
+
+
+@pytest.mark.unit
+def test_edge_cuts_bbox_none_without_shapes() -> None:
+    assert _edge_cuts_bbox_nm(_FakeBoard([])) is None
+
+
+@pytest.mark.unit
+def test_bbox_with_margin_union_of_edge_and_swarm() -> None:
+    """La unión nunca es más chica que cualquiera de las dos fuentes por
+    separado — el fix es estrictamente no regresivo."""
+    edge_nm = (100_000_000.0, 50_000_000.0, 140_000_000.0, 90_000_000.0)  # 100..140mm x 50..90mm
+    # Enjambre lejos del contorno (ej. todos los footprints en el origen).
+    bbox = _bbox_with_margin(edge_nm, swarm_xs_mm=[0.0], swarm_ys_mm=[0.0])
+
+    # Debe cubrir AMBOS: el contorno (100-140, 50-90) y el enjambre (0 ± 100).
+    assert bbox.contains(Mm(120.0), Mm(70.0))  # dentro del contorno, lejos del swarm
+    assert bbox.contains(Mm(0.0), Mm(0.0))  # el swarm
+    assert bbox.min_x <= Mm(100.0 - _BBOX_OUTLINE_MARGIN_MM)
+    assert bbox.max_x >= Mm(140.0 + _BBOX_OUTLINE_MARGIN_MM)
+    assert bbox.min_x <= Mm(0.0 - _BBOX_SWARM_MARGIN_MM)
+
+
+@pytest.mark.unit
+def test_bbox_with_margin_edge_only() -> None:
+    edge_nm = (100_000_000.0, 50_000_000.0, 140_000_000.0, 90_000_000.0)
+    bbox = _bbox_with_margin(edge_nm, swarm_xs_mm=[], swarm_ys_mm=[])
+    assert bbox == BBoxMm(
+        Mm(100.0 - _BBOX_OUTLINE_MARGIN_MM),
+        Mm(50.0 - _BBOX_OUTLINE_MARGIN_MM),
+        Mm(140.0 + _BBOX_OUTLINE_MARGIN_MM),
+        Mm(90.0 + _BBOX_OUTLINE_MARGIN_MM),
+    )
+
+
+@pytest.mark.unit
+def test_bbox_with_margin_swarm_only_matches_historical_behavior() -> None:
+    """Sin contorno, el resultado es idéntico al cálculo histórico
+    (swarm ± 100mm) — no regresión del caso ya cubierto."""
+    bbox = _bbox_with_margin(None, swarm_xs_mm=[10.0, 20.0], swarm_ys_mm=[5.0, 15.0])
+    assert bbox == BBoxMm(Mm(10.0 - 100.0), Mm(5.0 - 100.0), Mm(20.0 + 100.0), Mm(15.0 + 100.0))
+
+
+@pytest.mark.unit
+def test_bbox_with_margin_empty_board_wide_range() -> None:
+    bbox = _bbox_with_margin(None, swarm_xs_mm=[], swarm_ys_mm=[])
+    assert bbox == BBoxMm(Mm(-1e6), Mm(-1e6), Mm(1e6), Mm(1e6))
+
+
+@pytest.mark.unit
+def test_read_board_context_bbox_prefers_edge_cuts_over_stacked_footprints() -> None:
+    """Regresión directa del fallo de ANAVI Dev Mic (sesión 31): footprints
+    apilados en (0,0), Edge.Cuts en 100-140mm x 50-90mm ⇒ el bbox debe
+    aceptar coordenadas DENTRO del contorno real, no sólo cerca del origen."""
+    fps = [_FakeFootprint("U1", 0, 0), _FakeFootprint("U2", 0, 0)]
+    board = BoardHandle(_raw=_FakeBoard(fps, shapes=[_EDGE_SHAPE]))
+    bridge = IpcBridge(client_factory=_factory(_FakeClient(board=board.raw)))
+
+    ctx = bridge.read_board_context(board)
+
+    assert ctx.bbox.contains(Mm(120.0), Mm(70.0)), "coordenada dentro del contorno real"
+
+
+@pytest.mark.unit
+def test_read_board_context_bbox_falls_back_to_swarm_without_edge_cuts() -> None:
+    """Sin Edge.Cuts, el comportamiento histórico (swarm ± 100mm) no cambia,
+    y ``get_footprints`` se llama UNA sola vez (sin segunda pasada O(board),
+    D-08.1 — Correction B de la investigación de sesión 31b)."""
+    fps = [_FakeFootprint("U1", x_nm=10_000_000, y_nm=5_000_000)]  # 10mm, 5mm
+    raw = _FakeBoard(fps, shapes=[])
+    board = BoardHandle(_raw=raw)
+    bridge = IpcBridge(client_factory=_factory(_FakeClient(board=board.raw)))
+
+    ctx = bridge.read_board_context(board)
+
+    assert ctx.bbox == BBoxMm(Mm(10.0 - 100.0), Mm(5.0 - 100.0), Mm(10.0 + 100.0), Mm(5.0 + 100.0))
+    assert raw.get_footprints_calls == 1
+
+
+@pytest.mark.unit
+def test_board_bbox_mm_prefers_edge_cuts_over_stacked_footprints() -> None:
+    fps = [_FakeFootprint("U1", 0, 0)]
+    board = BoardHandle(_raw=_FakeBoard(fps, shapes=[_EDGE_SHAPE]))
+    bridge = IpcBridge(client_factory=_factory(_FakeClient(board=board.raw)))
+
+    bbox = bridge.board_bbox_mm(board)
+
+    assert bbox.contains(Mm(120.0), Mm(70.0))
+
+
+@pytest.mark.unit
+def test_board_bbox_mm_falls_back_to_swarm_without_edge_cuts() -> None:
+    fps = [_FakeFootprint("U1", x_nm=10_000_000, y_nm=5_000_000)]
+    board = BoardHandle(_raw=_FakeBoard(fps, shapes=[]))
+    bridge = IpcBridge(client_factory=_factory(_FakeClient(board=board.raw)))
+
+    bbox = bridge.board_bbox_mm(board)
+
+    assert bbox == BBoxMm(Mm(10.0 - 100.0), Mm(5.0 - 100.0), Mm(10.0 + 100.0), Mm(5.0 + 100.0))
+
+
+@pytest.mark.unit
+def test_board_outline_unchanged_after_helper_extraction() -> None:
+    """``board_outline`` extrajo su escaneo de Edge.Cuts a
+    ``_edge_cuts_bbox_nm`` — pin de que el comportamiento observable
+    (bbox + string ``outline``) no cambió, con y sin contorno."""
+    board_with = BoardHandle(_raw=_FakeBoard([], shapes=[_EDGE_SHAPE]))
+    bridge = IpcBridge(client_factory=_factory(_FakeClient(board=board_with.raw)))
+    bbox, outline = bridge.board_outline(board_with)
+    assert outline == "40.0x40.0mm"
+    assert bbox == BBoxMm(Mm(100.0), Mm(50.0), Mm(140.0), Mm(90.0))
+
+    fps = [_FakeFootprint("U1", x_nm=10_000_000, y_nm=5_000_000)]
+    board_without = BoardHandle(_raw=_FakeBoard(fps, shapes=[]))
+    bridge2 = IpcBridge(client_factory=_factory(_FakeClient(board=board_without.raw)))
+    bbox2, outline2 = bridge2.board_outline(board_without)
+    assert outline2 == "none"
+    assert bbox2 == BBoxMm(Mm(10.0), Mm(5.0), Mm(10.0), Mm(5.0))  # tight, sin margen
+
+
+@pytest.mark.unit
+def test_read_board_context_does_not_reacquire_bridge_lock() -> None:
+    """Canario de deadlock: ``self._lock`` no es reentrante (ipc.py:999-1003).
+    Si una futura edición hiciera que ``read_board_context``/``board_bbox_mm``
+    llamaran a ``board_outline`` (que también toma ``self._lock``) desde
+    DENTRO de su propio bloque ``with self._lock``, este test debe fallar
+    (o colgar) — nunca pasar en silencio."""
+
+    class _ReentryGuardLock:
+        def __init__(self) -> None:
+            self._held = False
+
+        def acquire(self, *args: object, **kwargs: object) -> bool:
+            if self._held:
+                raise RuntimeError("re-entrada de self._lock detectada (no reentrante)")
+            self._held = True
+            return True
+
+        def release(self) -> None:
+            self._held = False
+
+        def __enter__(self) -> _ReentryGuardLock:
+            self.acquire()
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            self.release()
+
+    fps = [_FakeFootprint("U1", 0, 0)]
+    board = BoardHandle(_raw=_FakeBoard(fps, shapes=[_EDGE_SHAPE]))
+    bridge = IpcBridge(client_factory=_factory(_FakeClient(board=board.raw)))
+    bridge._lock = _ReentryGuardLock()  # type: ignore[assignment]
+
+    # Si cualquiera de estos re-entrara el lock, _ReentryGuardLock lanza
+    # RuntimeError en vez de colgar — falla rápido y con traceback legible.
+    bridge.read_board_context(board)
+    bridge.board_bbox_mm(board)
+    bridge.board_outline(board)
 
 
 # --- get_items_by_id: bug del not-found (sesión 17, P2.0) ---------------------

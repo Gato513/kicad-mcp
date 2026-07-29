@@ -117,6 +117,9 @@ insuficiente a radios ~1.8mm) y fix aterrizado (N=16→64 +
 - D-30.4: criterio de diversidad para admisión a Validation Suite.
 - D-30.5: mecanismo de apotema en keepouts circulares (sesión 30, cierre P1).
 - D-31.1: convenciones estructurales de la Validation Suite (sesión 31).
+- ADR-0013: refs duplicados/sin anotar se resuelven por anotación, no
+  borrado — `set_footprint_ref` + pre-check `DUPLICATE_REFS` en
+  `route_board` (sesión 31b, cierre F-V1-02). ADR-0010 intacta.
 - D-27.1: restore no destructivo del entorno GUI vivo (heredada).
 - D-28.1: cambios de orden de fases requieren AskUserQuestion (heredada).
 - D-28.2: barrido completo al generar diffs de decisiones (heredada).
@@ -132,18 +135,23 @@ bloquean `route_board`) es un gap real del flujo, expuesto por una
 condición de diseño (refs sin anotar) que el despertador —única placa de
 Fase 1-3— nunca ejercitó, no una regresión del código.
 
-**Estado de la secuencia de Fase 4** (post-sesión 31, 2026-07-28):
+**Estado de la secuencia de Fase 4** (post-sesión 31b, 2026-07-29):
 1. Investigación P1 solder mask ANT1 — ✅ cerrada (sesión 30).
 2. Validation Suite Nivel A — **en curso, no cerrada.** Sesión 31 admitió
    `anavi-dev-mic` (con excepción documentada de criterio 6) y ejecutó
    el flujo canónico hasta `route_board`, donde se detuvo por hallazgo
    P0 (`F-V1-02`, refs de footprint duplicados/sin anotar rompen la
-   exportación DSN a Freerouting). Ver
-   `validation-suite/level-a/anavi-dev-mic/validation-report.md` y
-   `docs/historico/sesiones/31-reporte.md`. **Próximo paso: sesión de fix
-   intermedia** (agregar `delete_footprint` direccionable por `kiid` —
-   `docs/BACKLOG.md` §P0 — más el fix menor de `board_bbox_mm`, §P1),
-   luego reintentar sesión 31 sobre el mismo `working/` ya preparado.
+   exportación DSN a Freerouting). **Sesión 31b (fix intermedio) cerró
+   F-V1-02 y F-V1-01**: `set_footprint_ref` (ADR-0013, resuelve por
+   anotación, no borrado — ADR-0010 queda intacta) + pre-check
+   `DUPLICATE_REFS` en `route_board`; fix de `read_board_context`/
+   `board_bbox_mm` para leer Edge.Cuts (unión con el enjambre de
+   footprints, no reemplazo). Ver `docs/BACKLOG.md` §P0/P1 (ambos
+   cerrados) y `docs/historico/sesiones/31b-reporte.md`. **Próximo paso:
+   reintentar sesión 31 desde Bloque 2 sobre el `working/` de ANAVI Dev
+   Mic ya preparado** (`validation-suite/level-a/anavi-dev-mic/`, sin
+   tocar — el ground truth de 13 footprints sigue válido, sesión 31b
+   resolvió por rename, no por borrado).
 3-5. Sin cambios — condicionados al cierre de la Validation Suite Nivel A.
 
 ## Estado actual: Fase 3 — consolidación (histórico, cerrada sesión 29)

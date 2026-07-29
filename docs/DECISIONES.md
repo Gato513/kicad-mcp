@@ -29,6 +29,7 @@ cronológico; cada una es la fuente autoritativa de su tema.
 | [0010](adr/0010-borrado-de-cobre-sin-gate-g2.md) | Borrado de cobre sin Gate G2 | `delete_track`/`delete_via` no disparan elicitation destructiva. |
 | [0011](adr/0011-autorouting-route-board.md) | Autorouting con Freerouting | `route_board` delega ruteo a Freerouting headless, no al LLM. |
 | [0012](adr/0012-route-board-persist-contract.md) | Contrato disco==memoria==`err_post` | Sesión 24: `route_board` mide DRC y persiste **después** de refill+enforce; fix de F-D4-02. Ver D-23.2 abajo. **Extendido en sesión 27** a `fill_zones` y `add_zone(fill=True)` — ADR-0012 sección "Extensión de alcance (sesión 27)". |
+| [0013](adr/0013-refs-duplicados-por-anotacion-no-borrado.md) | Refs duplicados se resuelven por anotación, no borrado | Sesión 31b (F-V1-02): `set_footprint_ref` + pre-check `DUPLICATE_REFS` en `route_board`. ADR-0010 queda intacta (sin narrowing) — no se abre `delete_footprint`. |
 
 ## 2. Decisiones informales vigentes (no formalizadas como ADR)
 

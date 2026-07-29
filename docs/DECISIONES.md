@@ -434,6 +434,32 @@ releerse el reporte completo de sesión 31.
 Mic). Ver `validation-suite/level-a/anavi-dev-mic/validation-report.md`
 para el detalle completo de cada hallazgo que originó estas convenciones.
 
+### D-31c.1 — Cross-check obligatorio contra ADRs vigentes antes de fijar el marco de un prompt
+
+**Contexto:** al cerrar decisiones de diseño no re-abribles en el marco
+del prompt de una sesión (patrón D1-DN), el arquitecto puede fijar una
+decisión que choca con un ADR vigente sin saberlo — el marco cerrado del
+prompt no incluye automáticamente un cross-check contra la superficie de
+ADRs que toca.
+
+**Decisión:** cross-check obligatorio contra ADRs vigentes que tocan el
+área operada antes de fijar el marco (patrón D1-DN) en el prompt de una
+sesión. Origen: sesión 31b reveló que D1-D4 del prompt de 31b (semántica
+de `delete_footprint`) chocaba con ADR-0010 (asimetría deliberada
+`delete_track`/`delete_footprint`) — decisión que el arquitecto había
+cerrado sin verificar el ADR vigente. Salvado por rigor investigativo del
+ejecutor (2 agentes Explore + 1 Plan, verificado contra el código real)
+más `AskUserQuestion` antes de comprometerse con el fix original. La
+convención hace explícita la disciplina para prompts futuros: el marco
+cerrado del prompt es autoritativo pero no dispensa del cross-check con
+ADRs de la superficie tocada.
+
+**Aplicación:** decisión del arquitecto sobre el proceso de generación de
+prompts, no sobre código — análoga a D-30.1 pero un nivel arriba (D-30.1
+exige hipótesis/evidencia/refutación/protección dentro de una sesión;
+D-31c.1 exige cross-check de ADRs vigentes al diseñar el prompt mismo,
+antes de que la sesión arranque).
+
 ## 3. Decisiones superadas (referencia histórica, no vigentes)
 
 - **D-V3.1** (revert humano post-route): superada por recarga programática (`Board.revert()`, sesión 18) — ya no hay contacto humano por route.

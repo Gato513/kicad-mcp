@@ -135,24 +135,33 @@ bloquean `route_board`) es un gap real del flujo, expuesto por una
 condición de diseño (refs sin anotar) que el despertador —única placa de
 Fase 1-3— nunca ejercitó, no una regresión del código.
 
-**Estado de la secuencia de Fase 4** (post-sesión 31b, 2026-07-29):
+**Estado de la secuencia de Fase 4** (post-sesión 31c, 2026-07-29):
 1. Investigación P1 solder mask ANT1 — ✅ cerrada (sesión 30).
-2. Validation Suite Nivel A — **en curso, no cerrada.** Sesión 31 admitió
-   `anavi-dev-mic` (con excepción documentada de criterio 6) y ejecutó
-   el flujo canónico hasta `route_board`, donde se detuvo por hallazgo
-   P0 (`F-V1-02`, refs de footprint duplicados/sin anotar rompen la
-   exportación DSN a Freerouting). **Sesión 31b (fix intermedio) cerró
-   F-V1-02 y F-V1-01**: `set_footprint_ref` (ADR-0013, resuelve por
+2. Validation Suite Nivel A — **✅ cerrada (sesión 31c).** Sesión 31
+   admitió `anavi-dev-mic` (con excepción documentada de criterio 6) y
+   ejecutó el flujo canónico hasta `route_board`, donde se detuvo por
+   hallazgo P0 (`F-V1-02`, refs de footprint duplicados/sin anotar rompen
+   la exportación DSN a Freerouting). Sesión 31b (fix intermedio) cerró
+   F-V1-02 y F-V1-01: `set_footprint_ref` (ADR-0013, resuelve por
    anotación, no borrado — ADR-0010 queda intacta) + pre-check
    `DUPLICATE_REFS` en `route_board`; fix de `read_board_context`/
    `board_bbox_mm` para leer Edge.Cuts (unión con el enjambre de
-   footprints, no reemplazo). Ver `docs/BACKLOG.md` §P0/P1 (ambos
-   cerrados) y `docs/historico/sesiones/31b-reporte.md`. **Próximo paso:
-   reintentar sesión 31 desde Bloque 2 sobre el `working/` de ANAVI Dev
-   Mic ya preparado** (`validation-suite/level-a/anavi-dev-mic/`, sin
-   tocar — el ground truth de 13 footprints sigue válido, sesión 31b
-   resolvió por rename, no por borrado).
-3-5. Sin cambios — condicionados al cierre de la Validation Suite Nivel A.
+   footprints, no reemplazo). **Sesión 31c reintentó el flujo completo
+   sobre el mismo `working/`**: `route_board` completó (15/15 nets
+   ruteables, 0 bloqueadas), H1a y H1b confirmadas (0 fricciones P0/P1
+   nuevas, 1 fricción P2 nueva — `F-V1c-01`, vía GND sin conectar a un
+   pad de 0.30mm). Los 4 criterios D-30.3 se **midieron** de punta a
+   punta (1/4 cumple umbral — cobre; tracks y vías no cumplen, DRC
+   coincide en conteo pero no en composición) — primer punto real de
+   evidencia sobre H2 (discriminancia de umbrales): el umbral de vías
+   (±20% sobre una base de 2) resultó no discriminante para bases
+   pequeñas, candidato a revisión post-sesión 33. Escenario de cierre:
+   5 ("aprendizaje metodológico") con elementos de 2 ("éxito con matiz de
+   umbrales"). Ver `validation-suite/level-a/anavi-dev-mic/validation-report.md`,
+   `metrics.md` y `docs/historico/sesiones/31c-reporte.md`.
+3-5. Sin cambios — condicionados al cierre de la Validation Suite Nivel A
+   (ahora cumplido). Próxima sesión: **32 (Nivel B)**, candidato a
+   confirmar siguiendo el patrón de admisión de Bloque 0 de sesión 31.
 
 ## Estado actual: Fase 3 — consolidación (histórico, cerrada sesión 29)
 
@@ -238,17 +247,16 @@ vigente (Fase 4): `hoja-de-ruta-v5.md` (raíz del repo).
 Índice completo con ADR y decisiones informales: `docs/DECISIONES.md`. Las que
 más condicionan trabajo futuro:
 
-- **D-23.2 (ratificado en 3 tools, ratificación estadística en curso):**
+- **D-23.2 (ratificado en 3 tools, criterio de convergencia cumplido):**
   contrato disco==memoria aplicado a `route_board` (sesión 24, ADR-0012),
   `fill_zones` (sesión 27, extensión ADR-0012), `add_zone(fill=True)`
-  (sesión 27, extensión ADR-0012). Acumulado 15/15 corridas verdes en
-  producción real hasta cierre D6 (2 test regresión sesión 24 + 3 D5 + 3
-  D6 en route_board; 2 test regresión sesión 27 + 2 D6 en fill_zones; 2
-  test regresión sesión 27 + 1 D6 en add_zone). Sin divergencias
-  registradas. Ratificación estadística en curso — D7 sesión 29 apunta a
-  3er verde consecutivo para cerrar criterio de convergencia Fase 3. Ver
-  `docs/DECISIONES.md` §2 y ADR-0012 §"Extensión de alcance (sesión 27)"
-  para detalles.
+  (sesión 27, extensión ADR-0012). **Acumulado 25/25 corridas verdes en
+  producción real** (route_board 12/12 + fill_zones 7/7 + add_zone 6/6),
+  0 divergencias, Fase 3 cerrada con 3 verdes consecutivos (D5/D6/D7) —
+  drift corregido en sesión 31c (esta entrada seguía citando el conteo
+  intermedio 15/15 pre-D7, ya desactualizado desde el cierre de Fase 3 en
+  sesión 29). Ver `docs/DECISIONES.md` §2 y ADR-0012 §"Extensión de
+  alcance (sesión 27)" para detalles.
 - **KIID sobre coordenadas/radio** para desambiguar cobre (`delete_track`,
   `delete_via`) — D-V3.3.
 - **Reglas del board viajan al DSN de Freerouting** (edge clearance vía

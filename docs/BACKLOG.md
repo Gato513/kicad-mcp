@@ -175,6 +175,31 @@ código **nunca leía Edge.Cuts**, iba directo al fallback (margen de
 - **Sin ADR** — implementa comportamiento ya documentado, sin cambiar
   contrato externo (DoD #4, "aclaración de comportamiento").
 
+## P2 — Vía GND no conectada a pad de 0.30mm post-`route_board`+refill (F-V1c-01)
+
+**Origen:** sesión 31c (reintento de Validation Suite Nivel A, ANAVI Dev
+Mic, tras los fixes de 31b). DRC de cierre post-`route_board`+refill
+final: 18 errores (17 `solder_mask_bridge` + **1 `unconnected_items`**),
+vs los 18 del ground truth (17 `solder_mask_bridge` + 1
+`starved_thermal`) — mismo conteo total, tipo distinto en el 18°.
+
+- **Síntoma:** una vía `[GND]` en F.Cu-B.Cu (pos `129.88,76.582`) no
+  conecta con el pad GND de MK1 (pos `126.5,75.567`), un pad de sólo
+  0.30×0.30mm — el pad GND más pequeño del board.
+- **Contexto:** Freerouting colocó la vía como parte de la conectividad
+  GND (D-19.1: respeta el plano como conectividad del net dueño); algo en
+  la geometría de un pad tan chico (0.30mm) dejó la conexión sin cerrar
+  incluso después del refill final protegido por D-23.2/ADR-0012.
+- **Severidad:** P2, no P0/P1 — 14/15 nets ruteables + GND completaron
+  sin problema; sólo 1 pad de conectividad GND quedó sin cerrar. No
+  bloqueó el flujo canónico ni impidió medir las 4 métricas D-30.3.
+- **No investigado en profundidad** en sesión 31c (fuera de alcance del
+  reintento — sesión 31c no toca `src/` salvo P0/P1 trivial). Candidato
+  para investigación si reaparece en Nivel B/C con pads igual de chicos.
+- **Ver** `validation-suite/level-a/anavi-dev-mic/metrics.md` para el
+  detalle completo y el análisis de impacto sobre el criterio DRC de
+  D-30.3.
+
 ## P2 — Correcciones puntuales con evidencia repetida
 
 | Item | Evidencia | Estado |
@@ -194,9 +219,10 @@ Validation Suite (sesiones 31-33 según `hoja-de-ruta-v5.md`) y al cierre
 de P1 (ya cumplido, sesión 30). Retomar en sesión 34+ (preparación de
 release Open Source), no antes.
 
-- **ADR-0013 en adelante**: documentar el mecanismo indocumentado de edge
-  clearance de Freerouting (hoy solo entendido por ingeniería inversa de
-  bytecode, D-V3.5).
+- **ADR-0014 en adelante** (drift corregido sesión 31c — el número 0013
+  ya lo consumió sesión 31b, ver `docs/adr/0013-refs-duplicados-por-anotacion-no-borrado.md`):
+  documentar el mecanismo indocumentado de edge clearance de Freerouting
+  (hoy solo entendido por ingeniería inversa de bytecode, D-V3.5).
 - **Docs de arquitectura para colaboradores externos.**
 - **Test canario de Freerouting edge clearance.**
 - **Licencia + README + CONTRIBUTING.**
@@ -317,8 +343,11 @@ Nice-to-have, para después de convergencia de Fase 3 (Fase 4).
   intermitencia real del enfoque actual.
 - **A* para causas de nets bloqueadas** en `route_board` — posiblemente ya
   innecesario tras las mejoras de contrato JSON de sesiones 17/19/24.
-- **Bbox de validación por Edge.Cuts real** (hoy es footprints ± 100mm) —
-  deseable, no bloqueante.
+- ~~**Bbox de validación por Edge.Cuts real** (hoy es footprints ± 100mm)~~ —
+  **cerrado sesión 31b** (drift corregido sesión 31c): implementado como
+  unión de Edge.Cuts (±10mm) y enjambre de footprints (±100mm) en
+  `board_outline`/`board_bbox_mm`/`read_board_context`. Ver F-V1-01 en
+  §P1 arriba y ADR-0013 (contexto del fix compañero).
 - **Unificación de `POST_ROUTE_PERSIST_FAILED` y `POST_ZONE_PERSIST_FAILED`**:
   sesión 27 introdujo `POST_ZONE_PERSIST_FAILED` para `fill_zones` y
   `add_zone(fill=True)`. Semánticamente equivalente a

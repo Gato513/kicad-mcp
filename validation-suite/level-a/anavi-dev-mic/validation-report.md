@@ -1,17 +1,33 @@
 # Validation Report — ANAVI Dev Mic (Nivel A-01)
 
-**Sesión 31, 2026-07-28.** Primera validación de la Validation Suite
-(hoja-de-ruta-v5, Fase 4). Rol dual: valida el flujo canónico sobre un
-proyecto ajeno al despertador Y establece el template metodológico que
-las sesiones 32-33 reutilizan. **Este documento es ese template** — la
-estructura de secciones se diseñó para reutilizarse aunque el resultado
-de esta corrida particular sea un hallazgo, no un cierre exitoso.
+**Sesiones 31 (2026-07-28) → 31b (2026-07-29) → 31c (2026-07-29).**
+Primera validación de la Validation Suite (hoja-de-ruta-v5, Fase 4). Rol
+dual: validar el flujo canónico sobre un proyecto ajeno al despertador Y
+establecer el template metodológico que las sesiones 32-33 reutilizan.
+**Este documento es ese template** — la estructura de secciones se
+diseñó para reutilizarse independientemente de si una corrida cierra
+limpio o revela un hallazgo. Cubre las 3 sesiones como narrativa
+unificada: sesión 31 (Bloques 0-1, hallazgo P0/P1), sesión 31b (fix
+intermedio, sin tocar la Suite), sesión 31c (Bloques 2-4, cierre).
 
-**Veredicto: Escenario 4 de 7 ("Aprendizaje por P0/P1").** El flujo se
-detuvo en `route_board` por un hallazgo P0 (`F-V1-02`, ver abajo). Los 4
-criterios D-30.3 no se pudieron evaluar. Sesión cierra con hallazgo
-documentado, no con validación completa. Precedente: sesiones 23, 26, 30
-(D-30.2 — éxito por confianza, no por código).
+**Veredicto final (sesión 31c): Escenario 5 de 7 ("Aprendizaje
+metodológico") con elementos del Escenario 2 ("éxito con matiz de
+umbrales").** El flujo canónico generaliza operacionalmente — `route_board`
+completó, 0 fricciones P0/P1 nuevas, 15/15 nets ruteables ruteadas. Los 4
+criterios D-30.3 se **midieron** de punta a punta (1/4 cumple: cobre); la
+refutación de H1 en su forma estricta es evidencia sobre los umbrales
+mismos, no sobre el flujo. Primer punto real de evidencia sobre H2
+(sesión 31 sólo aportó calculabilidad parcial). Ver `metrics.md` §Análisis
+H2 para el detalle. Precedente D-30.2 (éxito por confianza, no por
+código): sesiones 23, 26, 30.
+
+## Historia de la validación
+
+| Sesión | Qué hizo | Resultado |
+|---|---|---|
+| **31** (2026-07-28) | Admisión (Bloque 0, 6 candidatos evaluados), ground truth medido, entorno instalado (Bloque 1), flujo canónico ejecutado hasta el paso 4/6 de Bloque 2 | Bloqueado en `route_board`: `F-V1-02` (P0, refs `REF**` duplicados) + `F-V1-01` (P1, bbox no leía Edge.Cuts, workaround aplicado). Escenario 4 ("aprendizaje por P0/P1"). |
+| **31b** (2026-07-29) | Fix intermedio: `set_footprint_ref` + pre-check `DUPLICATE_REFS` (ADR-0013) para F-V1-02; unión Edge.Cuts∪enjambre para F-V1-01. Investigación previa detectó que el diseño obvio (`delete_footprint`) chocaba con ADR-0010 — pivotó a anotación tras spike GUI confirmado | Ambos hallazgos cerrados. 0 scope creep (no tocó la Suite ni Gate G2). |
+| **31c** (2026-07-29) | Reintento de Bloque 2 completo (resolución de refs + colocación + zona GND + ruteo + refill final) + Bloque 3 (comparación D-30.3) + Bloque 4 (cierre) | `route_board` completó. 4 criterios D-30.3 medidos: 1/4 cumple (cobre). H1a/H1b confirmadas. H2: primer punto real de evidencia — umbral de vías no discriminante para bases pequeñas. Validación Nivel A **cerrada**. |
 
 ---
 
@@ -25,9 +41,13 @@ documentado, no con validación completa. Precedente: sesiones 23, 26, 30
 - **Licencia:** CC BY-SA 4.0.
 - **Placa:** microphone USB-C con XIAO RP2040, 2 capas, 13 footprints, 20
   nets, ~35×34.5mm (octágono con esquinas cortadas).
-- **Rama:** `sesion/31-validation-A-anavi-light-controller` (nombre
+- **Ramas:** `sesion/31-validation-A-anavi-light-controller` (nombre
   heredado del prompt original; el contenido corresponde al candidato
-  final tras la sustitución documentada).
+  final tras la sustitución documentada) → `sesion/31b-fix-delete-footprint-y-bbox`
+  (fix intermedio, branch desde 31) → `sesion/31c-reintento-anavi-dev-mic`
+  (branch desde 31b; ni 31 ni 31b estaban mergeadas a `master` al arrancar
+  31c — precondición verificada al inicio, resuelta encadenando la rama en
+  vez de bloquear la sesión).
 - **Excepción de admisión aprobada:** criterio 6 (DRC 0/0 del ground
   truth) NO se cumple — 18 errores / 25 warnings preexistentes al layout
   del autor (`solder_mask_bridge`×17, `starved_thermal`×1). Aprobada
@@ -130,7 +150,105 @@ corrieron).
    warnings)** — mejora fuerte sobre el baseline 507. Ver `metrics.md`
    §Output para el desglose completo.
 
+### Bloque 1b — Fix intermedio (sesión 31b, resumen)
+
+Ver `docs/historico/sesiones/31b-reporte.md` para el detalle completo.
+Resumen relevante para esta validación: `set_footprint_ref(ref, new_ref,
+kiid=None)` resuelve refs duplicados por **anotación**, no por borrado
+(pivote de diseño tras detectar que el `delete_footprint` original
+chocaba con ADR-0010); pre-check `DUPLICATE_REFS` en `route_board` corre
+antes del subprocess de exportación DSN. `board_bbox_mm`/
+`read_board_context` ahora unen Edge.Cuts (±10mm) con el enjambre de
+footprints (±100mm). Ninguno de los dos fixes tocó `validation-suite/` —
+el `working/` preparado en sesión 31 (13 footprints, ground truth medido)
+siguió válido para el reintento.
+
+### Bloque 2 (continuación, sesión 31c) — flujo canónico completo
+
+Reintento sobre el mismo `working/` (verificado en Bloque 0 de 31c: 0
+tracks/vías/zonas, 13 footprints en `(0,0)`, 4× `REF**`, hashes de ground
+truth idénticos a los registrados en sesión 31).
+
+1. **Resolución de refs duplicados** (aplicación de fix de 31b, no M2):
+   4 llamadas `set_footprint_ref("REF**", ...)`. 3 exitosas (→ `MH1`,
+   `MH2`, `MH3`); la 4ta devolvió `INVALID_PARAMS` **por diseño** — tras
+   3 renombres, la instancia restante ya no está duplicada, y la tool
+   rechaza estructuralmente renombrar refs únicos (ADR-0013). La 4ta
+   mounting hole quedó con el ref literal `REF**`, único en el board.
+   Verificado con `read_board_context`: 0 duplicados, 13c/19n estable.
+2. **Colocación asistida completa**: 13/13 footprints movidos (vs 9/13 en
+   sesión 31 — las 3 `MH*` antes clavadas en `(0,0)` por F-V1-02 ahora se
+   pudieron mover). Verificado con `get_footprint_neighbors` en los 6
+   puntos más ajustados (U1, J1, J2, y los 4 mounting holes) — 0 overlaps
+   de courtyard, márgenes de borde 0.95mm-2.2mm. DRC informativo
+   post-colocación (antes de la zona): 86 total (41 err/45 warn) —
+   mejora sobre el baseline 507 (444/63); 0 `courtyards_overlap`,
+   `clearance`, `hole_clearance`, `hole_to_hole`, `holes_co_located` o
+   `shorting_items` (todas las categorías de colisión de colocación de
+   sesión 31 desaparecieron).
+   **Nota de proceso**: las llamadas de verificación `get_footprint_neighbors`
+   se lanzaron en batch paralelo y se encolaron contra el socket IPC de
+   KiCad (cola de profundidad 1), tardando >120s cada una en vez de
+   ~1-2s. Lección para sesión 32: serializar llamadas MCP contra
+   `kicad-mcp`, no batchear en paralelo.
+3. **`add_zone(net="GND", layer="B.Cu", bbox=[109,46.5,144,81], fill=true)`**
+   → OK, `area_mm2: 1207.5` (idéntico a sesión 31).
+4. **`fill_zones()` explícito** (D-26.1) → OK, `duration_ms: 23985.87`.
+5. **`route_board()`** → **completó**. 15/15 nets ruteables ruteadas
+   (19 nets totales, 4 son pads únicos sin conexión — no ruteables por
+   definición), 0 bloqueadas, 0 parciales. `route_ms: 184817.54` (~3.1
+   min, muy por debajo del umbral de 30 min). 79 tracks, 6 vías. El
+   pre-check `DUPLICATE_REFS` no se disparó (confirma H1b).
+   **Incidente de proceso**: tras `route_board` (que escribe a disco
+   directo), el editor vivo de KiCad quedó desincronizado
+   (`EXTERNAL_EDIT_DETECTED`); `reload_board_from_disk()` devolvió
+   `KICAD_NOT_RUNNING` porque un diálogo modal de KiCad ("¿archivo
+   cambió afuera, recargar?") bloqueaba el hilo de UI. Resuelto con un
+   handoff humano adicional (cerrar el diálogo). Recomendación: anticipar
+   este diálogo como parte normal del paso post-`route_board` en sesión 32.
+6. **`fill_zones()` final** (protege D-23.2/ADR-0012) → OK,
+   `duration_ms: 26141.97`.
+7. **`run_drc()` de cierre**: **63 total (18 err / 45 warn)**. Ver
+   `metrics.md` para el desglose completo y la comparación con el ground
+   truth.
+8. **`measure_ground_truth.py`** sobre el output final → 4 métricas
+   D-30.3 medidas. Ver `metrics.md`.
+
+Resultado copiado de vuelta a `working/anavi-dev-mic.kicad_pcb` al cierre
+del bloque (a diferencia de sesión 31, que no llegó a este paso).
+
+### Bloque 3 — Comparación cuantitativa vs ground truth (sesión 31c)
+
+Ver `metrics.md` §Comparación (sesión 31c) para el detalle numérico
+completo. Resumen:
+
+| Criterio D-30.3 | Umbral | Resultado | Veredicto |
+|---|---|---|---|
+| DRC | 0 errores nuevos vs GT | 18=18 en conteo, pero 1 tipo nuevo (`unconnected_items` vs `starved_thermal` del GT) + 2 tipos de warning cosméticos nuevos | **NO CUMPLE** (estricto) |
+| Tracks | ±30% | -33.1% | **NO CUMPLE** (margen estrecho, 3.1 puntos fuera) |
+| Vías | ±20% | +200% (6 vs 2) | **NO CUMPLE** (margen amplio — base de 2 vías no discrimina) |
+| Cobre | ±25% | -10.3% | **CUMPLE** (margen cómodo, 14.7 puntos de holgura) |
+
+**1 de 4 criterios cumple.** Ver `metrics.md` §Análisis H2 para por qué
+esto NO se interpreta como "el flujo produce una placa mala" — el board
+completó ruteo con 0 nets bloqueadas, componentes/nets exactos al ground
+truth, y el único error DRC nuevo es una vía-a-pad de 0.30mm sin
+conectar (`F-V1c-01`, P2).
+
 ## Fricciones (F-V1-XX)
+
+### F-V1c-01 — Vía GND no conectada a pad de 0.30mm post-`route_board`+refill (P2, sesión 31c)
+
+DRC de cierre: 18 errores, mismo conteo que el ground truth, pero
+composición distinta — 17 `solder_mask_bridge` (compartido con el GT) +
+1 `unconnected_items` (el GT tiene `starved_thermal` en su lugar). El
+error nuevo: una vía `[GND]` en F.Cu-B.Cu (pos `129.88,76.582`) no
+conecta con el pad GND de MK1 (pos `126.5,75.567`), el pad más chico del
+board (0.30×0.30mm). No bloqueó el flujo — 14/15 nets GND-relacionadas +
+el resto completaron sin problema; es 1 pad de conectividad sin cerrar
+sobre 79 tracks + 6 vías + 1 zona. No investigado en profundidad (fuera
+de alcance de sesión 31c — no toca `src/` salvo P0/P1 trivial). Ver
+`docs/BACKLOG.md` §P2 y `metrics.md` para el detalle completo.
 
 ### F-V1-01 — `board_bbox_mm` no lee Edge.Cuts pese a documentarlo (P1)
 
@@ -177,15 +295,19 @@ propuesto: `delete_footprint(ref, kiid=None)` direccionable por `kiid`
 cuando `ref` es ambiguo. Ver `docs/BACKLOG.md` §P0 para el detalle
 completo y la propuesta de fix.
 
-## Métricas D-30.3
+## Métricas D-30.3 (histórico sesión 31)
 
 **No evaluables — sin output de ruteo.** Los 4 criterios (DRC 0/0,
-tracks ±30%, vías ±20%, cobre ±25%) requieren un output completo que
-nunca se produjo. Ver `metrics.md` §Comparación.
+tracks ±30%, vías ±20%, cobre ±25%) requerían un output completo que en
+sesión 31 nunca se produjo. Ver `metrics.md` §Comparación (sesión 31c)
+para el resultado final.
 
-## Métricas auxiliares (M1/M2/M3)
+## Métricas D-30.3 (final, sesión 31c)
 
-Ver `metrics.md` §Métricas auxiliares para el detalle completo.
+**Los 4 criterios medidos.** 1 de 4 cumple (cobre). Ver tabla en Bloque 3
+arriba y `metrics.md` §Comparación para el detalle numérico completo.
+
+## Métricas auxiliares (M1/M2/M3) — histórico sesión 31
 
 - **M1** (tiempos): colocación + refill instrumentados; ruteo N/A (nunca
   arrancó Freerouting — falló antes, en la exportación DSN).
@@ -197,42 +319,92 @@ Ver `metrics.md` §Métricas auxiliares para el detalle completo.
 - **M3.b**: 9/13 footprints (69%) modificados de posición; 3 (`REF**`)
   no pudieron moverse — atribuible a F-V1-02, no a decisión de diseño.
 
-## Análisis H2 (umbrales D-30.3)
+## Métricas auxiliares (M1/M2/M3) — final, sesión 31c
 
-Sesión 31 aporta evidencia **parcial**: el procedimiento de medición
+Ver `metrics.md` §Métricas auxiliares (sesión 31c) para el detalle
+completo.
+
+- **M1**: `t_resolucion_refs` ~segundos (4 llamadas); `t_colocacion` 13
+  `move_footprint` + 6 `get_footprint_neighbors` (lección de proceso:
+  evitar batches paralelos contra el socket IPC de cola depth-1);
+  `t_refill_1` 23.99s; `t_routing` 184.82s (`route_ms`); `t_refill_2`
+  26.14s; `t_drc` no instrumentado (sub-segundo típico).
+- **M2 = 0**: sin intervenciones discrecionales. Las 4 `set_footprint_ref`
+  son aplicación de fix conocido (ADR-0013, no cuentan). El handoff del
+  diálogo modal post-`route_board` es operación de entorno, no decisión
+  de diseño.
+- **M3.a = PASS**: `footprint_count`/`net_count` exactos al ground truth
+  (13/20) en toda medición.
+- **M3.b**: **13/13 footprints (100%) modificados** — mejora sobre el
+  69% de sesión 31, ya que las 3 `MH*` antes bloqueadas ahora se pudieron
+  colocar.
+
+## Análisis H2 (umbrales D-30.3) — histórico sesión 31
+
+Sesión 31 aportó evidencia **parcial**: el procedimiento de medición
 (`measure_ground_truth.py`) resultó calculable sin ambigüedad sobre un
 board real y no trivial (ground truth: 13 fp, 20 nets, 2 capas, sin
-`method_notes`). Eso es señal a favor de la mitad "calculabilidad" de H2.
-No hay evidencia sobre la mitad "discriminancia de umbrales" — eso
-requiere comparar contra un output que no se produjo. **No se puede
-cerrar H2 con este único punto**; sesión 31 pasa a ser el primer intento
-de Nivel A, pendiente de reintento post-fix de F-V1-02.
+`method_notes`). Eso fue señal a favor de la mitad "calculabilidad" de
+H2. Sin evidencia sobre discriminancia — eso requería el output completo,
+que sesión 31c aporta.
 
-## Veredicto y próximos pasos
+## Análisis H2 (umbrales D-30.3) — final, sesión 31c
 
-**Escenario 4 — "Aprendizaje por P0/P1"** (de los 7 posibles del prompt).
-H1a refutada honestamente: el flujo canónico, tal cual existe hoy, NO
-generaliza a boards con reference designators duplicados/sin anotar —
-gap legítimo del flujo (interpretación Fase 4: "NO regresión por
-default" ante P0 en validación externa), no un bug oculto del despertador
-que reapareció.
+**Primer punto real de evidencia** (no parcial). Ver `metrics.md`
+§Análisis H2 para el detalle completo. Resumen:
+
+- **Cobre (±25%)**: bien calibrado — resultado con margen cómodo (-10.3%,
+  14.7 puntos de holgura).
+- **Tracks (±30%)**: sin evidencia de mala calibración — falló por un
+  margen muy estrecho (-33.1%), consistente con "el umbral discrimina
+  bien" (cae cerca del borde, no lejos).
+- **Vías (±20%)**: **evidencia clara de mala calibración para bases
+  pequeñas**. La base del ground truth (2 vías) es tan chica que
+  cualquier resultado realista de autorouteo casi seguro excede ±20% —
+  un salto de 2→3 vías ya es +50%. Candidato explícito para revisión
+  post-33: umbral absoluto (±N vías) o normalizado por número de nets,
+  no porcentaje sobre una base de un dígito.
+- **DRC "0 errores nuevos"**: demasiado estricto en un sentido —
+  coincide en CONTEO (18=18) pero falla por 1 tipo de error distinto y 2
+  tipos de warning puramente cosméticos (silkscreen). Recomendación:
+  separar severidad eléctrica/funcional de cosmética en revisión post-33.
+
+**No se cierra la validez definitiva de D-30.3 acá** (D-30.4: fuera de
+alcance rediseñarla en esta sesión) — es el segundo de tres puntos de
+evidencia formal (el primero fue la calculabilidad parcial de sesión 31;
+el tercero vendrá de Nivel B/C).
+
+## Veredicto y próximos pasos (final, sesión 31c)
+
+**Escenario 5 — "Aprendizaje metodológico"**, con elementos del
+**Escenario 2 — "éxito con matiz de umbrales"** (de los 7 posibles del
+prompt original de sesión 31). **NO es el Escenario 4** de sesión 31 —
+esta vez no hubo ningún hallazgo P0/P1 nuevo; el fix de 31b demostró ser
+suficiente (H1b confirmada) y las decisiones D-19.1/D-23.2/D-26.1/D-27.1/
+D-30.5 generalizaron sin fricción (H1a confirmada). La refutación de H1
+en su forma estricta D-30.3 (1/4 criterios cumple) es evidencia sobre los
+**umbrales**, no sobre el **flujo**: el board completó, sin nets
+bloqueadas, componentes/nets exactos, único error DRC nuevo es una vía a
+un pad de 0.30mm.
 
 **Recomendación para el arquitecto:**
-1. Sesión de fix intermedia: agregar `delete_footprint(ref, kiid=None)`
-   al catálogo de tools (fix de `F-V1-02`, requiere ADR si formaliza un
-   contrato de direccionamiento por `kiid` para tools existentes). Fix
-   menor de `board_bbox_mm` (F-V1-01) puede agruparse en la misma sesión.
-2. Tras el fix, **reintentar sesión 31** sobre el mismo `working/` de
-   ANAVI Dev Mic (ya preparado, ya blindado, ya con ground truth medido —
-   el trabajo de Bloque 0/1 es reutilizable íntegro) para completar
-   Bloque 2/3/4 con el flujo desbloqueado.
-3. La estructura de directorios, el script de medición, y el patrón de 3
-   handoffs humanos (cerrar proyecto anterior → abrir nuevo proyecto →
-   abrir específicamente el PCB Editor) quedan validados como parte del
-   template para sesiones 32/33, independientemente del resultado de
-   esta corrida particular.
+1. **Primera validación Nivel A cerrada.** Sesión 32 (Nivel B) puede
+   arrancar — candidato a confirmar siguiendo el mismo patrón de admisión
+   de Bloque 0 de sesión 31.
+2. El template metodológico (estructura de directorios, scripts, 3
+   handoffs humanos, gate GUI al inicio) queda validado end-to-end sobre
+   una corrida completa, no sólo sobre el intento parcial de sesión 31.
+3. **Input formal para revisión post-sesión 33 (D-30.3)**: el umbral de
+   vías necesita revisión (candidato: absoluto o normalizado por nets);
+   el criterio DRC estricto-por-tipo probablemente necesita distinguir
+   severidad eléctrica de cosmética. No decidir esto antes del 3er punto
+   de evidencia (Nivel C).
+4. `F-V1c-01` (P2, vía GND sin conectar a pad de 0.30mm) queda en
+   `docs/BACKLOG.md`, candidato a investigación si reaparece en Nivel B/C
+   con pads igual de chicos.
 
-**Sesión 31 NO mergea con una validación cerrada** — mergea con el
-hallazgo documentado, la Validation Suite inicializada (estructura +
-tooling), y el backlog actualizado. Ver `docs/historico/sesiones/31-reporte.md`
+**Sesión 31c mergea con una validación Nivel A completamente cerrada** —
+flujo ejecutado de punta a punta, 4 criterios D-30.3 medidos, template
+metodológico completo, y el primer punto real de evidencia sobre
+discriminancia de umbrales. Ver `docs/historico/sesiones/31c-reporte.md`
 para el resumen ejecutivo.

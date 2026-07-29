@@ -103,27 +103,50 @@ colaboradores. Ver D-30.2.
 5. **Features nuevas** (post-release) — según necesidad detectada en uso
    real o por adopción de colaboradores, no por especulación.
 
-**Deuda arrastrada de Fase 3:** P1 solder mask ANT1 (sesión 30 la atiende
-como primer objetivo).
+**Deuda arrastrada de Fase 3 → CERRADA en sesión 30.** P1 solder mask
+ANT1: mecanismo aislado (déficit de apotema del keepout circular, N=16
+insuficiente a radios ~1.8mm) y fix aterrizado (N=16→64 +
+`enforce_hole_clearance` recalcula el término de máscara). Ver D-30.5 y
+`docs/investigacion/30-solder-mask-ant1.md`. Mergeado a `master`
+(`802a32a`).
 
 **Principios metodológicos vigentes en Fase 4:**
 - D-30.1: estrategia de validación explícita antes de implementar.
 - D-30.2: éxito por confianza, no por código.
 - D-30.3: comparación cuantitativa contra ground truth en Validation Suite.
 - D-30.4: criterio de diversidad para admisión a Validation Suite.
+- D-30.5: mecanismo de apotema en keepouts circulares (sesión 30, cierre P1).
+- D-31.1: convenciones estructurales de la Validation Suite (sesión 31).
 - D-27.1: restore no destructivo del entorno GUI vivo (heredada).
 - D-28.1: cambios de orden de fases requieren AskUserQuestion (heredada).
 - D-28.2: barrido completo al generar diffs de decisiones (heredada).
 
-**Interpretación de resultados en Fase 4** (nota de transición):
-La interpretación "un P0 nuevo se sospecha regresión hasta prueba en
+**Interpretación de resultados en Fase 4** (ratificada por sesión 31):
+la interpretación "un P0 nuevo se sospecha regresión hasta prueba en
 contrario" fue apropiada durante Fase 3 (consolidación sobre variable
 controlada). En Fase 4, con placas ajenas al despertador, un P0 nuevo
-puede ser gap legítimo del flujo sobre decisiones de diseño no ejercitadas
-antes — no regresión. La sesión 30 (primera de Fase 4) va a establecer
-la interpretación operacional específica según lo que emerja.
+puede ser gap legítimo del flujo sobre decisiones de diseño no
+ejercitadas antes — no regresión por default. Sesión 31 confirmó esta
+interpretación en la práctica: `F-V1-02` (refs de footprint duplicados
+bloquean `route_board`) es un gap real del flujo, expuesto por una
+condición de diseño (refs sin anotar) que el despertador —única placa de
+Fase 1-3— nunca ejercitó, no una regresión del código.
 
-## Estado actual: Fase 3 — consolidación
+**Estado de la secuencia de Fase 4** (post-sesión 31, 2026-07-28):
+1. Investigación P1 solder mask ANT1 — ✅ cerrada (sesión 30).
+2. Validation Suite Nivel A — **en curso, no cerrada.** Sesión 31 admitió
+   `anavi-dev-mic` (con excepción documentada de criterio 6) y ejecutó
+   el flujo canónico hasta `route_board`, donde se detuvo por hallazgo
+   P0 (`F-V1-02`, refs de footprint duplicados/sin anotar rompen la
+   exportación DSN a Freerouting). Ver
+   `validation-suite/level-a/anavi-dev-mic/validation-report.md` y
+   `docs/historico/sesiones/31-reporte.md`. **Próximo paso: sesión de fix
+   intermedia** (agregar `delete_footprint` direccionable por `kiid` —
+   `docs/BACKLOG.md` §P0 — más el fix menor de `board_bbox_mm`, §P1),
+   luego reintentar sesión 31 sobre el mismo `working/` ya preparado.
+3-5. Sin cambios — condicionados al cierre de la Validation Suite Nivel A.
+
+## Estado actual: Fase 3 — consolidación (histórico, cerrada sesión 29)
 
 El proyecto pasó de **Fase 2** (descubrimiento acelerado: ciclo intensivo
 fix → dogfooding → nuevo bug, sesiones 20-24) a **Fase 3** (consolidación y
@@ -136,10 +159,9 @@ convergencia cumplido** — 3 verdes consecutivos (D5=9.5, D6=9.7,
 D7=9.8), D-26.1 ratificado sin confusor, D-23.2 acumulado 25/25 en
 producción real (route_board 12/12 + fill_zones 7/7 + add_zone 6/6, 0
 divergencias), F-D6-01 cerrado como variabilidad inherente
-Freerouting/JVM. Deuda arrastrada a Fase 4: P1 solder mask ANT1
-(investigación pendiente, no bloqueante). Próxima sesión: 30 =
-planificación estratégica de Fase 4 (decisión del arquitecto y del
-humano sobre release / expansión funcional / escalada de complejidad).
+Freerouting/JVM. Deuda arrastrada a Fase 4 (P1 solder mask ANT1) cerrada
+en sesión 30 — ver §"Estado actual: Fase 4" arriba para el estado
+vigente del proyecto.
 
 **Qué cerró Fase 2:** F-D4-02 — el último P0 conocido (bug de orden de
 medición + falta de persistencia en `route_board`, causaba que el DRC
@@ -199,8 +221,9 @@ release / features nuevos / escenarios más complejos):
   completada y ratificada.
 - Sin P0 nuevos en la superficie ratificada.
 
-Secuencia y estado detallado de cada paso: `hoja-de-ruta-v4.md` (raíz del
-repo); historial de dogfooding: `docs/ROADMAP.md`.
+Secuencia y estado detallado de Fase 3: `docs/historico/roadmaps/hoja-de-ruta-v4.md`
+(archivada); historial de dogfooding: `docs/ROADMAP.md`. Hoja de ruta
+vigente (Fase 4): `hoja-de-ruta-v5.md` (raíz del repo).
 
 ## Decisiones vigentes
 

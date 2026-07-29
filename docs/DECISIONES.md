@@ -380,6 +380,59 @@ para nivel C, etc.) sin requisito de diversidad — es la ancla del nivel.
 la primera validación de nivel A). Se actualiza tras cada validación
 cerrada.
 
+### D-31.1 — Convenciones estructurales de la Validation Suite
+
+**Contexto:** sesión 31 fue la primera validación de Nivel A y tenía rol
+dual explícito: validar Y establecer el template que sesiones 32-33
+reutilizan. Las decisiones de proceso tomadas ahí se convierten
+automáticamente en estándar — se formalizan acá para que no dependan de
+releerse el reporte completo de sesión 31.
+
+**Decisión (procedimientos que sesiones 32-33 heredan sin re-derivar):**
+
+1. **Estructura de directorios por proyecto**:
+   `validation-suite/level-{a,b,c}/<proyecto>/{ground-truth-original,
+   ground-truth-kicad10,working,metrics.md,validation-report.md,README.md}`.
+   `ground-truth-original/` nunca se sobrescribe (ni siquiera si la
+   migración de formato resulta ser un no-op); `ground-truth-kicad10/` es
+   la referencia de comparación D-30.3; `working/` es la copia mutable
+   del flujo canónico.
+2. **Estado inicial de `working/`**: todos los footprints movidos a
+   `(0,0)` (no una grilla prolija) — decisión explícita del arquitecto en
+   sesión 31, literal del prompt original. Ejercita `get_footprint_neighbors`
+   y la colocación asistida contra el caso adversarial máximo (courtyards
+   100% solapados). Generado con `validation-suite/tools/prepare_working.py`.
+3. **Scripts de la Suite corren con el Python del SISTEMA**
+   (`/usr/bin/python3`, el que trae `pcbnew`), nunca con el venv de `uv`
+   — documentado en el docstring de cada script, con detección de
+   `ImportError` y mensaje explícito (no traceback crudo).
+4. **`copper_area_mm2` se mide por unión geométrica por capa**, no suma
+   aditiva — evita doble conteo de pads bajo un plano. Ver
+   `validation-suite/tools/measure_ground_truth.py` para el procedimiento
+   completo y los chequeos de cordura (`union ≤ aditivo`).
+5. **`board_area_mm2` se calcula del bbox de Edge.Cuts explícito**, nunca
+   de `pcbnew.BOARD.GetBoardEdgesBoundingBox()` — esa API de pcbnew NO se
+   limita a Edge.Cuts pese al nombre (incluye otros ítems del board),
+   hallazgo de sesión 31 verificado empíricamente.
+6. **Gate GUI del DoD se corre PRIMERO, antes del Bloque 0**, no al final
+   como sugería el prompt original — minimiza los cambios de proyecto
+   abierto en KiCad. Válido cuando la sesión no toca `src/`; si termina
+   tocando `src/`, se re-corre al cierre.
+7. **Reubicación del entorno vivo**: cuando `KICAD_MCP_PROJECT` apunta a
+   una ruta fija (`/tmp/gui-test-project`, vía `~/.claude.json`), el
+   proyecto anterior se respalda no-destructivamente (patrón D-27.1,
+   `<ruta>.{nombre-anterior}-bak/`) y se reemplaza en el mismo path — no
+   se edita la config del server ni se reinicia la sesión.
+8. **3 handoffs humanos mínimos** por candidato nuevo: (a) cerrar el
+   proyecto anterior en KiCad, (b) abrir el proyecto nuevo, (c) abrir
+   específicamente el **PCB Editor** (no sólo el Project Manager —
+   `health()` distingue `pcb_editor_abierto` y sesión 31 encontró que el
+   paso (b) por sí solo no garantiza (c)).
+
+**Precedente:** sesión 31, primera Validation Suite Nivel A (ANAVI Dev
+Mic). Ver `validation-suite/level-a/anavi-dev-mic/validation-report.md`
+para el detalle completo de cada hallazgo que originó estas convenciones.
+
 ## 3. Decisiones superadas (referencia histórica, no vigentes)
 
 - **D-V3.1** (revert humano post-route): superada por recarga programática (`Board.revert()`, sesión 18) — ya no hay contacto humano por route.

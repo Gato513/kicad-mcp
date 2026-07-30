@@ -253,7 +253,7 @@ código **nunca leía Edge.Cuts**, iba directo al fallback (margen de
 - **Sin ADR** — implementa comportamiento ya documentado, sin cambiar
   contrato externo (DoD #4, "aclaración de comportamiento").
 
-## P1 (investigación Fase 4) — Conectividad GND no cierra tras refill (F-D5-01 / F-V1c-01 / F-V2-VIA-HUERFANA) — PROMOVIDO sesión 32
+## P1 (investigación Fase 4) — Conectividad GND no cierra tras refill (F-D5-01 / F-V1c-01 / F-V2-VIA-HUERFANA) — MECANISMO AISLADO sesión 32c, fix diferido a 32d
 
 **3ª instancia confirmada del patrón → cumple el trigger de promoción
 explícito** ("2 dogfoodings/validaciones independientes reproducen el
@@ -277,19 +277,43 @@ pad-a-zona/track), distinto del mecanismo de 31c (vía aislada), pero el
 síndrome de fondo (conectividad GND que sobrevive al refill sin cerrar)
 es el mismo.
 
-- **Severidad:** el trigger de promoción eleva esto a **P1 investigación
-  Fase 4** — agenda de sesión de investigación (patrón sesión 23/26,
-  P4.0-style) antes o junto con sesión 33. No bloquea sesión 32 ni 33 en
-  sí (14/15 → 42/42 nets ruteables completaron en ambos casos).
-- **Hipótesis de trabajo para la investigación:** el común denominador
-  en las 3 instancias es GND específicamente (nunca otro net) y pads/vías
-  en los bordes de la topología de ruteo (esquinas, conectores THT
-  grandes en 32 vs. pad chico en 31c) — sugiere que el mecanismo podría
-  ser sobre clearance/thermal-relief del refill de zona en geometrías
-  específicas, no aleatorio.
-- **Ver** `validation-suite/level-a/anavi-dev-mic/metrics.md` (instancia 2)
-  y `validation-suite/level-b/anavi-macro-pad-12/metrics.md` (instancia 3)
-  para el detalle completo de cada aparición.
+- **Severidad:** el trigger de promoción elevó esto a **P1 investigación
+  Fase 4** (patrón sesión 23/26, P4.0-style). No bloquea sesión 32 ni 33
+  en sí (14/15 → 42/42 nets ruteables completaron en ambos casos).
+- **MECANISMO AISLADO Y CONFIRMADO CAUSALMENTE (sesión 32c).** Freerouting
+  rutea tracks de otros nets sin reservar corredor para que el flood-fill
+  del plano GND alcance pads específicos (refinamiento medido de D-19.1).
+  Cuando ese track ajeno corre en paralelo al borde de la zona en el
+  mismo rango Y que un pad GND situado en un corredor angosto, su
+  clearance obligatorio consume el corredor por completo — el pad se
+  queda sin conexión al plano. Confirmado con 2 experimentos de borrado
+  dirigido + re-fillado real (`kicad-cli pcb drc --refill-zones
+  --save-board`) sobre copias desechables en anavi-macro-pad-12: borrar
+  solo el track troncal `+5V` (rango Y que cubre `J4.3`/`J5.3` pero no al
+  `J1.3` sano) resuelve `J5.3` (backbone real, solo faltaba el contacto
+  local); `J4.3` necesita además borrar el track serpenteante de su
+  propio pin 2 (no tiene ningún track/vía GND propio, patrón original de
+  sesión 25). Generalización confirmada por correlación fuerte en
+  anavi-dev-mic (`MK1.3` rodeado por sus propios 4 pines hermanos a
+  0.85–2.94mm). 3 hipótesis alternativas refutadas con experimentos
+  causales: `island_removal_mode`, keepouts de `enforce_hole_clearance`
+  (9.3mm de distancia, sin relación), fill totalmente despojado.
+- **Fix diferido a sesión 32d** — vive en el pipeline de refill/zonas de
+  `route_board`, fuera del "SI Y SÓLO SI" de alcance quirúrgico de 32c.
+  Hipótesis completa: tras el bloque D-23.2 + DRC post-route, detectar
+  `unconnected_items` sobre nets con zona de cobre propia; stitching
+  automático con `add_via` (ya existe la tool) solo si el pad cae dentro
+  del outline de una zona de su mismo net; si no es seguro automatizar,
+  exponer el conteo en clave explícita del payload en vez de diluirlo en
+  `por_tipo`.
+- **Hallazgo lateral, sin acción:** `L9.1` en anavi-macro-pad-12 comparte
+  la misma dependencia estructural 100%-de-la-zona que `J4.3` (grafo de
+  conectividad sin nodos ZONE), sin generar `unconnected_items` hoy —
+  candidato de vigilancia.
+- **Ver** `docs/investigacion/32c-f-d5-01.md` (reporte completo de
+  investigación), `docs/historico/sesiones/32c-reporte.md` (ejecutivo),
+  `validation-suite/level-a/anavi-dev-mic/metrics.md` (instancia 2) y
+  `validation-suite/level-b/anavi-macro-pad-12/metrics.md` (instancia 3).
 
 ## P2 — Correcciones puntuales con evidencia repetida
 

@@ -127,6 +127,12 @@ insuficiente a radios ~1.8mm) y fix aterrizado (N=16→64 +
   F-V2-REFILL-SILENCIOSO).
 - D-32b.2: alcance del fix F-V2 acotado a `route_board` — H2 (¿afecta
   también a `fill_zones`/`add_zone`?) refutada por inspección (sesión 32b).
+- D-32c.1: el objetivo de una investigación es reducir incertidumbre, no
+  producir un fix (formaliza directriz de Fase 4, sesión 32c).
+- D-32c.2: mecanismo raíz de F-D5-01 aislado y confirmado causalmente
+  (clearance de copper de otro net estrangulando el corredor de un pad
+  GND al plano, refinamiento de D-19.1); fix diferido a sesión 32d
+  (sesión 32c).
 - ADR-0013: refs duplicados/sin anotar se resuelven por anotación, no
   borrado — `set_footprint_ref` + pre-check `DUPLICATE_REFS` en
   `route_board` (sesión 31b, cierre F-V1-02). ADR-0010 intacta.
@@ -201,11 +207,30 @@ Fase 1-3— nunca ejercitó, no una regresión del código.
    (D-32b.1). H2 del prompt (¿afecta también a `fill_zones`/`add_zone`?)
    quedó refutada por inspección — ninguna de las dos llama
    `reload_board_from_disk` (D-32b.2, ver ADR-0012
-   §"Extensión F-V2 (sesión 32b)"). Próxima sesión: **32c**
-   (investigación P1 Fase 4 sobre el patrón F-D5-01/F-V1c-01/
-   F-V2-VIA-HUERFANA, 3ª instancia). **33 (Nivel C)** arranca sólo
-   después de que 32c cierre, candidato a confirmar siguiendo el patrón
-   de admisión de Bloque 0 de sesiones 31/32.
+   §"Extensión F-V2 (sesión 32b)").
+   **Investigación P1 F-D5-01 cerrada (sesión 32c):** mecanismo raíz
+   aislado y confirmado causalmente sobre el motor real de KiCad (patrón
+   sesión 30) — Freerouting rutea tracks de otro net sin reservar
+   corredor para que el flood-fill del plano GND alcance pads
+   específicos (refinamiento medido de D-19.1); cuando ese track ajeno
+   corre en el mismo rango Y que un pad GND en un corredor angosto, su
+   clearance obligatorio corta el corredor por completo. Confirmado con
+   2 experimentos de borrado dirigido + re-fillado real
+   (`kicad-cli pcb drc --refill-zones --save-board`) sobre copias
+   desechables en anavi-macro-pad-12, generalizado por correlación
+   fuerte en anavi-dev-mic. 3 hipótesis alternativas refutadas con
+   experimentos causales (`island_removal_mode`, keepouts de
+   `enforce_hole_clearance`, fill totalmente despojado). Corrección de
+   encuadre a mitad de sesión: el Bloque 0 inicial parecía fallar en las
+   3 manifestaciones por un bug de medición propio de los scripts de la
+   sesión (campo JSON equivocado, no presente en `src/`); corregido, 2
+   de 3 reproducen exactamente. Fix diferido a **sesión 32d** (vive en
+   el pipeline de refill/zonas de `route_board`, fuera del alcance
+   quirúrgico de 32c) con hipótesis completamente especificada
+   (D-32c.1, D-32c.2, `docs/investigacion/32c-f-d5-01.md`,
+   `docs/historico/sesiones/32c-reporte.md`). **33 (Nivel C)** arranca
+   sólo después de que 32d cierre, candidato a confirmar siguiendo el
+   patrón de admisión de Bloque 0 de sesiones 31/32.
 
 ## Estado actual: Fase 3 — consolidación (histórico, cerrada sesión 29)
 

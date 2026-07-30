@@ -558,6 +558,58 @@ sesión; anotada en `docs/BACKLOG.md` para evaluación futura.
 **Fuente:** sesión 32b, cross-check D-31c.1 aplicado antes de escribir el
 plan de ejecución.
 
+### D-32c.1 — El objetivo de una investigación es reducir incertidumbre, no producir un fix
+
+**Contexto:** directriz metodológica adoptada por el arquitecto antes de
+sesión 32c (investigación del patrón F-D5-01), formalizada al cierre.
+Precedentes: sesión 23 (loop de vías, cerró sin fix), sesión 26 (solder
+mask ANT1, primera investigación, cerró sin fix), sesión 30 (mismo tema,
+mecanismo aislado + fix).
+
+**Decisión:** el objetivo principal de una sesión de investigación NO es
+encontrar un fix. Es reducir la incertidumbre del proyecto. Una sesión
+que descarta hipótesis con evidencia sólida —aunque no produzca cambios
+de código— es una sesión completamente exitosa; la confianza en el
+proyecto sube tanto por saber "qué NO es" como por saber "qué ES".
+Refutar una hipótesis con experimentos causales (no solo por inspección)
+vale tanto como confirmar otra. Corolario práctico: ante tensión entre
+"forzar convergencia" y "documentar honestamente lo que se sabe y lo que
+no", elegir documentar.
+
+**Fuente:** sesión 32c.
+
+### D-32c.2 — Mecanismo raíz de F-D5-01 aislado; fix diferido a sesión 32d
+
+**Contexto:** F-D5-01/F-V1c-01/F-V2-VIA-HUERFANA (P1 investigación Fase
+4, 3ª instancia confirmada en sesión 32) — conectividad GND que
+sobrevive al refill de `route_board` sin cerrar en pads específicos.
+
+**Decisión:** mecanismo raíz aislado y confirmado causalmente (patrón
+sesión 30, motor real de KiCad, no correlación): un track de otro net
+ruteado por Freerouting sin reservar corredor para el flood-fill del
+plano GND (refinamiento medido de D-19.1) puede, vía su clearance
+obligatorio, cortar por completo el corredor angosto entre un pad GND y
+el resto del pour. Confirmado con experimentos de borrado dirigido +
+re-fillado real sobre copias desechables en anavi-macro-pad-12 (borrar
+el track `+5V` responsable resuelve `J5.3`; `J4.3` necesita además
+borrar el track de su propio pin 2, coherente con no tener ningún
+track/vía GND propio). Generalización por correlación fuerte en
+anavi-dev-mic (`MK1.3`). Tres hipótesis alternativas refutadas con
+experimentos causales: `island_removal_mode`, keepouts de
+`enforce_hole_clearance`, fill totalmente despojado.
+
+**Fix diferido a sesión 32d** — vive en el pipeline de refill/zonas de
+`route_board`, fuera del "SI Y SÓLO SI" de alcance quirúrgico acordado
+para 32c (mecanismo aislado + <50 líneas + no toca pipeline crítico de
+zonas). Hipótesis de fix completamente especificada en
+`docs/investigacion/32c-f-d5-01.md`. **Sin ADR nuevo**: el mecanismo
+describe un comportamiento existente de Freerouting/KiCad, no un cambio
+de contrato arquitectónico del proyecto — se re-evaluará si el fix de
+32d introduce uno.
+
+**Fuente:** sesión 32c. Ver `docs/investigacion/32c-f-d5-01.md` y
+`docs/historico/sesiones/32c-reporte.md` para el detalle completo.
+
 ## 3. Decisiones superadas (referencia histórica, no vigentes)
 
 - **D-V3.1** (revert humano post-route): superada por recarga programática (`Board.revert()`, sesión 18) — ya no hay contacto humano por route.

@@ -121,6 +121,12 @@ insuficiente a radios ~1.8mm) y fix aterrizado (N=16→64 +
   de un prompt de sesión (sesión 31c).
 - D-32.1: criterio DRC separado por severidad (eléctrico/estructural/
   cosmético) para el criterio DRC de D-30.3 (sesión 32).
+- D-32b.1: `POST_ROUTE_REFILL_SKIPPED` — error explícito sin retry (D-07.1
+  intacta) cuando el refill de seguridad de `route_board` se salta por
+  fallo real de `reload_board_from_disk` (sesión 32b, cierre
+  F-V2-REFILL-SILENCIOSO).
+- D-32b.2: alcance del fix F-V2 acotado a `route_board` — H2 (¿afecta
+  también a `fill_zones`/`add_zone`?) refutada por inspección (sesión 32b).
 - ADR-0013: refs duplicados/sin anotar se resuelven por anotación, no
   borrado — `set_footprint_ref` + pre-check `DUPLICATE_REFS` en
   `route_board` (sesión 31b, cierre F-V1-02). ADR-0010 intacta.
@@ -186,10 +192,20 @@ Fase 1-3— nunca ejercitó, no una regresión del código.
    fricciones P2/P3") con elementos de 2. Ver
    `validation-suite/level-b/anavi-macro-pad-12/validation-report.md`,
    `metrics.md` y `docs/historico/sesiones/32-reporte.md`.
-4-5. Sin cambios — condicionados al cierre de las 3 validaciones. Próxima
-   sesión: **33 (Nivel C)**, candidato a confirmar siguiendo el patrón
-   de admisión de Bloque 0 de sesiones 31/32. Evaluar si
-   `F-V2-REFILL-SILENCIOSO` amerita una sesión de fix intermedia antes.
+4-5. Sin cambios — condicionados al cierre de las 3 validaciones.
+   **F-V2-REFILL-SILENCIOSO cerrado (sesión 32b):** la excepción de
+   `reload_board_from_disk` ya no se descarta en silencio — cuando el
+   refill de seguridad de `route_board(refill=true)` no puede correr por
+   esa causa concreta (con ≥1 zona existente), la tool levanta
+   `POST_ROUTE_REFILL_SKIPPED` en vez de completar como éxito silencioso
+   (D-32b.1). H2 del prompt (¿afecta también a `fill_zones`/`add_zone`?)
+   quedó refutada por inspección — ninguna de las dos llama
+   `reload_board_from_disk` (D-32b.2, ver ADR-0012
+   §"Extensión F-V2 (sesión 32b)"). Próxima sesión: **32c**
+   (investigación P1 Fase 4 sobre el patrón F-D5-01/F-V1c-01/
+   F-V2-VIA-HUERFANA, 3ª instancia). **33 (Nivel C)** arranca sólo
+   después de que 32c cierre, candidato a confirmar siguiendo el patrón
+   de admisión de Bloque 0 de sesiones 31/32.
 
 ## Estado actual: Fase 3 — consolidación (histórico, cerrada sesión 29)
 
@@ -283,8 +299,12 @@ más condicionan trabajo futuro:
   0 divergencias, Fase 3 cerrada con 3 verdes consecutivos (D5/D6/D7) —
   drift corregido en sesión 31c (esta entrada seguía citando el conteo
   intermedio 15/15 pre-D7, ya desactualizado desde el cierre de Fase 3 en
-  sesión 29). Ver `docs/DECISIONES.md` §2 y ADR-0012 §"Extensión de
-  alcance (sesión 27)" para detalles.
+  sesión 29). **Caveat sesión 32b:** ese 25/25 cuenta corridas donde el
+  refill efectivamente corrió; no cubre el modo de falla
+  F-V2-REFILL-SILENCIOSO (refill saltado en silencio por fallo de
+  `reload_board_from_disk`), cerrado en sesión 32b con `POST_ROUTE_REFILL_SKIPPED`
+  (D-32b.1). Ver `docs/DECISIONES.md` §2 y ADR-0012 §"Extensión de
+  alcance (sesión 27)" + §"Extensión F-V2 (sesión 32b)" para detalles.
 - **KIID sobre coordenadas/radio** para desambiguar cobre (`delete_track`,
   `delete_via`) — D-V3.3.
 - **Reglas del board viajan al DSN de Freerouting** (edge clearance vía
@@ -354,6 +374,7 @@ condicionan decisiones de arquitectura o pueden bloquear un dogfooding futuro:
 | R14 | `fill_zones`/`add_zone(fill=True)` no garantizaban el contrato disco==memoria | **CERRADO** — D-23.2 ratificado 25/25 en producción real tras Fase 3 (D5+D6+D7), ninguna corrida con divergencia |
 | R16 | Loop de vías de `enforce_hole_clearance` posiblemente código muerto | Deuda técnica (D-23.3), no tocar en Fase 3 salvo evidencia nueva |
 | R9 | `Freerouting gui.enabled=true` cuelga la JVM | Mitigado en código, issue upstream pendiente |
+| R17 | `route_board(refill=true)` podía saltar su refill de seguridad en silencio si `reload_board_from_disk` fallaba (F-V2-REFILL-SILENCIOSO) | **CERRADO** — sesión 32b, `POST_ROUTE_REFILL_SKIPPED` (D-32b.1); `fill_zones`/`add_zone` no afectadas (D-32b.2) |
 
 ## Precondiciones y conocimiento para decisiones futuras
 

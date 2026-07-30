@@ -2612,6 +2612,10 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             root = pcb_path.parent
             backup_info = ensure_session_backup(root)  # Gate G1 pre-route
             store = get_default_store()
+            # Sesión 32b: único punto de verdad de los params de audit/error —
+            # antes duplicado literal en el raise de POST_ROUTE_PERSIST_FAILED
+            # y en el audit_record final.
+            route_params = {"max_passes": max_passes, "timeout_s": timeout_s, "refill": refill}
 
             # save_board implícito seguro (D-14.3): sólo baja live→disco si el
             # board abierto es el target y NO hay un ruteo de disco pendiente de
@@ -2699,13 +2703,22 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             # más abajo (D-23.2): recién ahí existe un ``snap_id`` y el disco
             # ya está en su estado FINAL (post refill+save si corrió).
             reloaded: bool | str
+            # F-V2-REFILL-SILENCIOSO (sesión 32b): la excepción de la recarga
+            # ya NO se descarta acá — alimenta el diagnóstico de
+            # ``POST_ROUTE_REFILL_SKIPPED`` más abajo (D-32b.1). Sigue siendo
+            # best-effort en el sentido de que route_board no aborta en este
+            # punto: el ruteo YA está en disco y es válido; lo que puede
+            # faltar es el refill de seguridad, y eso se resuelve (o se
+            # reporta) después de calcular ``zones_existentes``/el guard.
+            reload_error: KicadMcpError | None = None
             if is_target_open:
                 assert open_board is not None  # is_target_open lo implica
                 try:
                     bridge.reload_board_from_disk(open_board)
                     reloaded = True
-                except KicadMcpError:
+                except KicadMcpError as exc:
                     reloaded = False
+                    reload_error = exc
             else:
                 reloaded = "skipped_editor_closed" if open_board is None else False
 
@@ -2727,6 +2740,15 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             # clearance contra la zona ya ruteada; no es cosmético.
             zones_refilladas = 0
             fill_ms = 0.0
+            # F-V2-REFILL-SILENCIOSO (sesión 32b): por qué el refill
+            # prometido (``refill=true``) NO corrió, cuando corresponde
+            # reportarlo. ``None`` = el refill corrió, ``refill=False``, o no
+            # había zonas (ya lo dice ``zones.existentes: 0`` sin necesidad de
+            # motivo). Los tres restantes son honestos: ``editor_closed`` y
+            # ``cross_project`` son caminos de diseño legítimos (tool-catalog
+            # ya los documenta vía ``reloaded``); sólo ``reload_failed`` es el
+            # bug — ver el raise al final de la función.
+            refill_skipped_reason: str | None = None
             if refill and zones_existentes > 0 and reloaded is True:
                 assert open_board is not None  # reloaded=True lo implica
                 fill_start = time.perf_counter()
@@ -2746,7 +2768,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                     _audit_error(
                         root,
                         "route_board",
-                        {"max_passes": max_passes, "timeout_s": timeout_s, "refill": refill},
+                        route_params,
                         ErrorCode.POST_ROUTE_PERSIST_FAILED,
                     )
                     raise KicadMcpError(
@@ -2762,6 +2784,17 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                         data={"pcb": pcb_path.name, "live_has_fix": True},
                     ) from exc
                 fill_ms = (time.perf_counter() - fill_start) * 1000
+            elif refill and zones_existentes > 0:
+                # El guard de arriba no corrió — el refill prometido se
+                # saltó. Discriminar el motivo (D-32b.1): ``reload_error`` no
+                # ``None`` es la única condición que rompe el contrato
+                # D-23.2/ADR-0012 en silencio (F-V2-REFILL-SILENCIOSO).
+                if reload_error is not None:
+                    refill_skipped_reason = "reload_failed"
+                elif open_board is None:
+                    refill_skipped_reason = "editor_closed"
+                else:
+                    refill_skipped_reason = "cross_project"
 
             # DRC post-route (bridge.rules, como G3) para el conteo de
             # errores. D-23.2: se mide ACÁ, después del refill+enforce+save de
@@ -2843,29 +2876,81 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                     "existentes": zones_existentes,
                     "refilladas": zones_refilladas,
                     "fill_ms": round(fill_ms, 3),
+                    **(
+                        {"refill_skipped_reason": refill_skipped_reason}
+                        if refill_skipped_reason is not None
+                        else {}
+                    ),
                 },
             }
 
+            audit_result: dict[str, Any] = {
+                "snap": snap_id,
+                "backup": backup_info.get("backup"),
+                "tracks_added": tracks_added,
+                "vias_added": vias_added,
+                "nets_total": nets_total,
+                "nets_ruteables": nets_ruteables,
+                "nets_ruteadas": len(routed_nets),
+                "nets_bloqueadas": len(blocked_nets),
+                "drc_err_post": post_err,
+                "live_saved": live_saved,
+                "reloaded": reloaded,
+                "zones_existentes": zones_existentes,
+                "zones_refilladas": zones_refilladas,
+            }
+            if refill_skipped_reason is not None:
+                audit_result["refill_skipped_reason"] = refill_skipped_reason
+
+            # F-V2-REFILL-SILENCIOSO (sesión 32b, D-32b.1): sólo
+            # ``reload_failed`` rompe el contrato D-23.2/ADR-0012 — el
+            # refill de seguridad prometido por ``refill=true`` no corrió y
+            # NO hay señal de error. El raise va ACÁ (no en el guard de
+            # arriba) a propósito: recién acá ya corrieron el DRC post-route,
+            # el registro del snapshot y ``store.mark_live_stale`` — abortar
+            # antes dejaría el flag ``live_stale`` en ``False`` con el disco
+            # adelante del vivo, y un ``fill_zones()`` posterior pasaría
+            # ``_guard_live_stale()`` y pisaría el ruteo con su propio
+            # ``save_board``. El audit_record se escribe SIEMPRE (con o sin
+            # error) para no perder el result forense que permitió detectar
+            # este bug en sesión 32.
+            refill_broke_contract = refill_skipped_reason == "reload_failed"
             audit_record(
                 root,
                 tool="route_board",
-                params={"max_passes": max_passes, "timeout_s": timeout_s, "refill": refill},
-                result={
-                    "snap": snap_id,
-                    "backup": backup_info.get("backup"),
-                    "tracks_added": tracks_added,
-                    "vias_added": vias_added,
-                    "nets_total": nets_total,
-                    "nets_ruteables": nets_ruteables,
-                    "nets_ruteadas": len(routed_nets),
-                    "nets_bloqueadas": len(blocked_nets),
-                    "drc_err_post": post_err,
-                    "live_saved": live_saved,
-                    "reloaded": reloaded,
-                    "zones_existentes": zones_existentes,
-                    "zones_refilladas": zones_refilladas,
-                },
+                params=route_params,
+                result=audit_result,
+                error_code=(
+                    ErrorCode.POST_ROUTE_REFILL_SKIPPED.value if refill_broke_contract else None
+                ),
             )
+
+            if refill_broke_contract:
+                assert reload_error is not None  # "reload_failed" lo implica
+                raise KicadMcpError(
+                    code=ErrorCode.POST_ROUTE_REFILL_SKIPPED,
+                    message=(
+                        f"route_board ruteó {pcb_path.name} y lo escribió a disco, pero el "
+                        f"refill de seguridad de {zones_existentes} zona(s) NO corrió: la "
+                        "recarga del editor vivo falló y refillear el vivo desactualizado "
+                        "pisaría el ruteo."
+                    ),
+                    hint=(
+                        "El ruteo en disco es válido pero le falta el clearance contra la "
+                        "zona (D-19.1). Corré reload_board_from_disk() y después "
+                        "fill_zones() para completar el refill de seguridad."
+                    ),
+                    data={
+                        "pcb": pcb_path.name,
+                        "snap": snap_id,
+                        "zones_existentes": zones_existentes,
+                        "zones_refilladas": zones_refilladas,
+                        "tracks_added": tracks_added,
+                        "vias_added": vias_added,
+                        "drc_err_post": post_err,
+                        "reload_error_code": reload_error.code.value,
+                    },
+                ) from reload_error
         log_tool_call(
             tool_name="route_board",
             latency_ms=timer["latency_ms"],

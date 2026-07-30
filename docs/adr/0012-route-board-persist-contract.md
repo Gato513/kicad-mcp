@@ -166,3 +166,78 @@ respecto a antes de sesión 27.
 - **Generalizar a `fill_zones`/`add_zone(fill=True)` en la misma sesión:**
   descartado explícitamente para mantener el cambio mínimo y el test de
   regresión enfocado en la causa raíz confirmada.
+
+## Extensión F-V2 (sesión 32b)
+
+Sesión 32 (Validation Suite Nivel B-01) descubrió, y sesión 32b cerró, un
+modo de falla del contrato D-23.2 no cubierto por la extensión de sesión 27:
+el bloque de refill+enforce+save de `route_board` está condicionado a
+`reloaded is True` (`reload_board_from_disk()` tuvo éxito). Esa recarga es
+una **mutación sin reintento** (D-07.1): un `AS_BUSY` transitorio de KiCad
+basta para que falle una sola vez, y hasta sesión 32b la excepción se
+descartaba en silencio (`except KicadMcpError: reloaded = False`) — sin
+`POST_ROUTE_PERSIST_FAILED`, sin ningún error visible, `route_board` devolvía
+éxito normal con el refill de seguridad contra D-19.1 sin correr. Reproducido
+de forma independiente en el audit log de sesiones 31c y 32
+(`docs/BACKLOG.md` entrada `F-V2-REFILL-SILENCIOSO`).
+
+**Por qué el guard `reloaded is True` NO se relaja.** La opción obvia —
+desacoplar el refill de la recarga, refillear igual aunque la recarga haya
+fallado — es incorrecta: si la recarga falló, el board vivo sigue
+reflejando el estado **pre-ruteo** (el `save_board` implícito de D-14.3 bajó
+live→disco *antes* de que Freerouting escribiera el ruteo). Refillear y
+guardar ese vivo desactualizado pisaría el ruteo recién persistido en disco.
+El guard existente es correcto y se mantiene sin cambios.
+
+**Código de error `POST_ROUTE_REFILL_SKIPPED`** (adición pura al `StrEnum`,
+F1/F3 intacta — mismo estándar que `POST_ROUTE_PERSIST_FAILED` de sesión 24
+y `DUPLICATE_REFS` de sesión 31b). Se levanta únicamente cuando: `refill=true`
+(el llamador pidió el refill), `zones_existentes > 0` (había algo que
+refillear) y la recarga fue intentada y lanzó una excepción real
+(`reload_error is not None`). Los otros dos motivos de que `reloaded` no sea
+`True` — editor cerrado (`"skipped_editor_closed"`), board de otro proyecto
+abierto (el reload ni se intenta) — son caminos de diseño ya documentados en
+`tool-catalog.md` vía el campo `reloaded`: no rompen ningún contrato y NO
+levantan error, sólo se exponen como `zones.refill_skipped_reason` para
+diagnóstico honesto (sin ambigüedad para el llamador sobre por qué
+`zones.refilladas` es `0`).
+
+Nombre elegido sobre la alternativa `POST_ROUTE_REFILL_FAILED`: el refill
+**nunca se intentó** (se saltó porque la recarga previa falló) — "FAILED"
+sugeriría que `refill_zones()` corrió y no pudo completar, que es exactamente
+la semántica que ya tiene `POST_ROUTE_PERSIST_FAILED` (el refill+enforce SÍ
+corrieron; falló el `save_board()` posterior). "SKIPPED" distingue los dos
+modos de falla sin ambigüedad.
+
+**Punto del pipeline donde se levanta: al final, no en el guard.** Levantar
+el error inmediatamente en el guard (antes de DRC post-route, snapshot y
+`store.mark_live_stale`) abriría una ventana de corrupción: el flag
+`live_stale` quedaría en `False` (nunca llega a marcarse) con el disco
+adelante del vivo, y un `fill_zones()` posterior pasaría
+`_guard_live_stale()` sin ser rechazado — su propio `save_board()` pisaría el
+ruteo recién escrito. El raise se pospone hasta después de que el DRC
+post-route corra, el snapshot de disco se registre y
+`store.mark_live_stale(snap_id)` se aplique; el `audit_record` se escribe
+siempre (con o sin error), conservando el `result` forense
+(`reloaded`, `zones_existentes`, `zones_refilladas`,
+`refill_skipped_reason`) que fue precisamente lo que permitió detectar este
+bug en sesión 32 — más el `error_code` cuando corresponde.
+
+**Alcance: `route_board` únicamente — H2 refutada por inspección.** El
+prompt de sesión 32b hipotetizaba que el mismo bug podía afectar
+`fill_zones()` y `add_zone(fill=true)` (D2, cobertura simétrica). Inspección
+del código lo refuta: ninguna de las dos llama `reload_board_from_disk` en
+absoluto — abren con `_guard_live_stale()` (rechazan si el disco ya está
+adelante del vivo) y su único modo de falla, `save_board()`, ya levanta
+`POST_ZONE_PERSIST_FAILED` (sesión 27, mismo ADR). No existe la llamada cuya
+excepción se pudiera descartar en silencio — el cierre del contrato para
+estas dos tools es por evidencia (no tienen el camino silencioso), no por
+código simétrico nuevo.
+
+**Observación registrada, no accionada esta sesión:** `delete_tracks_bulk`
+(`src/kicad_mcp/tools/pcb.py`) llama `refill_zones()` cuando borra tracks de
+zonas de cobre, pero sin `enforce_hole_clearance()` ni `save_board()`
+posterior — asimetría real con el contrato D-23.2 tal como se aplica a las
+otras tres tools. Fuera del alcance acordado de sesión 32b (fix quirúrgico
+sobre F-V2-REFILL-SILENCIOSO); anotado en `docs/BACKLOG.md` para evaluación
+futura.

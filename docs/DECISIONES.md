@@ -505,6 +505,59 @@ criterio DRC "0 errores/warnings o compartidos con el ground truth" de
 D-30.3 en sí — lo refina operacionalmente, mismo espíritu que D-30.5
 refinó el mecanismo de `enforce_hole_clearance` sin reabrir D-23.2.
 
+### D-32b.1 — `POST_ROUTE_REFILL_SKIPPED`: error explícito sin retry, raise al final del pipeline
+
+**Contexto:** F-V2-REFILL-SILENCIOSO (hallazgo P0/P1 de sesión 32,
+reproducido también en sesión 31c): el bloque de refill de seguridad de
+`route_board(refill=true)` sólo corre si `reload_board_from_disk()` tuvo
+éxito; hasta sesión 32b, si esa recarga (mutación sin reintento, D-07.1)
+lanzaba una excepción, se descartaba en silencio y `route_board` completaba
+como éxito normal sin el refill prometido — sin ninguna señal de error,
+rompiendo D-23.2/ADR-0012 exactamente en el caso que ese contrato existe
+para prevenir.
+
+**Decisión:** cuando `refill=true`, había ≥1 zona existente, y la recarga
+falló por una excepción real (no por "otro proyecto abierto" ni "editor
+cerrado" — ambos legítimos), `route_board` levanta
+`POST_ROUTE_REFILL_SKIPPED` (adición pura al `StrEnum ErrorCode`, F1/F3
+intacta). **Sin retry**: `reload_board_from_disk` se sigue llamando una sola
+vez — el fix respeta D-07.1 en vez de reabrirlo. El raise se pospone hasta
+DESPUÉS del DRC post-route, el registro del snapshot y
+`store.mark_live_stale` (no en el guard de arriba): abortar antes dejaría el
+flag `live_stale` en `False` con el disco adelante del vivo, y un
+`fill_zones()` posterior pasaría `_guard_live_stale()` y pisaría el ruteo con
+su propio `save_board()`. El `audit_record` se escribe siempre (con o sin
+error), conservando el `result` forense completo más el `error_code`.
+
+**Fuente:** sesión 32b. Ver `docs/adr/0012-route-board-persist-contract.md`
+§"Extensión F-V2 (sesión 32b)" para el detalle completo (incluye por qué el
+guard `reloaded is True` no se relaja: refillear el vivo tras una recarga
+fallida pisaría el ruteo, porque el vivo todavía refleja el estado
+pre-ruteo).
+
+### D-32b.2 — Alcance del fix F-V2-REFILL-SILENCIOSO: sólo `route_board`
+
+**Contexto:** el prompt de sesión 32b hipotetizaba (H2) que el mismo bug
+podía afectar `fill_zones()` y `add_zone(fill=true)` — las tres tools
+comparten el contrato D-23.2/ADR-0012 desde la extensión de sesión 27, y la
+cobertura simétrica era la lectura por defecto antes de inspeccionar el
+código.
+
+**Decisión:** H2 queda refutada por inspección, no se aplica fix a
+`fill_zones`/`add_zone`. Ninguna de las dos llama `reload_board_from_disk`
+en absoluto — abren con `_guard_live_stale()` y su único modo de falla
+(`save_board()`) ya levanta `POST_ZONE_PERSIST_FAILED` desde sesión 27. No
+existe la llamada cuya excepción se pudiera descartar en silencio: el cierre
+del contrato para estas dos tools es por evidencia de que no tienen el
+camino silencioso, no por código simétrico nuevo (D-30.2: éxito por
+confianza, no por volumen). Registrado también: `delete_tracks_bulk` llama
+`refill_zones()` sin `enforce_hole_clearance()` ni `save_board()` — una
+asimetría real con el contrato, pero fuera del alcance acordado de esta
+sesión; anotada en `docs/BACKLOG.md` para evaluación futura.
+
+**Fuente:** sesión 32b, cross-check D-31c.1 aplicado antes de escribir el
+plan de ejecución.
+
 ## 3. Decisiones superadas (referencia histórica, no vigentes)
 
 - **D-V3.1** (revert humano post-route): superada por recarga programática (`Board.revert()`, sesión 18) — ya no hay contacto humano por route.

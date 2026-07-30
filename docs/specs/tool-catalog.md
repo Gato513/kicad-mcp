@@ -242,7 +242,7 @@ audit line JSONL por cada mutación aceptada o rechazada.
 | `get_zones` | Lista zonas de cobre y keepouts filtradas por `layer`/`net`/`kind`, con `id` estable (sesión 19, P4.1) | `layer?`, `net?`, `kind?="copper"\|"keepout"`, `max_tokens?` | detail | `NET_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 | `fill_zones` | Refill de TODAS las zonas de cobre del board; `zone_id?` sólo valida existencia, no acota el refill (kipy no tiene fill selectivo — sesión 19, P4.3) — devuelve JSON `{zones_filled, duration_ms, snap_id}`. Sesión 27 (D-23.2, ADR-0012): persiste a disco el refill+enforce_hole_clearance del vivo, incondicionalmente, antes de retornar | `zone_id?`, `base_snap?` | JSON | `ZONE_ID_STALE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `POST_ZONE_PERSIST_FAILED` |
 | `delete_zone` | Borra una zona (cobre o keepout) por `id` (de `get_zones`) — sesión 19, P4.4 | `id`, `base_snap?` | confirm | `ZONE_ID_STALE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
-| `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO — devuelve JSON estructurado (sesión 17, P2.2; campo `zones` añadido sesión 19, P4.3), no un confirm de texto. Sesión 24 (D-23.2, ADR-0012): `drc.err_post` se mide y persiste post refill+enforce. Sesión 31b (ADR-0013): pre-check `DUPLICATE_REFS` corre ANTES del subprocess de exportación DSN — refs de footprint duplicados hacen fallar `pcbnew.ExportSpecctraDSN` enteramente, se detectan temprano con `data.duplicates` en vez de un `KICAD_CLI_FAILED` opaco | `max_passes?`, `timeout_s?=600`, `refill?=true` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED`, `POST_ROUTE_PERSIST_FAILED`, `DUPLICATE_REFS` |
+| `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO — devuelve JSON estructurado (sesión 17, P2.2; campo `zones` añadido sesión 19, P4.3), no un confirm de texto. Sesión 24 (D-23.2, ADR-0012): `drc.err_post` se mide y persiste post refill+enforce. Sesión 31b (ADR-0013): pre-check `DUPLICATE_REFS` corre ANTES del subprocess de exportación DSN — refs de footprint duplicados hacen fallar `pcbnew.ExportSpecctraDSN` enteramente, se detectan temprano con `data.duplicates` en vez de un `KICAD_CLI_FAILED` opaco. Sesión 32b (F-V2-REFILL-SILENCIOSO, extensión D-23.2/ADR-0012): si la recarga automática del editor vivo falla y había ≥1 zona de cobre, el refill de seguridad NO puede correr sin riesgo de pisar el ruteo — en vez de completar en silencio, levanta `POST_ROUTE_REFILL_SKIPPED` | `max_passes?`, `timeout_s?=600`, `refill?=true` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED`, `POST_ROUTE_PERSIST_FAILED`, `POST_ROUTE_REFILL_SKIPPED`, `DUPLICATE_REFS` |
 | `get_footprint_neighbors` | Vecinos de un footprint en un radio: pads/tracks/vías/holes ajenos + distancia al borde del board (sesión 21, P1, F-D3-04) | `ref`, `radius_mm?=5.0`, `include_pads?=true`, `include_tracks?=true`, `include_vias?=true`, `include_holes?=true`, `include_edge?=true`, `max_tokens?` | JSON | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 
 **Flag `live_stale` (sesión 14, D-14.1; recarga automática sesión 18, P3.1,
@@ -546,11 +546,16 @@ Resultado: **JSON estructurado**, no un confirm de texto (rompe el límite de
   recargar automáticamente el editor vivo tras escribir el ruteo (vía
   `reload_board_from_disk()` interno — ver arriba); `false` si el intento
   falló (busy/timeout/kipy roto — el flag `live_stale` se activa como red de
-  seguridad); `"skipped_editor_closed"` si no había PCB Editor abierto sobre
+  seguridad) o si había un board de OTRO proyecto abierto (el reload ni se
+  intenta); `"skipped_editor_closed"` si no había PCB Editor abierto sobre
   el mismo archivo (tampoco hubo `save_board` implícito — ver `live_saved`
   en el audit log). Con `reloaded=true`, `get_tracks` inmediatamente después
   ve el cobre nuevo sin ningún paso manual — ese es el gate de cierre de la
-  sesión 18 (D-V3.1).
+  sesión 18 (D-V3.1). Sesión 32b (F-V2-REFILL-SILENCIOSO): si `reloaded=false`
+  por una excepción real de la recarga (no por "otro proyecto abierto") Y
+  había ≥1 zona de cobre preexistente, el fallo YA NO es silencioso — ver
+  `POST_ROUTE_REFILL_SKIPPED` en la Taxonomía y el campo
+  `zones.refill_skipped_reason` más abajo.
 
 Errores tipados (D-14.4, F3 — cero códigos nuevos en la ruta de fallo del
 pipeline): jar/java/`pcbnew` ausentes → `KICAD_CLI_MISSING`; export DSN falla
@@ -560,24 +565,42 @@ vacío, import SES falla → `KICAD_CLI_FAILED`; Freerouting timeout →
 **informativo, no aborta**: viaja embebido en `nets.bloqueadas[].code`, nunca
 como excepción — ver Taxonomía de errores más abajo.
 
-**Campo `zones` de `route_board` (sesión 19, P4.3).** Añadido al payload JSON
-sin romper el contrato existente (campos previos intactos):
-`{"existentes": N, "refilladas": M, "fill_ms": T}`. `existentes` = zonas
-(cobre + keepout) del board **antes** de rutear — sólo se puede leer vía IPC
-(kipy), así que es `0` si el editor no tenía el board target abierto (mismo
-best-effort que `pre_footprints`). `refilladas` = zonas de **cobre**
-recalculadas post-route (las keepout no tienen fill) — sólo ocurre si
-`refill=true` (default), había ≥1 zona, y la recarga automática post-route
-(P3.1) tuvo éxito (`reloaded=true`); si el editor estaba cerrado o la recarga
-falló, `refilladas=0` y `fill_ms=0.0` (no hay board vivo sobre el cual llamar
-`refill_zones()`). **No se inyecta nada al DSN para esto** — investigación
-P4.0 (`docs/investigacion/19-zonas-ipc.md` §2) confirmó empíricamente que
-Freerouting 2.1.0 respeta nativamente el `(plane <net> ...)` que
-`pcbnew.ExportSpecctraDSN` emite del outline de cada zona de cobre (test
-decisivo: pads dentro del plano quedan sin ruteo explícito — 0 vías vs 1 vía
-del control sin plano). El refill post-route existe porque los **tracks
-nuevos** pueden requerir recalcular el fill (clearance contra el cobre recién
-agregado), no porque Freerouting ignore las zonas.
+**Campo `zones` de `route_board` (sesión 19, P4.3; extendido sesión 32b).**
+Añadido al payload JSON sin romper el contrato existente (campos previos
+intactos): `{"existentes": N, "refilladas": M, "fill_ms": T,
+"refill_skipped_reason"?: S}`. `existentes` = zonas (cobre + keepout) del
+board **antes** de rutear — sólo se puede leer vía IPC (kipy), así que es `0`
+si el editor no tenía el board target abierto (mismo best-effort que
+`pre_footprints`). `refilladas` = zonas de **cobre** recalculadas post-route
+(las keepout no tienen fill) — sólo ocurre si `refill=true` (default), había
+≥1 zona, y la recarga automática post-route (P3.1) tuvo éxito
+(`reloaded=true`); si el editor estaba cerrado, había otro proyecto abierto,
+o la recarga falló, `refilladas=0` y `fill_ms=0.0` (no hay board vivo
+confiable sobre el cual llamar `refill_zones()`). **No se inyecta nada al DSN
+para esto** — investigación P4.0 (`docs/investigacion/19-zonas-ipc.md` §2)
+confirmó empíricamente que Freerouting 2.1.0 respeta nativamente el `(plane
+<net> ...)` que `pcbnew.ExportSpecctraDSN` emite del outline de cada zona de
+cobre (test decisivo: pads dentro del plano quedan sin ruteo explícito — 0
+vías vs 1 vía del control sin plano). El refill post-route existe porque los
+**tracks nuevos** pueden requerir recalcular el fill (clearance contra el
+cobre recién agregado), no porque Freerouting ignore las zonas.
+
+`refill_skipped_reason` (sesión 32b, F-V2-REFILL-SILENCIOSO) sólo aparece
+cuando `refill=true`, había ≥1 zona existente y el refill de seguridad NO
+corrió — nunca cuando `existentes=0` (ya lo dice ese campo) ni cuando el
+refill sí corrió. Tres valores, dos legítimos y uno que rompe contrato:
+`"editor_closed"` y `"cross_project"` son caminos de diseño ya documentados
+en `reloaded` (sin error); `"reload_failed"` significa que la recarga se
+intentó y lanzó una excepción real — antes de sesión 32b esto se descartaba
+en silencio (`reloaded: false, refilladas: 0` sin ningún error visible,
+dejando el plano GND sin el clearance de D-19.1 indefinidamente). Desde
+sesión 32b, `"reload_failed"` con zonas presentes levanta
+`POST_ROUTE_REFILL_SKIPPED` en vez de completar en silencio (ver Taxonomía).
+El guard no se relaja para "arreglarlo solo": si la recarga falló, el board
+vivo todavía refleja el estado **pre-ruteo** (el `save_board` implícito bajó
+live→disco antes de que Freerouting escribiera) — refillear y guardar ese
+vivo pisaría el ruteo recién persistido en disco, así que el error explícito
+es la única opción segura (ver ADR-0012 §"Extensión F-V2 (sesión 32b)").
 
 **`add_zone` / `add_keepout_zone` / `get_zones` / `fill_zones` / `delete_zone`
 (sesión 19, P4.1-P4.4, investigación `docs/investigacion/19-zonas-ipc.md`).**
@@ -946,6 +969,7 @@ catálogo para no prometer una superficie que no existe.
 | `POST_ROUTE_PERSIST_FAILED` | Sesión 24 (D-23.2, ADR-0012, cierre F-D4-02). `route_board` ruteó y corrió su refill+enforce interno con éxito (el board VIVO ya tiene el clearance arreglado) pero `save_board()` falló al persistirlo a disco — distinto de `EXTERNAL_EDIT_DETECTED` (que indica una edición externa; acá el propio proceso no pudo escribir) | Sí, tras liberar KiCad | El board vivo tiene el estado correcto; reintentar `save_board()` manual o descartar los cambios. `data`: `pcb`, `live_has_fix` |
 | `POST_ZONE_PERSIST_FAILED` | Sesión 27 (extensión de D-23.2, ADR-0012). `fill_zones` o `add_zone(fill=true)` corrieron su refill+enforce interno con éxito (el board VIVO ya tiene el clearance arreglado) pero `save_board()` falló al persistirlo a disco — semánticamente equivalente a `POST_ROUTE_PERSIST_FAILED`; discriminado por origen del llamador, no por semántica (unificar los dos códigos queda como deuda de bajo impacto post-Fase 3) | Sí, tras liberar KiCad | El board vivo tiene el estado correcto; reintentar `save_board()` manual o descartar los cambios. `data`: `pcb`, `live_has_fix` |
 | `DUPLICATE_REFS` | Sesión 31b (ADR-0013, F-V1-02). Dos usos: (1) pre-check de `route_board` — 2+ footprints comparten reference designator en el board, `pcbnew.ExportSpecctraDSN` falla enteramente en ese estado; (2) `set_footprint_ref` sin `kiid` (o con uno stale) sobre un `ref` ya duplicado — ambigüedad, nunca se resuelve a ciegas | Sí, tras anotar/elegir kiid | (1) Instruir: `set_footprint_ref(ref, new_ref, kiid=...)` para cada ref duplicado, `data.duplicates: [{ref, kiids}]`. (2) Elegir un kiid de `data.candidates: [{kiid, x_mm, y_mm, value}]` y reintentar |
+| `POST_ROUTE_REFILL_SKIPPED` | Sesión 32b (F-V2-REFILL-SILENCIOSO, extensión D-23.2/ADR-0012). `route_board(refill=true)` ruteó y escribió el board a disco, pero la recarga automática del editor vivo (`reload_board_from_disk`, mutación sin reintento — D-07.1) falló con ≥1 zona de cobre preexistente: el refill de seguridad contra el plano GND (D-19.1) NO corrió — refillear el vivo desactualizado pisaría el ruteo recién escrito. Antes de sesión 32b esto se descartaba en silencio (`reloaded: false, zones.refilladas: 0` sin ningún error); reproducido en sesiones 31c y 32 | Sí, tras recuperación manual | El ruteo en disco es válido pero le falta el clearance contra la zona; correr `reload_board_from_disk()` y después `fill_zones()`. `data`: `pcb`, `snap`, `zones_existentes`, `zones_refilladas`, `tracks_added`, `vias_added`, `drc_err_post`, `reload_error_code` |
 
 Reglas de la taxonomía: los códigos son SCREAMING_SNAKE en inglés (estables
 ante cambios de idioma de la UI); `message` y `hint` en el idioma de la

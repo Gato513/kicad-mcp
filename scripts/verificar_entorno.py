@@ -671,8 +671,7 @@ def check_gui_test_project() -> None:
     d = Path("/tmp/gui-test-project")
     fixture = REPO / "tests" / "fixtures" / "004_real"
     recopy_cmd = (
-        "rm -rf /tmp/gui-test-project && "
-        "cp -r tests/fixtures/004_real /tmp/gui-test-project"
+        "rm -rf /tmp/gui-test-project && cp -r tests/fixtures/004_real /tmp/gui-test-project"
     )
     if not d.is_dir():
         add(

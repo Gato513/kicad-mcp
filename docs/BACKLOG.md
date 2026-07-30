@@ -13,7 +13,7 @@ aproximado de severidad.
 
 ## P0 — Bloqueantes de dogfooding / release
 
-### F-V2-REFILL-SILENCIOSO — `route_board(refill=true)` puede no persistir el refill sin ningún error visible — ABIERTO (sesión 32)
+### F-V2-REFILL-SILENCIOSO — `route_board(refill=true)` puede no persistir el refill sin ningún error visible — ✅ CERRADO sesión 32b
 
 **Origen:** sesión 32, segunda Validation Suite (Nivel B, ANAVI Macro Pad 12).
 
@@ -50,8 +50,8 @@ uso de `route_board(refill=true)` que confíe en esa promesa sin un paso
 de refill explícito adicional recibiría un board con clearance real
 contra el plano GND sin saberlo.
 
-**Recomendación de fix** (sesión intermedia, patrón 31b, antes de sesión
-33): (a) desacoplar el refill+persistencia en disco de
+**Recomendación de fix original** (sesión intermedia, patrón 31b, antes de
+sesión 33): (a) desacoplar el refill+persistencia en disco de
 `reload_board_from_disk` — son operaciones lógicamente independientes
 (una sincroniza el editor vivo, la otra corrige y persiste el archivo);
 (b) si se mantiene la dependencia, surfacear un código de error
@@ -60,8 +60,36 @@ explícito (ej. `POST_ROUTE_REFILL_SKIPPED`) en vez de éxito silencioso;
 aplicar un cambio de diseño) amerita excepción documentada al criterio
 general de D-07.1 de no reintentar mutaciones.
 
-**Ver:** `validation-suite/level-b/anavi-macro-pad-12/validation-report.md`
-§Fricciones para el detalle completo.
+**Cierre (sesión 32b):** la opción (a) resultó ser PELIGROSA, no sólo
+descartable por preferencia — investigación previa al fix (Bloque 0)
+encontró que si la recarga falló, el board vivo todavía refleja el
+estado **pre-ruteo** (el `save_board` implícito bajó live→disco antes de
+que Freerouting escribiera); refillear y guardar ese vivo desactualizado
+pisaría el ruteo recién persistido en disco. Se aplicó la opción (b): la
+excepción de `reload_board_from_disk` ya no se descarta
+(`src/kicad_mcp/tools/pcb.py`, bloque de recarga automática post-route),
+y cuando el refill prometido (`refill=true`, `zones_existentes > 0`) no
+corre por esa razón concreta, `route_board` levanta
+`POST_ROUTE_REFILL_SKIPPED` (adición pura al `StrEnum`, F1/F3 intacta) en
+vez de completar en silencio. El raise se pospone hasta después del DRC
+post-route + snapshot + `store.mark_live_stale` (no en el guard), para no
+abrir una ventana donde un `fill_zones()` posterior pisara el ruteo. La
+opción (c) NO se tomó — D-07.1 (mutación sin reintento) queda intacta,
+`reload_board_from_disk` se sigue llamando una sola vez.
+
+**H2 refutada (alcance del fix):** el prompt de sesión 32b hipotetizaba
+que `fill_zones()`/`add_zone(fill=true)` podían compartir el mismo bug
+(cobertura simétrica D2). Inspección del código lo refutó: ninguna de las
+dos llama `reload_board_from_disk` — no tienen este camino silencioso, su
+único modo de falla (`save_board()`) ya levanta `POST_ZONE_PERSIST_FAILED`
+desde sesión 27. El fix quedó acotado a `route_board`.
+
+**Ver:** `docs/adr/0012-route-board-persist-contract.md`
+§"Extensión F-V2 (sesión 32b)", `docs/DECISIONES.md` D-32b.1/D-32b.2,
+`docs/historico/sesiones/32b-reporte.md`,
+`tests/test_pcb_session32b_refill_silencioso_canary.py` (canario
+permanente), y `validation-suite/level-b/anavi-macro-pad-12/validation-report.md`
+§Fricciones para el hallazgo original.
 
 ### F-V1-02 — `route_board` falla enteramente con refs de footprint duplicados/sin anotar — ✅ CERRADO sesión 31b
 
@@ -412,16 +440,24 @@ Nice-to-have, para después de convergencia de Fase 3 (Fase 4).
   unión de Edge.Cuts (±10mm) y enjambre de footprints (±100mm) en
   `board_outline`/`board_bbox_mm`/`read_board_context`. Ver F-V1-01 en
   §P1 arriba y ADR-0013 (contexto del fix compañero).
-- **Unificación de `POST_ROUTE_PERSIST_FAILED` y `POST_ZONE_PERSIST_FAILED`**:
-  sesión 27 introdujo `POST_ZONE_PERSIST_FAILED` para `fill_zones` y
-  `add_zone(fill=True)`. Semánticamente equivalente a
-  `POST_ROUTE_PERSIST_FAILED` (sesión 24, `route_board`). Coexisten
-  temporalmente por decisión conservadora (no tocar `route_board` en
-  sesión 27). Deuda: unificar en un solo código compartido (por ejemplo
-  `PERSIST_CONTRACT_FAILED` o `TOOL_PERSIST_FAILED`), deprecando los dos
-  actuales. Impacto bajo — el contrato JSON de las tools no cambia (los
-  códigos siguen exportándose como strings; el llamador puede aceptar
-  ambos). Prioridad post-Fase 3, no bloqueante.
+- **Unificación de `POST_ROUTE_PERSIST_FAILED`, `POST_ZONE_PERSIST_FAILED`
+  y `POST_ROUTE_REFILL_SKIPPED`**: sesión 27 introdujo
+  `POST_ZONE_PERSIST_FAILED` para `fill_zones` y `add_zone(fill=True)`.
+  Semánticamente equivalente a `POST_ROUTE_PERSIST_FAILED` (sesión 24,
+  `route_board`). Coexisten temporalmente por decisión conservadora (no
+  tocar `route_board` en sesión 27). Sesión 32b sumó un tercer código,
+  `POST_ROUTE_REFILL_SKIPPED` (cierre de F-V2-REFILL-SILENCIOSO) —
+  semánticamente distinto de los otros dos (el refill NO se intentó, vs.
+  "se intentó y no se pudo persistir"), pero la misma familia de
+  "algo del contrato D-23.2/ADR-0012 no se cumplió". Refuerza la deuda,
+  no la resuelve. Deuda: unificar en un solo código compartido (por
+  ejemplo `PERSIST_CONTRACT_FAILED` o `TOOL_PERSIST_FAILED`), deprecando
+  los tres actuales — o mantener `POST_ROUTE_REFILL_SKIPPED` separado si
+  la distinción semántica (intentado-y-fallido vs. no-intentado) se
+  considera valiosa al momento de unificar. Impacto bajo — el contrato
+  JSON de las tools no cambia (los códigos siguen exportándose como
+  strings; el llamador puede aceptar todos). Prioridad post-Fase 3, no
+  bloqueante.
 
 ## Higiene menor (sin severidad, cuando haya tiempo)
 
@@ -432,6 +468,14 @@ Nice-to-have, para después de convergencia de Fase 3 (Fase 4).
 - Contador agregado de `post_fallback` en `health()` para monitoreo pasivo de
   la derivación local (propuesto en `historico/analisis/ANALISIS-ESTADO-Y-BACKLOG.md`
   §C3, nunca implementado, 0 fallbacks observados hasta ahora).
+- **Asimetría de `delete_tracks_bulk` frente al contrato D-23.2/ADR-0012**
+  (observada en sesión 32b, no accionada — fuera del alcance quirúrgico de
+  esa sesión): `delete_tracks_bulk` (`src/kicad_mcp/tools/pcb.py`) llama
+  `refill_zones()` cuando borra tracks que tocan zonas de cobre, pero SIN
+  `enforce_hole_clearance()` ni `save_board()` posterior — a diferencia de
+  `route_board`, `fill_zones` y `add_zone(fill=True)`, que sí corren las
+  tres. Evaluar si el mismo mecanismo de F-D3-01 (clearance roto post-fill)
+  aplica acá y si amerita la misma persistencia explícita.
 
 ---
 

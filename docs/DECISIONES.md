@@ -28,7 +28,7 @@ cronológico; cada una es la fuente autoritativa de su tema.
 | [0009](adr/0009-port-rust-diferido-con-condiciones.md) | Port a Rust diferido | v0.4 condicional a evidencia de cuello de botella real (ver `historico/analisis/ANALISIS-ESTADO-Y-BACKLOG.md` §1.4 — el cuello es KiCad/IPC, no Python). |
 | [0010](adr/0010-borrado-de-cobre-sin-gate-g2.md) | Borrado de cobre sin Gate G2 | `delete_track`/`delete_via` no disparan elicitation destructiva. |
 | [0011](adr/0011-autorouting-route-board.md) | Autorouting con Freerouting | `route_board` delega ruteo a Freerouting headless, no al LLM. |
-| [0012](adr/0012-route-board-persist-contract.md) | Contrato disco==memoria==`err_post` | Sesión 24: `route_board` mide DRC y persiste **después** de refill+enforce; fix de F-D4-02. Ver D-23.2 abajo. **Extendido en sesión 27** a `fill_zones` y `add_zone(fill=True)` — ADR-0012 sección "Extensión de alcance (sesión 27)". |
+| [0012](adr/0012-route-board-persist-contract.md) | Contrato disco==memoria==`err_post` | Sesión 24: `route_board` mide DRC y persiste **después** de refill+enforce; fix de F-D4-02. Ver D-23.2 abajo. **Extendido en sesión 27** a `fill_zones` y `add_zone(fill=True)`. **Extendido en sesión 32b** con `POST_ROUTE_REFILL_SKIPPED` (F-V2-REFILL-SILENCIOSO). **Extendido en sesión 32d** con stitching automático de pads huérfanos (F-D5-01) — ADR-0012 sección "F-D5-01 stitching (sesión 32d)". |
 | [0013](adr/0013-refs-duplicados-por-anotacion-no-borrado.md) | Refs duplicados se resuelven por anotación, no borrado | Sesión 31b (F-V1-02): `set_footprint_ref` + pre-check `DUPLICATE_REFS` en `route_board`. ADR-0010 queda intacta (sin narrowing) — no se abre `delete_footprint`. |
 
 ## 2. Decisiones informales vigentes (no formalizadas como ADR)
@@ -609,6 +609,55 @@ de contrato arquitectónico del proyecto — se re-evaluará si el fix de
 
 **Fuente:** sesión 32c. Ver `docs/investigacion/32c-f-d5-01.md` y
 `docs/historico/sesiones/32c-reporte.md` para el detalle completo.
+
+### D-32d.1 — Fix de F-D5-01: stitching automático con guardrails, fallback a exposición explícita
+
+**Contexto:** aplicación del fix especificado en D-32c.2/sesión 32c.
+Análisis comparativo de 3 decisiones de diseño (D1: automático vs
+exposición; D2: dónde en el pipeline; D3: guardrails y semántica ante
+fallo) — detalle completo con las alternativas descartadas y su evidencia
+en `docs/historico/sesiones/32d-reporte.md`.
+
+**Decisión:** dentro de `route_board`, post-refill final, `route_board`
+stitchea automáticamente una vía (`add_via`, ya existente) para cada pad
+huérfano que pase 5 guardrails geométricos estrictos (huérfano, net con
+zona propia, pad dentro del outline de esa zona, zona del mismo net en la
+capa OPUESTA a la del pad, región inmediata libre de cobre ajeno en esa
+capa opuesta). Si algún guardrail rechaza, el pad se expone en el payload
+(`orphan_pads`, con `reason`) — nunca como una tool separada, nunca en una
+fase distinta del refill de seguridad que ADR-0012 ya exige. Extiende
+ADR-0012 en vez de crear un ADR nuevo (mismo precedente que sesiones 27 y
+32b: el stitching es parte del flujo canónico de persistencia, no un
+contrato nuevo).
+
+**Hallazgo que corrigió la premisa del prompt de sesión:** las 3
+manifestaciones de F-D5-01 NO comparten topología. En
+`anavi-macro-pad-12` el pad huérfano y la zona GND están en la MISMA capa
+— el guardrail #4 rechaza por diseño (ver ADR-0012 §"F-D5-01 stitching"
+para el detalle geométrico). H1 (el escenario donde el fix cierra el
+síntoma) se re-baselineó de macro-pad-12 a `anavi-dev-mic` (topología
+"capas opuestas", la que el guardrail #4 fue diseñado para aceptar).
+macro-pad-12 pasó a ser el caso canónico de H2 (rechazo correcto de
+guardrail) en vez de H1.
+
+**Fuente:** sesión 32d.
+
+### D-32d.2 — Semántica ante fallo del stitching: rechazo de guardrail nunca es error
+
+**Contexto:** parte de D-32d.1, separada por tener consecuencias propias
+sobre la taxonomía de errores (F3).
+
+**Decisión:** un guardrail que rechaza NO levanta ningún código de error
+— es una decisión de diseño correcta (evitar una vía en geometría
+ambigua), expuesta como dato (`orphan_pads[].reason`) para que el llamador
+decida. Sólo hay error si `add_via` falla técnicamente (código existente,
+sin reintento, D-07.1) o si el `save_board()` del re-persist post-stitching
+falla (`POST_ROUTE_PERSIST_FAILED`, código existente de sesión 24 — no se
+agrega ningún código nuevo al catálogo). Consistente con D-32b.1
+(`POST_ROUTE_REFILL_SKIPPED` sólo cuando algo rompe el contrato, no
+cuando un camino de diseño legítimo no aplica).
+
+**Fuente:** sesión 32d.
 
 ## 3. Decisiones superadas (referencia histórica, no vigentes)
 

@@ -37,7 +37,7 @@ from ..bridge.ipc import (
     PadGeom,
     ZoneItem,
 )
-from ..bridge.rules import diff_violations, run_drc
+from ..bridge.rules import Item, diff_violations, run_drc
 from ..bridge.rules_reader import load_project_rules
 from ..bridge.state_builder import build_state_from_board, build_state_from_snapshot
 from ..errors import ErrorCode, KicadMcpError
@@ -62,6 +62,13 @@ _TRACKS_DEFAULT_BUDGET: int = 800
 # Mismo factor de seguridad que ``toon/encoder.py`` (_BUDGET_SAFETY_FACTOR):
 # el estimador de tokens (chars/3.5) es aproximado; dejamos margen del 10%.
 _TRACKS_BUDGET_SAFETY: float = 0.9
+
+# F-D5-01 (sesión 32d, D3): radio de la región inmediata que el guardrail #5
+# exige libre de cobre ajeno en la capa opuesta antes de stitchear. Único par
+# de capas de cobre que este MVP modela (``ZoneItem.layer``/``PadGeom.layer``
+# son de una sola capa cada uno) — sin sentido para vías ciegas/enterradas.
+_STITCH_RADIUS_MM: float = 1.0
+_OPPOSITE_LAYER: dict[str, str] = {"F.Cu": "B.Cu", "B.Cu": "F.Cu"}
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -510,6 +517,199 @@ def _polygon_is_simple(vertices: list[tuple[float, float]]) -> bool:
             if _segments_intersect(edges[i][0], edges[i][1], edges[j][0], edges[j][1]):
                 return False
     return True
+
+
+def _point_in_polygon(x: float, y: float, vertices: tuple[tuple[float, float], ...]) -> bool:
+    """Ray casting estándar (F-D5-01, D3 guardrail #3, sesión 32d).
+
+    Sobre el ``outline`` de DISEÑO de la zona (``ZoneItem.vertices_mm``), no
+    el ``filled_polygon`` — permite stitchear un pad aunque el fill esté
+    fracturado por el mecanismo que 32c aisló (clearance de cobre ajeno
+    estrangulando el corredor local, ``docs/investigacion/32c-f-d5-01.md``).
+    """
+    inside = False
+    x1, y1 = vertices[-1]
+    for x2, y2 in vertices:
+        if (y1 > y) != (y2 > y):
+            xi = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+            if x < xi:
+                inside = not inside
+        x1, y1 = x2, y2
+    return inside
+
+
+def _match_orphan_pad(
+    pos: tuple[float, float], pads: tuple[PadGeom, ...], *, tolerance_mm: float = 0.01
+) -> PadGeom | None:
+    """Resuelve un ítem de ``unconnected_items`` a su ``PadGeom`` real, por
+    POSICIÓN (F-D5-01, sesión 32d) — nunca por texto.
+
+    El ``description`` que expone ``kicad-cli`` es dependiente del locale
+    (32c lo observó en español: "Pad 3 [GND] de J5"), y las regex de
+    ``bridge/rules.py`` (``_REF_RE``/``_NET_RE``) sólo matchean
+    "Symbol"/"Footprint"/"Component" y ``net "..."`` — nunca el patrón
+    "Pad ... of/de ..." que emite un ``unconnected_items`` real, así que
+    ``Item.ref``/``Item.net`` quedan en ``None`` para estos ítems (verificado
+    contra kicad-cli 10.0.4 real en el Bloque 0 de esta sesión). ``Item.pos``
+    sí es fiable — viene de coordenadas, no de texto.
+    """
+    px, py = pos
+    candidates = [
+        p for p in pads if math.hypot(float(p.x_mm) - px, float(p.y_mm) - py) <= tolerance_mm
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def _opposite_layer_blocked(
+    x: float,
+    y: float,
+    layer: str,
+    net: str,
+    copper: tuple[CopperItem, ...],
+    pads: tuple[PadGeom, ...],
+) -> bool:
+    """Guardrail #5 (D3): ``True`` si hay cobre AJENO (net distinto) dentro de
+    ``_STITCH_RADIUS_MM`` de ``(x, y)`` en ``layer`` — la capa opuesta donde
+    aterrizaría el otro extremo de la vía de stitching."""
+    for item in copper:
+        if item.net_name == net or not _copper_on_layer(item, layer):
+            continue
+        if _copper_distance_mm(item, x, y) <= _STITCH_RADIUS_MM:
+            return True
+    for p in pads:
+        if p.net_name == net or p.layer not in (layer, "*.Cu"):
+            continue
+        if math.hypot(float(p.x_mm) - x, float(p.y_mm) - y) <= _STITCH_RADIUS_MM:
+            return True
+    return False
+
+
+def _orphan_pad_dict(label: str, net: str, pad: PadGeom, reason: str) -> dict[str, Any]:
+    return {
+        "pad": label,
+        "net": net,
+        "x_mm": round(float(pad.x_mm), 4),
+        "y_mm": round(float(pad.y_mm), 4),
+        "reason": reason,
+    }
+
+
+def _stitched_via_dict(candidate: dict[str, Any], kiid: str) -> dict[str, Any]:
+    return {
+        "pad": candidate["label"],
+        "net": candidate["net"],
+        "x_mm": candidate["x_mm"],
+        "y_mm": candidate["y_mm"],
+        "layers": [candidate["layer"], candidate["opposite_layer"]],
+        "kiid": kiid,
+    }
+
+
+def _evaluate_stitch_candidates(
+    orphan_items: list[Item],
+    pads: tuple[PadGeom, ...],
+    zones: tuple[ZoneItem, ...],
+    copper: tuple[CopperItem, ...],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """D3 (sesión 32d): evalúa los 5 guardrails para cada pad huérfano
+    post-refill. Devuelve ``(candidatos, rechazados)`` — un candidato pasó
+    las 5 condiciones; un rechazo lleva ``reason`` explicando cuál falló.
+    NUNCA es error (D-32d.2) — es dato para el payload de ``route_board``.
+    """
+    copper_zones = [z for z in zones if z.kind == "copper" and z.net_name]
+    candidates: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    seen: set[tuple[float, float]] = set()
+    for item in orphan_items:
+        assert item.pos is not None  # el llamador ya filtró por esto
+        pad = _match_orphan_pad(item.pos, pads)
+        if pad is None or pad.net_name is None:
+            continue  # ningún pad real en esa posición, o pad sin net asignado
+        key = (round(float(pad.x_mm), 4), round(float(pad.y_mm), 4))
+        if key in seen:
+            continue  # un ``unconnected_items`` puede listar el mismo pad 2x
+        seen.add(key)
+        label = item.desc or f"pad @({pad.x_mm:.3f},{pad.y_mm:.3f})"
+        net = pad.net_name
+        px, py = float(pad.x_mm), float(pad.y_mm)
+
+        own_zones = [z for z in copper_zones if z.net_name == net]
+        if not own_zones:
+            rejected.append(_orphan_pad_dict(label, net, pad, "sin zona de cobre propia"))
+            continue
+
+        inside = any(
+            _point_in_polygon(px, py, tuple((float(vx), float(vy)) for vx, vy in z.vertices_mm))
+            for z in own_zones
+        )
+        if not inside:
+            rejected.append(_orphan_pad_dict(label, net, pad, "fuera del outline de la zona"))
+            continue
+
+        opposite = _OPPOSITE_LAYER.get(pad.layer)
+        has_opposite_zone = any(z.net_name == net and z.layer == opposite for z in own_zones)
+        if opposite is None or not has_opposite_zone:
+            rejected.append(_orphan_pad_dict(label, net, pad, "sin zona en capa opuesta"))
+            continue
+
+        if _opposite_layer_blocked(px, py, opposite, net, copper, pads):
+            rejected.append(_orphan_pad_dict(label, net, pad, "cobre ajeno en la región inmediata"))
+            continue
+
+        candidates.append(
+            {
+                "label": label,
+                "net": net,
+                "x_mm": px,
+                "y_mm": py,
+                "layer": pad.layer,
+                "opposite_layer": opposite,
+            }
+        )
+    return candidates, rejected
+
+
+def _refill_enforce_and_save(
+    bridge: IpcBridge,
+    open_board: BoardHandle,
+    pcb_path: Path,
+    root: Path,
+    route_params: dict[str, Any],
+    *,
+    context: str,
+) -> int:
+    """Refill + ``enforce_hole_clearance`` + ``save_board`` (D-23.2,
+    ADR-0012) — compartido entre el bloque de refill de seguridad de
+    ``route_board`` y el re-persist post-stitching (F-D5-01, sesión 32d):
+    mismo pipeline, mismo manejo de fallo (``POST_ROUTE_PERSIST_FAILED``,
+    D-07.1 sin reintento). ``context`` distingue el mensaje del error entre
+    llamadores sin duplicar el bloque completo.
+
+    F-D3-01/F-D3-03 (sesión 21): el refill interno de ``route_board`` es
+    precisamente el disparador que el D3 reportó (zones.refilladas:1 → 53
+    violaciones nuevas) — workaround post-fill obligatorio acá también.
+    """
+    zones_refilladas = bridge.refill_zones(open_board)
+    bridge.enforce_hole_clearance(open_board, pcb_path)
+    try:
+        bridge.save_board(open_board)
+    except KicadMcpError as exc:
+        _audit_error(root, "route_board", route_params, ErrorCode.POST_ROUTE_PERSIST_FAILED)
+        raise KicadMcpError(
+            code=ErrorCode.POST_ROUTE_PERSIST_FAILED,
+            message=(
+                f"route_board completó {context} de {pcb_path.name} "
+                "pero no pudo guardar el board a disco."
+            ),
+            hint=(
+                "El board VIVO ya tiene el cambio aplicado; reintentá "
+                "save_board() manual o descartá los cambios."
+            ),
+            data={"pcb": pcb_path.name, "live_has_fix": True},
+        ) from exc
+    return zones_refilladas
 
 
 def _validate_zone_geometry(
@@ -2752,37 +2952,13 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             if refill and zones_existentes > 0 and reloaded is True:
                 assert open_board is not None  # reloaded=True lo implica
                 fill_start = time.perf_counter()
-                zones_refilladas = bridge.refill_zones(open_board)
-                # F-D3-01/F-D3-03 (sesión 21): el refill interno de
-                # route_board es precisamente el disparador que el D3
-                # reportó (zones.refilladas:1 → 53 violaciones nuevas) —
-                # workaround post-fill obligatorio acá también.
-                bridge.enforce_hole_clearance(open_board, pcb_path)
                 # D-23.2 (ADR-0012, sesión 24): persistir el vivo YA arreglado
                 # por refill+enforce — sin esto el disco queda con el
                 # clearance roto de forma indefinida (F-D4-02: el bug no era
                 # protección ausente, era falta de persistencia post-fix).
-                try:
-                    bridge.save_board(open_board)
-                except KicadMcpError as exc:
-                    _audit_error(
-                        root,
-                        "route_board",
-                        route_params,
-                        ErrorCode.POST_ROUTE_PERSIST_FAILED,
-                    )
-                    raise KicadMcpError(
-                        code=ErrorCode.POST_ROUTE_PERSIST_FAILED,
-                        message=(
-                            f"route_board completó ruteo + refill de {pcb_path.name} "
-                            "pero no pudo guardar el board a disco."
-                        ),
-                        hint=(
-                            "El board VIVO ya tiene el clearance arreglado; "
-                            "reintentá save_board() manual o descartá los cambios."
-                        ),
-                        data={"pcb": pcb_path.name, "live_has_fix": True},
-                    ) from exc
+                zones_refilladas = _refill_enforce_and_save(
+                    bridge, open_board, pcb_path, root, route_params, context="ruteo + refill"
+                )
                 fill_ms = (time.perf_counter() - fill_start) * 1000
             elif refill and zones_existentes > 0:
                 # El guard de arriba no corrió — el refill prometido se
@@ -2801,6 +2977,60 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             # arriba, para que ``err_post``/``por_tipo`` reflejen el estado
             # REAL persistido — no la salida cruda de Freerouting (F-D4-02).
             post_report = run_drc(pcb_path)
+
+            # F-D5-01 (sesión 32d, docs/investigacion/32c-f-d5-01.md):
+            # Freerouting no modela el plano como conductor (D-19.1) y puede
+            # rutear cobre ajeno tan cerca de un pad GND que el refill de
+            # arriba —que sí recorta con clearance, correctamente— queda
+            # geométricamente incapacitado para alcanzarlo. Stitching
+            # automático de una vía bajo guardrails estrictos (D3), fallback
+            # a exposición explícita en el payload si el guardrail rechaza —
+            # nunca error (D-32d.2). Sólo se intenta con board vivo
+            # sincronizado (``reloaded is True``, igual guard que el bloque
+            # de refill de arriba) y si hay algo que stitchear
+            # (``orphan_items`` no vacío) — H4: cero costo en el camino feliz.
+            stitched_vias: list[dict[str, Any]] = []
+            orphan_pads: list[dict[str, Any]] = []
+            orphan_items = [
+                it
+                for v in post_report.violations
+                if v.rule == "unconnected_items"
+                for it in v.items
+                if it.pos is not None
+            ]
+            if orphan_items and reloaded is True and zones_existentes > 0:
+                assert open_board is not None  # reloaded=True lo implica
+                candidates, orphan_pads = _evaluate_stitch_candidates(
+                    orphan_items,
+                    bridge.list_all_pads(open_board),
+                    bridge.list_zones(open_board),
+                    bridge.list_all_copper(open_board),
+                )
+                for c in candidates:
+                    kiid = bridge.add_via(
+                        open_board,
+                        net=c["net"],
+                        x_mm=Mm(c["x_mm"]),
+                        y_mm=Mm(c["y_mm"]),
+                        diameter_mm=Mm(0.8),
+                        drill_mm=Mm(0.4),
+                    )
+                    stitched_vias.append(_stitched_via_dict(c, kiid))
+                if stitched_vias:
+                    # D-23.2/ADR-0012: las vías de stitching deben reflejarse
+                    # en disco y en drc.err_post — reusa el mismo pipeline
+                    # refill+enforce+save de arriba, sobre el vivo ya
+                    # actualizado con las vías nuevas, y re-mide.
+                    _refill_enforce_and_save(
+                        bridge,
+                        open_board,
+                        pcb_path,
+                        root,
+                        route_params,
+                        context="ruteo + stitching",
+                    )
+                    post_report = run_drc(pcb_path)
+
             post_err = sum(1 for v in post_report.violations if v.severity == "error")
             por_tipo: dict[str, int] = {}
             for v in post_report.violations:
@@ -2882,6 +3112,11 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                         else {}
                     ),
                 },
+                # F-D5-01 (sesión 32d): ausentes cuando no aplica (H4) — sin
+                # pads huérfanos post-refill, ``route_board`` no agrega
+                # ninguna clave nueva al payload.
+                **({"stitched_vias": stitched_vias} if stitched_vias else {}),
+                **({"orphan_pads": orphan_pads} if orphan_pads else {}),
             }
 
             audit_result: dict[str, Any] = {
@@ -2901,6 +3136,10 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             }
             if refill_skipped_reason is not None:
                 audit_result["refill_skipped_reason"] = refill_skipped_reason
+            if stitched_vias:
+                audit_result["stitched_vias"] = stitched_vias
+            if orphan_pads:
+                audit_result["orphan_pads"] = orphan_pads
 
             # F-V2-REFILL-SILENCIOSO (sesión 32b, D-32b.1): sólo
             # ``reload_failed`` rompe el contrato D-23.2/ADR-0012 — el

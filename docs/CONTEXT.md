@@ -133,6 +133,13 @@ insuficiente a radios ~1.8mm) y fix aterrizado (N=16→64 +
   (clearance de copper de otro net estrangulando el corredor de un pad
   GND al plano, refinamiento de D-19.1); fix diferido a sesión 32d
   (sesión 32c).
+- D-32d.1: fix de F-D5-01 — stitching automático de vías (`add_via`) bajo
+  5 guardrails geométricos estrictos dentro de `route_board`, fallback a
+  exposición explícita (`orphan_pads`) si un guardrail rechaza (sesión
+  32d, extiende ADR-0012).
+- D-32d.2: rechazo de guardrail nunca es error — sólo fallo técnico de
+  `add_via` o de `save_board()` post-stitching lo son, con códigos ya
+  existentes, sin códigos nuevos (sesión 32d).
 - ADR-0013: refs duplicados/sin anotar se resuelven por anotación, no
   borrado — `set_footprint_ref` + pre-check `DUPLICATE_REFS` en
   `route_board` (sesión 31b, cierre F-V1-02). ADR-0010 intacta.
@@ -228,9 +235,30 @@ Fase 1-3— nunca ejercitó, no una regresión del código.
    el pipeline de refill/zonas de `route_board`, fuera del alcance
    quirúrgico de 32c) con hipótesis completamente especificada
    (D-32c.1, D-32c.2, `docs/investigacion/32c-f-d5-01.md`,
-   `docs/historico/sesiones/32c-reporte.md`). **33 (Nivel C)** arranca
-   sólo después de que 32d cierre, candidato a confirmar siguiendo el
-   patrón de admisión de Bloque 0 de sesiones 31/32.
+   `docs/historico/sesiones/32c-reporte.md`).
+   **F-D5-01 cerrado parcialmente (sesión 32d):** stitching automático de
+   vías bajo 5 guardrails geométricos dentro de `route_board`, fallback a
+   exposición explícita (`orphan_pads`) cuando un guardrail rechaza
+   (D-32d.1/D-32d.2, ADR-0012 §"F-D5-01 stitching"). Hallazgo que corrige
+   una premisa de 32c: las 3 manifestaciones NO comparten topología de
+   capas — `anavi-macro-pad-12` (`J4.3`/`J5.3`) tiene el pad y la única
+   zona GND en la MISMA capa (sin cobre GND en la capa opuesta), así que
+   el guardrail #4 rechaza por diseño: una vía ahí no conectaría nada.
+   H1 se re-baselineó de macro-pad-12 a `anavi-dev-mic` (topología "capas
+   opuestas", donde el stitching sí cierra el síntoma); macro-pad-12
+   pasó a ser el caso canónico de rechazo correcto de guardrail (H2) y
+   queda **abierto** como sub-patrón `F-D5-01-B` (estrangulamiento
+   lateral en la misma capa, `docs/BACKLOG.md`). Verificación: canario
+   unit permanente (8 tests) + suite offline/integration completas
+   verdes; verificación end-to-end contra el motor real
+   (`test_pcb_session32d_stitching_gui_slow.py`, marker
+   `integration_gui_slow`) escrita pero **pendiente de ejecución
+   humana** (requiere abrir cada proyecto en el PCB Editor de KiCad,
+   sin automatización posible en este MVP — confirmado con un probe
+   directo por IPC en sesión 32d). Ver
+   `docs/historico/sesiones/32d-reporte.md`.
+   **33 (Nivel C)** arranca en la próxima sesión, candidato a confirmar
+   siguiendo el patrón de admisión de Bloque 0 de sesiones 31/32.
 
 ## Estado actual: Fase 3 — consolidación (histórico, cerrada sesión 29)
 

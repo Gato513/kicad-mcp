@@ -241,3 +241,80 @@ posterior — asimetría real con el contrato D-23.2 tal como se aplica a las
 otras tres tools. Fuera del alcance acordado de sesión 32b (fix quirúrgico
 sobre F-V2-REFILL-SILENCIOSO); anotado en `docs/BACKLOG.md` para evaluación
 futura.
+
+## F-D5-01 stitching (sesión 32d)
+
+Sesión 32c aisló causalmente (`docs/investigacion/32c-f-d5-01.md`) un
+mecanismo downstream de D-19.1: Freerouting puede rutear el track de OTRO
+net tan cerca de un pad GND específico que el refill de seguridad de este
+ADR —que sí recorta con clearance, correctamente, por diseño— queda
+geométricamente incapacitado para conectarlo. El refill+enforce que D-23.2
+ya exige es necesario pero **no suficiente**: no puede regenerar corredor
+donde el corredor físico disponible es menor que lo que la geometría
+exige. Reproducido causalmente en `anavi-macro-pad-12` (2/2 experimentos de
+borrado dirigido) y por correlación fuerte en `anavi-dev-mic`.
+
+**Decisión (D-32d.1):** dentro del pipeline de `route_board`, tras el DRC
+post-refill final (el mismo punto donde ya se mide `err_post`), detectar
+pads con `unconnected_items` sobre nets que tienen zona de cobre propia y
+stitchear una vía (`bridge.add_via`, tool ya existente desde sesión 09) SOLO
+si 5 guardrails geométricos se cumplen simultáneamente: (1) huérfano
+post-refill; (2) el net tiene ≥1 zona de cobre propia; (3) el pad cae
+geométricamente dentro del outline de DISEÑO de esa zona (no del
+`filled_polygon` — permite stitchear con fill fracturado); (4) existe zona
+del mismo net en la capa OPUESTA a la del pad (la vía necesita cobre real
+en ambos extremos); (5) la región inmediata (~1mm) en esa capa opuesta está
+libre de cobre ajeno. Cualquier condición que falle → NO stitching, el pad
+se expone en el payload (`orphan_pads`, con `reason`) — **nunca es error**
+(D-32d.2): un rechazo de guardrail es una decisión de diseño correcta, no
+un fallo de la tool.
+
+**Por qué esto no reabre D-23.2, lo extiende.** El contrato sigue siendo
+"cuando `route_board` termina OK, disco == memoria == `err_post`
+reportado" — el stitching corre ANTES de la medición final, no después: si
+se stitcheó ≥1 vía, `route_board` vuelve a correr refill+enforce+`save_board`
+(reusando el mismo pipeline, extraído a `_refill_enforce_and_save`) y
+vuelve a medir DRC, de modo que `drc.err_post`/`por_tipo` en el payload
+siguen describiendo el estado REAL persistido, ahora incluyendo las vías
+nuevas. Sin pads huérfanos, el bloque no hace nada adicional (cero costo,
+ningún DRC de más) — el contrato D-23.2 original queda intacto en el
+camino feliz.
+
+**Falla de `save_board()` durante el re-persist del stitching:** mismo
+`POST_ROUTE_PERSIST_FAILED` (sesión 24), mismo `data.live_has_fix: true`,
+mismo criterio de no-reintento (D-07.1) — no se agrega código de error
+nuevo. Semánticamente es el mismo modo de falla que el bloque de refill
+original: el vivo tiene el arreglo (ahora con las vías de stitching), el
+disco no.
+
+**Hallazgo de diseño (sesión 32d, corrige una premisa de la investigación
+32c): las 3 manifestaciones NO comparten la misma topología de capas.** En
+`anavi-macro-pad-12` (`J4.3`/`J5.3`), el pad huérfano y la única zona GND
+del board están en la MISMA capa (B.Cu) — no hay cobre GND en la capa
+opuesta (F.Cu). El guardrail #4 rechaza por diseño: una vía ahí uniría
+B.Cu (relleno retraído por el clearance del track ajeno que 32c aisló) con
+F.Cu (sin cobre GND) — no conectaría nada, sólo agregaría una vía dangling.
+El estrangulamiento de macro-pad-12 es **lateral, en la misma capa** — un
+sub-patrón distinto del que este fix cierra (capas opuestas, confirmado
+sobre `anavi-dev-mic`). macro-pad-12 queda **abierto** en `docs/BACKLOG.md`
+como candidato a un mecanismo de mitigación distinto (ensanchar el
+corredor, o un keepout que empuje a Freerouting lejos del pad) — fuera del
+alcance de este ADR y de sesión 32d.
+
+**Verificación:** unit (canario permanente,
+`tests/test_pcb_session32d_orphan_pads_stitching_canary.py`, 8 tests —
+guardrails 1-5 individualmente, exposición mixta, H4 camino feliz,
+re-medición de `err_post`) + suite offline/integration completas verdes.
+Verificación end-to-end contra el motor real (Freerouting + KiCad GUI en
+vivo) sobre `anavi-dev-mic`/`anavi-macro-pad-12` queda **escrita pero
+pendiente de ejecución humana**
+(`tests/test_pcb_session32d_stitching_gui_slow.py`, marker
+`integration_gui_slow`) — requiere abrir cada proyecto en el PCB Editor de
+KiCad, protocolo manual sin automatización posible en este MVP (F4, ver
+`docs/guias/pruebas-gui.md`); confirmado con un probe directo por IPC en
+esta sesión que ningún PCB Editor estaba en foco. Ver
+`docs/historico/sesiones/32d-reporte.md` §"Verificación pendiente".
+
+**Fuente:** sesión 32d. Ver `docs/investigacion/32c-f-d5-01.md` §"Hipótesis
+de fix para sesión 32d" (input) y `docs/historico/sesiones/32d-reporte.md`
+(análisis comparativo D1-D3).

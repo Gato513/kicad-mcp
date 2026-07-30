@@ -242,7 +242,7 @@ audit line JSONL por cada mutación aceptada o rechazada.
 | `get_zones` | Lista zonas de cobre y keepouts filtradas por `layer`/`net`/`kind`, con `id` estable (sesión 19, P4.1) | `layer?`, `net?`, `kind?="copper"\|"keepout"`, `max_tokens?` | detail | `NET_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 | `fill_zones` | Refill de TODAS las zonas de cobre del board; `zone_id?` sólo valida existencia, no acota el refill (kipy no tiene fill selectivo — sesión 19, P4.3) — devuelve JSON `{zones_filled, duration_ms, snap_id}`. Sesión 27 (D-23.2, ADR-0012): persiste a disco el refill+enforce_hole_clearance del vivo, incondicionalmente, antes de retornar | `zone_id?`, `base_snap?` | JSON | `ZONE_ID_STALE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED`, `POST_ZONE_PERSIST_FAILED` |
 | `delete_zone` | Borra una zona (cobre o keepout) por `id` (de `get_zones`) — sesión 19, P4.4 | `id`, `base_snap?` | confirm | `ZONE_ID_STALE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED`, `SNAPSHOT_STALE`, `EXTERNAL_EDIT_DETECTED` |
-| `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO — devuelve JSON estructurado (sesión 17, P2.2; campo `zones` añadido sesión 19, P4.3), no un confirm de texto. Sesión 24 (D-23.2, ADR-0012): `drc.err_post` se mide y persiste post refill+enforce. Sesión 31b (ADR-0013): pre-check `DUPLICATE_REFS` corre ANTES del subprocess de exportación DSN — refs de footprint duplicados hacen fallar `pcbnew.ExportSpecctraDSN` enteramente, se detectan temprano con `data.duplicates` en vez de un `KICAD_CLI_FAILED` opaco. Sesión 32b (F-V2-REFILL-SILENCIOSO, extensión D-23.2/ADR-0012): si la recarga automática del editor vivo falla y había ≥1 zona de cobre, el refill de seguridad NO puede correr sin riesgo de pisar el ruteo — en vez de completar en silencio, levanta `POST_ROUTE_REFILL_SKIPPED` | `max_passes?`, `timeout_s?=600`, `refill?=true` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED`, `POST_ROUTE_PERSIST_FAILED`, `POST_ROUTE_REFILL_SKIPPED`, `DUPLICATE_REFS` |
+| `route_board` | Autoroutea el PCB con Freerouting (headless) y escribe el ruteo a DISCO — devuelve JSON estructurado (sesión 17, P2.2; campo `zones` añadido sesión 19, P4.3), no un confirm de texto. Sesión 24 (D-23.2, ADR-0012): `drc.err_post` se mide y persiste post refill+enforce. Sesión 31b (ADR-0013): pre-check `DUPLICATE_REFS` corre ANTES del subprocess de exportación DSN — refs de footprint duplicados hacen fallar `pcbnew.ExportSpecctraDSN` enteramente, se detectan temprano con `data.duplicates` en vez de un `KICAD_CLI_FAILED` opaco. Sesión 32b (F-V2-REFILL-SILENCIOSO, extensión D-23.2/ADR-0012): si la recarga automática del editor vivo falla y había ≥1 zona de cobre, el refill de seguridad NO puede correr sin riesgo de pisar el ruteo — en vez de completar en silencio, levanta `POST_ROUTE_REFILL_SKIPPED`. Sesión 32d (F-D5-01, extensión ADR-0012): pads GND huérfanos post-refill sobre nets con zona propia se stitchean automáticamente (`add_via`) bajo 5 guardrails geométricos, o se exponen en `orphan_pads` con la razón si un guardrail rechaza — ver campos `stitched_vias`/`orphan_pads` | `max_passes?`, `timeout_s?=600`, `refill?=true` | confirm | `KICAD_CLI_MISSING`, `KICAD_CLI_FAILED`, `KICAD_TIMEOUT`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_RESTARTED`, `POST_ROUTE_PERSIST_FAILED`, `POST_ROUTE_REFILL_SKIPPED`, `DUPLICATE_REFS` |
 | `get_footprint_neighbors` | Vecinos de un footprint en un radio: pads/tracks/vías/holes ajenos + distancia al borde del board (sesión 21, P1, F-D3-04) | `ref`, `radius_mm?=5.0`, `include_pads?=true`, `include_tracks?=true`, `include_vias?=true`, `include_holes?=true`, `include_edge?=true`, `max_tokens?` | JSON | `COMPONENT_NOT_FOUND`, `INVALID_PARAMS`, `CONTEXT_BUDGET_IMPOSSIBLE`, `PROJECT_NOT_FOUND`, `KICAD_NOT_RUNNING`, `KICAD_TIMEOUT`, `KICAD_RESTARTED` |
 
 **Flag `live_stale` (sesión 14, D-14.1; recarga automática sesión 18, P3.1,
@@ -601,6 +601,35 @@ vivo todavía refleja el estado **pre-ruteo** (el `save_board` implícito bajó
 live→disco antes de que Freerouting escribiera) — refillear y guardar ese
 vivo pisaría el ruteo recién persistido en disco, así que el error explícito
 es la única opción segura (ver ADR-0012 §"Extensión F-V2 (sesión 32b)").
+
+**Campos `stitched_vias` / `orphan_pads` de `route_board` (sesión 32d,
+F-D5-01, ADR-0012 §"F-D5-01 stitching").** Ausentes del payload cuando no
+aplican (camino feliz: sin pads huérfanos tras el refill final, ningún
+campo nuevo, ningún costo adicional). Requieren `reloaded=true` y
+`zones.existentes > 0` — sin board vivo sincronizado no hay IPC con el que
+evaluar geometría ni crear vías.
+
+- `stitched_vias`: `[{pad, net, x_mm, y_mm, layers: [capa_pad, capa_opuesta],
+  kiid}]` — una entrada por cada vía que `route_board` creó automáticamente
+  para cerrar un pad huérfano. `pad` es la descripción cruda del DRC
+  (dependiente del locale de KiCad, sólo para lectura humana — el matching
+  interno es por posición, nunca por texto). Cuando se stitchea ≥1 vía,
+  `route_board` vuelve a refillear/`enforce_hole_clearance`/`save_board` y a
+  medir DRC — `drc.err_post`/`por_tipo` del payload reflejan el estado FINAL
+  persistido (D-23.2 se mantiene: disco == memoria == `err_post`).
+- `orphan_pads`: `[{pad, net, x_mm, y_mm, reason}]` — pads huérfanos post-
+  refill que NO se stitchearon porque algún guardrail geométrico rechazó
+  (ver ADR-0012 para las 5 condiciones). `reason` identifica cuál: `"sin
+  zona de cobre propia"`, `"fuera del outline de la zona"`, `"sin zona en
+  capa opuesta"`, `"cobre ajeno en la región inmediata"`. **Nunca es un
+  error** — es información para que el llamador decida (p. ej. mover el
+  pad, ensanchar el corredor, stitchear manualmente con `add_via` si
+  considera aceptable el riesgo que el guardrail evitó).
+- Fallo real: si `add_via` falla técnicamente, propaga su código existente
+  sin reintento (D-07.1). Si el `save_board()` del re-persist post-stitching
+  falla, `POST_ROUTE_PERSIST_FAILED` (mismo código de sesión 24, mismo
+  `data.live_has_fix: true`) — ningún código de error nuevo se agregó al
+  catálogo (F3 intacta).
 
 **`add_zone` / `add_keepout_zone` / `get_zones` / `fill_zones` / `delete_zone`
 (sesión 19, P4.1-P4.4, investigación `docs/investigacion/19-zonas-ipc.md`).**

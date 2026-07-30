@@ -253,7 +253,7 @@ código **nunca leía Edge.Cuts**, iba directo al fallback (margen de
 - **Sin ADR** — implementa comportamiento ya documentado, sin cambiar
   contrato externo (DoD #4, "aclaración de comportamiento").
 
-## P1 (investigación Fase 4) — Conectividad GND no cierra tras refill (F-D5-01 / F-V1c-01 / F-V2-VIA-HUERFANA) — MECANISMO AISLADO sesión 32c, fix diferido a 32d
+## P1 (investigación Fase 4) — Conectividad GND no cierra tras refill (F-D5-01 / F-V1c-01 / F-V2-VIA-HUERFANA) — CERRADO PARCIALMENTE sesión 32d, ver sub-patrón abierto abajo
 
 **3ª instancia confirmada del patrón → cumple el trigger de promoción
 explícito** ("2 dogfoodings/validaciones independientes reproducen el
@@ -314,6 +314,65 @@ es el mismo.
   investigación), `docs/historico/sesiones/32c-reporte.md` (ejecutivo),
   `validation-suite/level-a/anavi-dev-mic/metrics.md` (instancia 2) y
   `validation-suite/level-b/anavi-macro-pad-12/metrics.md` (instancia 3).
+
+### CERRADO PARCIALMENTE (sesión 32d) — stitching automático, topología "capas opuestas"
+
+Fix implementado en `route_board` (D-32d.1/D-32d.2,
+`docs/adr/0012-route-board-persist-contract.md` §"F-D5-01 stitching"):
+tras el refill final, `route_board` stitchea automáticamente una vía para
+cada pad huérfano cuyo net tenga zona propia en la capa OPUESTA a la del
+pad (5 guardrails geométricos estrictos, D3). Es la primera respuesta
+arquitectónica del proyecto a D-19.1 (Freerouting no ve el plano como
+conductor) — mitiga el síntoma, D-19.1 sigue vigente como restricción del
+motor externo.
+
+**Hallazgo de sesión 32d: las 3 manifestaciones NO comparten topología.**
+Instancia 1 (despertador) e instancia 2 (`anavi-dev-mic`, `MK1.3`) son la
+topología "capas opuestas" — el pad huérfano está en una capa y la(s)
+zona(s) del net en la OTRA; una vía pasante conecta ambas correctamente.
+**Cierra con este fix.** Instancia 3 (`anavi-macro-pad-12`, `J4.3`/`J5.3`)
+es una topología DISTINTA — pad y única zona GND en la MISMA capa (B.Cu),
+sin cobre GND en F.Cu. Una vía ahí uniría B.Cu (relleno retraído por el
+clearance del track ajeno) con F.Cu (sin cobre GND): no conectaría nada.
+El guardrail #4 rechaza correctamente (verificado con la geometría real
+del fixture, no sólo por diseño teórico) — **queda abierta**, ver entrada
+siguiente.
+
+- **Verificación:** canario unit permanente (8 tests, guardrails 1-5 +
+  exposición mixta + H4 + re-medición de `err_post`) + suite
+  offline/integration completas verdes. Verificación end-to-end contra el
+  motor real (`anavi-dev-mic` cerrando, `anavi-macro-pad-12` rechazando)
+  **escrita pero pendiente de ejecución humana**
+  (`tests/test_pcb_session32d_stitching_gui_slow.py`) — requiere abrir
+  cada proyecto en el PCB Editor de KiCad (protocolo manual, sin
+  automatización posible en este MVP). Ver
+  `docs/historico/sesiones/32d-reporte.md` §"Verificación pendiente".
+
+### Abierto — F-D5-01-B: estrangulamiento lateral en la misma capa (`anavi-macro-pad-12`)
+
+**Origen:** sub-patrón descubierto en sesión 32d al intentar aplicar el
+fix de stitching a `anavi-macro-pad-12`. El pad huérfano (`J4.3`/`J5.3`,
+B.Cu) y la única zona GND del board (también B.Cu) están en la misma
+capa; el track ajeno (`+5V`) que 32c aisló como causal también corre en
+B.Cu — es un estrangulamiento lateral del corredor, no un problema de
+capas opuestas. Ninguna vía puede remediarlo: conectaría cobre real
+(B.Cu, del lado del pad) con la nada (F.Cu, sin cobre GND).
+
+**Candidatos de mitigación NO evaluados** (fuera del alcance quirúrgico
+de sesión 32d): ensanchar el corredor disponible (mover el pad o rediseñar
+la zona, fuera de lo que `route_board` puede decidir autónomamente); un
+keepout que empuje a Freerouting lejos del corredor angosto ANTES de
+rutear (viable en principio — `add_keepout_zone` ya existe — pero
+requeriría identificar el corredor angosto ANTES del ruteo, no después,
+cambio de orden de pipeline no trivial); aceptar el patrón como límite
+conocido del autoruteo y documentarlo en `docs/glosario.md`/
+`restricciones-kicad.md` para que el agente lo anticipe en vez de
+descubrirlo por DRC.
+
+**Severidad:** no bloquea flujos existentes (evidencia: `J4.3`/`J5.3` no
+impidieron que macro-pad-12 completara 15/15 nets ruteables en sesión 32).
+Candidato a investigación P4.0-style si aparece una 2ª instancia
+confirmada de este sub-patrón específico (capas iguales, no opuestas).
 
 ## P2 — Correcciones puntuales con evidencia repetida
 

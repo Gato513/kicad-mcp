@@ -2261,7 +2261,16 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # bordes) usando board_outline (la cabecera 'outline:' de la sesión 11 lo
         # dice barato). Snapshot vivo post-mutación (mtimes=None, patrón add_track:
         # el contorno no vive en NormalizedState). El loop cierra con save_board.
+        # Sesión 34a (auditoría de contratos, asimetría A7): esta era la única
+        # tool W-IPC de PCB sin _guard_live_stale()/check_no_external_disk_edit()
+        # — mutaba el vivo aunque el disco tuviera un ruteo pendiente de recarga
+        # (D-14.1) o hubiera sido editado externamente (P3.2). Fix trivial:
+        # mismo guard que sus 9 pares W-IPC, sin cambio de contrato.
         with tool_call_timer() as timer:
+            _guard_live_stale()  # D-14.1 (sesión 34a: asimetría A7, faltaba acá)
+            check_no_external_disk_edit(  # P3.2: red de seguridad, independiente de base_snap
+                get_default_store(), _resolve_root_schematic_or_pcb()
+            )
             root = _project_root()
             if base_snap is not None:
                 _check_base_snap(base_snap)

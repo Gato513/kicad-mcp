@@ -144,6 +144,16 @@ insuficiente a radios ~1.8mm) y fix aterrizado (N=16→64 +
   formula preguntando primero "¿qué resultado la refuta?", generaliza a
   todo el proyecto lo que D-30.1/D-31c.1 ya exigían en sus contextos
   específicos (sesión 33, metodológico, permanente).
+- D-34a.1: los 4 ejes del contrato de escritura del bridge (persistencia,
+  propagación de errores, sincronización disco↔memoria, manejo de
+  reload) — checklist estándar para auditorías futuras y para
+  `CONTRIBUTING.md §How to add a write tool` (sesión 34a, metodológico,
+  permanente).
+- D-34a.2: hallazgos de asimetría de la auditoría 34a —
+  `delete_tracks_bulk`/`delete_zone`/`add_keepout_zone` no aplican el
+  pipeline refill+enforce+save de D-23.2/ADR-0012 pese a tocar geometría
+  que interactúa con zonas; ADR-0012 se ratifica correcto en su alcance
+  declarado (sesión 34a).
 - ADR-0013: refs duplicados/sin anotar se resuelven por anotación, no
   borrado — `set_footprint_ref` + pre-check `DUPLICATE_REFS` en
   `route_board` (sesión 31b, cierre F-V1-02). ADR-0010 intacta.
@@ -289,9 +299,39 @@ Fase 1-3— nunca ejercitó, no una regresión del código.
    `validation-suite/level-c/hackrf-one/validation-report.md`,
    `metrics.md` y `docs/historico/sesiones/33-reporte.md`.
 
-**34 (preparación release OSS)** es la próxima sesión, con la salvedad
-de que `F-V3-ZONE-FILL-CRASH` y el crash-loop de Freerouting quedan como
-candidatos a investigación intermedia si reaparecen antes del release.
+5. Sesión 34a — **auditoría sistemática de contratos de escritura del
+   bridge — ✅ cerrada (2026-07-30).** Cumple el compromiso formal del
+   arquitecto post-32b: auditó las 19 tools de escritura del bridge (20
+   filas de matriz, `add_zone` dual-mode) contra los 4 ejes (persistencia,
+   propagación de errores, sincronización disco↔memoria, manejo de
+   reload — D-34a.1). Refutó el inventario preliminar del prompt en 3
+   puntos (`delete_footprint`/`clone_symbols` no existen como tools;
+   `add_keepout_zone`/`delete_zone`/`save_board`/`reload_board_from_disk`
+   faltaban). **3 asimetrías confirmadas** (D-34a.2): `delete_tracks_bulk`
+   (P1, refill sin enforce/save, agendada `34a-fix-1`), `delete_zone` y
+   `add_keepout_zone` (P2, sin refill/save sobre zonas vecinas, sin
+   precedente empírico, documentadas como limitación). **1 asimetría
+   nueva fixeada in-situ:** `draw_board_outline` era la única tool W-IPC
+   de PCB sin `_guard_live_stale()`/`check_no_external_disk_edit()`
+   (asimetría A7) — fix trivial de 2 líneas + 2 tests offline nuevos
+   (patrón `mark_live_stale`/edición externa ya usado en el repo, sin
+   fixtures nuevas), calificó bajo los 5 criterios estrictos del Bloque 3.
+   `F-V3-ZONE-FILL-CRASH` quedó **no concluyente**: el análisis de código
+   no encontró causa del lado del bridge, pero la reproducción empírica
+   planeada (harness sintético) no se ejecutó — el único KiCad vivo
+   disponible tenía abierto precisamente el proyecto HackRF One que ya
+   crasheó 3/3 veces en sesión 33, y no hay tooling para abrir un
+   proyecto distinto sin operar la GUI; se optó por no asumir ese riesgo
+   sin decisión deliberada. ADR-0012 (D-23.2) se ratifica correcto en su
+   alcance declarado — la auditoría no encontró que el contrato mismo
+   esté mal formulado. Suite offline 394/394 verde, `ruff`/`mypy`
+   limpios. Ver `docs/analisis/auditoria-contratos-bridge.md` (documento
+   principal, input para 34b/34c) y `docs/historico/sesiones/34a-reporte.md`.
+
+**34b (LICENSE + README público inicial + CONTRIBUTING.md)** es la
+próxima sesión, con la salvedad de que `F-V3-ZONE-FILL-CRASH` y el
+crash-loop de Freerouting quedan como candidatos a investigación
+intermedia si reaparecen antes del release.
 
 ## Estado actual: Fase 3 — consolidación (histórico, cerrada sesión 29)
 

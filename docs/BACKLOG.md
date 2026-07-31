@@ -13,7 +13,7 @@ aproximado de severidad.
 
 ## P0 — Bloqueantes de dogfooding / release
 
-### F-V3-ZONE-FILL-CRASH — `add_zone(fill=true)` crashea KiCad de forma reproducible en la 3ª-4ª llamada sobre boards grandes — Abierto, no investigado
+### F-V3-ZONE-FILL-CRASH — `add_zone(fill=true)` crashea KiCad de forma reproducible en la 3ª-4ª llamada sobre boards grandes — No concluyente tras auditoría 34a
 
 **Origen:** sesión 33, Validation Suite Nivel C (HackRF One, 437
 footprints / 380 nets / 4 capas).
@@ -52,7 +52,32 @@ alimentación). No bloquea el caso de 1-2 zonas (verificado limpio en
 Nivel A/B y en esta misma sesión con GND único). Candidato a
 investigación P4.0-style si reaparece en un board de escala comparable.
 
-**Fuente:** sesión 33. Detalle forense completo en
+**Clasificación (sesión 34a, auditoría de contratos):** **no concluyente**.
+Análisis de código del pipeline de `add_zone(fill=true)`
+(`refill_zones()` interno del bridge → `enforce_hole_clearance()` →
+`save_board()`) no encontró ninguna causa del lado del bridge — es el
+mismo patrón que `fill_zones()`/`route_board()`, ninguna con crashes
+reportados. La reproducción empírica con harness sintético, planeada para
+esta sesión, no se ejecutó: el único KiCad vivo disponible tenía abierto
+precisamente el proyecto HackRF One que ya crasheó 3/3 veces en sesión 33
+(`KICAD_MCP_PROJECT` quedó fijado a esa ruta), y no existe tool en la
+superficie del MCP para abrir un proyecto distinto en el editor vivo sin
+operar la GUI directamente — ejercer el harness ahí habría significado
+asumir el mismo riesgo que la sesión buscaba evitar, sin decisión
+deliberada de hacerlo. Orientativamente compatible con un bug de
+fragmentación de pcbnew a escala (la firma de 710 zonas/707 fragmentos
+sin net es consistente con fill fragmentando geometría compleja
+internamente, no con una operación del bridge que "corte" zonas) — sin
+confirmación positiva. Detalle completo:
+`docs/analisis/auditoria-contratos-bridge.md` §4.
+
+**Próximo paso:** repro fiel contra HackRF One (asumiendo el riesgo
+deliberadamente) o contra un board sintético de escala equivalente (400+
+footprints, 4+ capas) — investigación propia si reaparece antes del
+release; no bloquea el ciclo actual.
+
+**Fuente:** sesión 33 (hallazgo), sesión 34a (clasificación acotada).
+Detalle forense completo en
 `validation-suite/level-c/hackrf-one/validation-report.md` §Fricciones.
 
 ### F-V3-ROUTER-TIMEOUT-HARD — Freerouting 2.1.0 entra en crash-loop interno sobre boards grandes (HackRF One) — Bug upstream, no investigado
@@ -226,6 +251,46 @@ ampliado en sesión 27**: el contrato D-23.2 ya cubre las tres tools
 abajo. **Ratificado 25/25 en producción real hasta cierre D7 (sesión 29),
 sin divergencias.** Reabrir como P0 solo si una sesión futura lo ratifica
 como regresión.
+
+## P1 — `delete_tracks_bulk` no respeta D-23.2/ADR-0012 sobre zonas tocadas — Abierto, agendado `34a-fix-1`
+
+**Origen:** observado en sesión 32b (`docs/BACKLOG.md` §Higiene menor,
+histórico), no accionado por estar fuera del alcance quirúrgico de esa
+sesión. **Confirmado con severidad P1** (no P3/higiene) en la auditoría
+sistemática de contratos de escritura de sesión 34a.
+
+`delete_tracks_bulk` (`src/kicad_mcp/tools/pcb.py:2039`) llama
+`bridge.refill_zones(board)` cuando el borrado toca tracks de una zona de
+cobre, pero **sin** `enforce_hole_clearance()` ni `save_board()`
+posteriores — a diferencia de `route_board`, `fill_zones` y
+`add_zone(fill=True)`, que corren las tres juntas (contrato D-23.2/
+ADR-0012). Dos consecuencias concretas: (1) el clearance contra holes
+puede quedar roto (mismo bug conceptual que F-D3-01, sin su workaround
+acá); (2) el refill vive sólo en memoria — el payload reporta
+`zones_refilled: 1` pero el disco nunca se actualiza, así que un
+`run_drc()` inmediato mide el estado viejo. El propio docstring de
+`enforce_hole_clearance` (`ipc.py:2016`) exige llamarlo **siempre**
+inmediatamente después de `refill_zones()` — esta tool viola esa
+invariante directamente.
+
+**Evidencia de test:**
+`tests/test_pcb_delete_bulk.py::test_delete_tracks_bulk_refills_zones_when_copper_zone_present`
+sólo asegura `zones_refilled == 1` — sin ninguna assertion de
+`save_board()`/`enforce_hole_clearance()` invocados. El test documenta el
+comportamiento actual, no lo objeta.
+
+**No fixeado en sesión 34a** (fuera de alcance: la sesión es auditoría
+pura, fixes triviales <20 líneas únicamente). Hipótesis de fix agendada
+como `34a-fix-1`: reemplazar la llamada inline por
+`_refill_enforce_and_save(bridge, board, pcb_path, root, params,
+context="borrado bulk")` (mismo helper que ya usa `route_board`), con
+manejo de fallo de persistencia visible (código nuevo o reuso de
+`POST_ZONE_PERSIST_FAILED`). Requiere: decisión del arquitecto sobre si
+extiende ADR-0012 formalmente, test de regresión con zona de cobre real +
+verificación de disco post-save, y gate GUI del DoD (toca pipeline de
+zonas). Detalle completo:
+`docs/analisis/auditoria-contratos-bridge.md` §3 (ficha
+`delete_tracks_bulk`) y §5.3.
 
 ## P1 — Solder mask bridge en ANT1 — ✅ CERRADO sesión 30 (mecanismo aislado + fix), pendiente gate GUI
 
@@ -619,14 +684,26 @@ Nice-to-have, para después de convergencia de Fase 3 (Fase 4).
 - Contador agregado de `post_fallback` en `health()` para monitoreo pasivo de
   la derivación local (propuesto en `historico/analisis/ANALISIS-ESTADO-Y-BACKLOG.md`
   §C3, nunca implementado, 0 fallbacks observados hasta ahora).
-- **Asimetría de `delete_tracks_bulk` frente al contrato D-23.2/ADR-0012**
-  (observada en sesión 32b, no accionada — fuera del alcance quirúrgico de
-  esa sesión): `delete_tracks_bulk` (`src/kicad_mcp/tools/pcb.py`) llama
-  `refill_zones()` cuando borra tracks que tocan zonas de cobre, pero SIN
-  `enforce_hole_clearance()` ni `save_board()` posterior — a diferencia de
-  `route_board`, `fill_zones` y `add_zone(fill=True)`, que sí corren las
-  tres. Evaluar si el mismo mecanismo de F-D3-01 (clearance roto post-fill)
-  aplica acá y si amerita la misma persistencia explícita.
+- **P3 — `move_footprint` sin `check_no_external_disk_edit()`** (hallazgo
+  auditoría 34a): a diferencia de `add_track`/`add_via`/`set_footprint_ref`/
+  `delete_tracks_bulk`, `move_footprint` sólo llama `_guard_live_stale()`
+  (D-14.1), no la red P3.2 independiente de `base_snap`. Inconsistencia
+  menor — `_guard_live_stale()` sigue cubriendo el caso principal (ruteo
+  pendiente de recarga). Candidato trivial (misma familia que A7, fix
+  sesión 34a) para una futura pasada de limpieza de consistencia; no
+  amerita sesión propia. Ver `docs/analisis/auditoria-contratos-bridge.md`
+  §3 (ficha `move_footprint`).
+- **P2 — `delete_zone`/`add_keepout_zone` no recalculan fills vecinos**
+  (hallazgos A2/A3, auditoría 34a, nuevos — sin precedente previo en
+  BACKLOG): ninguna de las dos corre `refill_zones()` tras mutar geometría
+  que puede interactuar con zonas de cobre existentes (borrar una zona de
+  cobre con vecinas solapadas; crear un keepout `no_pours` sobre un fill
+  ya existente). Sin evidencia empírica de impacto real (a diferencia de
+  A1, que sí tiene precedente F-D3-01) — documentado como limitación
+  conocida, no como fix ciego (D-30.1/D-32c.1: investigar antes de
+  fixear). Promover a investigación si la Validation Suite lo evidencia.
+  Detalle: `docs/analisis/auditoria-contratos-bridge.md` §3 (fichas
+  `delete_zone`, `add_keepout_zone`).
 
 ---
 

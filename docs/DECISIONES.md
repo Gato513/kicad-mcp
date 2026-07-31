@@ -706,6 +706,89 @@ sistemáticamente mayor que el costo de preguntarla.
 
 **Fuente:** sesión 33, formalizado al cierre.
 
+### D-34a.1 — Los 4 ejes del contrato de escritura del bridge (metodológico, permanente)
+
+**Contexto:** compromiso formal del arquitecto post-sesión 32b — auditar
+sistemáticamente todos los contratos de escritura del bridge antes del
+release OSS, no para reescribirlos sino para verificar que cumplen el
+mismo modelo de persistencia, propagación de errores y sincronización
+disco↔memoria. Ejecutado en sesión 34a sobre las 19 tools de escritura
+existentes (20 filas de matriz, `add_zone` dual-mode). Resultado completo:
+`docs/analisis/auditoria-contratos-bridge.md`.
+
+**Decisión:** toda tool de escritura del bridge (PCB vía IPC o
+esquemático vía `kicad-skip`) se evalúa contra 4 ejes fijos:
+
+1. **Persistencia** — ¿la tool guarda a disco? ¿siempre o condicional?
+   ¿hay camino donde reporta éxito sin persistir?
+2. **Propagación de errores** — ¿todo fallo de escritura es visible con
+   `{code, message, hint}`? ¿coherente con precedentes
+   (`POST_ROUTE_PERSIST_FAILED`, `POST_ZONE_PERSIST_FAILED`,
+   `POST_ROUTE_REFILL_SKIPPED`)?
+3. **Sincronización disco↔memoria** — ¿asume que el vivo coincide con el
+   disco? ¿corre `_guard_live_stale()`/`check_no_external_disk_edit()`
+   antes de mutar, o documenta explícitamente por qué es una excepción
+   legítima?
+4. **Manejo de reload** — si invoca `reload_board_from_disk`, ¿la
+   excepción se propaga con diagnóstico o se descarta en silencio
+   (patrón F-V2-REFILL-SILENCIOSO, D-32b.1)?
+
+Se adopta como checklist estándar para: (a) auditorías de superficie de
+escritura futuras, (b) revisión de toda tool de escritura nueva antes de
+merge, (c) `CONTRIBUTING.md §How to add a write tool` (input directo para
+sesión 34b/34c).
+
+**Aprendizaje metodológico (D-32c.1 aplicado a la auditoría misma):** los
+4 ejes, tal como los formuló el arquitecto, resultaron **suficientes** —
+no requirieron refinamiento durante la ejecución. La única ambigüedad
+operacional real fue el Eje 1 cuando una tool nunca persiste por diseño
+(D-14.3: mutación IPC sin `save_board()`, el llamador orquesta la
+persistencia). Se resolvió con un veredicto de tres valores —
+**cumple** / **cumple con matiz (por diseño)** / **no cumple** — en vez de
+binario: evita sobre-reportar como "asimetría" lo que es una decisión de
+diseño válida (6 de 11 tools W-IPC caen en "cumple con matiz", ninguna es
+un problema real), preservando la capacidad de señalar las que sí lo son
+(ver D-34a.2).
+
+**Fuente:** sesión 34a, `docs/analisis/auditoria-contratos-bridge.md`.
+
+### D-34a.2 — Hallazgos de asimetría real de la auditoría 34a
+
+**Decisión:** de las 20 filas auditadas, 3 son asimetrías confirmadas
+(no "por diseño") en las tools que mutan geometría interactuando con
+zonas de cobre sin aplicar el pipeline `refill_zones()` +
+`enforce_hole_clearance()` + `save_board()` que sí tienen `route_board`/
+`fill_zones`/`add_zone(fill=True)` (D-23.2/ADR-0012):
+
+- **`delete_tracks_bulk`** (P1, `docs/BACKLOG.md`): refilla sin enforce ni
+  save — clearance puede quedar roto, disco no refleja el refill
+  reportado. Precedente directo: mismo mecanismo que F-D3-01. Fix
+  agendado, no aplicado en 34a (no trivial — toca pipeline de zonas,
+  requiere extensión de ADR-0012 y gate GUI).
+- **`delete_zone`** (P2, sin precedente empírico): borra zona de cobre sin
+  refill ni save. Documentado como limitación, no fixeado — sin evidencia
+  de impacto real, D-30.1/D-32c.1 exige investigar antes de fixear.
+- **`add_keepout_zone`** (P2, sin precedente empírico): keepout nuevo no
+  recorta fills existentes que invade. Mismo criterio que `delete_zone`.
+
+Una cuarta asimetría (**`draw_board_outline`**, única W-IPC de PCB sin
+`_guard_live_stale()`/`check_no_external_disk_edit()`) **sí calificó**
+para fix trivial in-situ (Bloque 3, criterios estrictos: <20 líneas, sin
+tocar pipeline de zonas/route, sin ADR nuevo, verificable offline sin
+fixtures nuevos) y se aplicó en la misma sesión
+(`src/kicad_mcp/tools/pcb.py`, `tests/test_pcb.py`).
+
+**Consecuencia:** ADR-0012 (D-23.2) sigue correcto en su alcance
+declarado (`route_board`, `fill_zones`, `add_zone(fill=True)`) — la
+auditoría no encontró que el contrato mismo esté mal formulado, sólo que
+3 tools fuera de su alcance declarado tocan el mismo tipo de estado
+(zonas) sin el mismo cuidado. No se generalizó el alcance de ADR-0012 en
+esta sesión (fuera de scope de una auditoría pura) — queda como decisión
+del arquitecto si `34a-fix-1` extiende el ADR formalmente o registra uno
+nuevo acotado.
+
+**Fuente:** sesión 34a, `docs/analisis/auditoria-contratos-bridge.md` §5.
+
 ## 3. Decisiones superadas (referencia histórica, no vigentes)
 
 - **D-V3.1** (revert humano post-route): superada por recarga programática (`Board.revert()`, sesión 18) — ya no hay contacto humano por route.

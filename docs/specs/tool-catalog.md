@@ -336,6 +336,12 @@ sesión 11) para no apilar bordes (`INVALID_PARAMS` con hint). El contorno
 se DERIVA del snapshot vivo (mtimes=None). G1 + audit + confirm ≤50; sin retry
 (D-07.1). El loop cierra con `save_board`. Confirm:
 `OK draw_board_outline @(10.0,10.0) 80.0x60.0mm Edge.Cuts [snap:N]`.
+Sesión 34a (auditoría de contratos de escritura, asimetría A7): agrega
+`_guard_live_stale()` (D-14.1) y `check_no_external_disk_edit()` (P3.2,
+independiente de `base_snap`) al inicio — mismo guard incondicional que
+`add_track`/`add_via`, faltante hasta esta sesión (`EXTERNAL_EDIT_DETECTED`
+ya estaba en la taxonomía de la tool, ahora también se dispara por este
+camino, no sólo vía `base_snap` stale).
 
 **`save_board` (sesión 11, D-11.1).** Persiste el board vivo (mutado por IPC)
 al `.kicad_pcb` de disco vía `Board.save()` (comando IPC `SaveDocument`).

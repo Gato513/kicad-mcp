@@ -951,6 +951,73 @@ async def test_draw_board_outline_rejects_nonpositive_dims(
     assert len(bridge.outlines) == 0
 
 
+@pytest.mark.unit
+async def test_draw_board_outline_rejects_when_live_stale(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Sesión 34a (auditoría de contratos, asimetría A7): draw_board_outline
+    era la única tool W-IPC de PCB sin ``_guard_live_stale()`` — mutaba el
+    vivo aunque el disco tuviera un ruteo de ``route_board`` pendiente de
+    recarga (D-14.1), a diferencia de add_track/add_via/move_footprint/etc.
+    Mismo patrón offline que ``test_reload_happy_registers_disk_snapshot_and_clears_live_stale``
+    (``tests/test_reload_board.py``): simula el estado post-route_board con
+    ``mark_live_stale`` directo, sin tocar KiCad."""
+    from kicad_mcp.snapshots import get_default_store
+
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    get_default_store().mark_live_stale(1)
+    bridge = _outline_bridge(outline="none")
+    mcp = _make_server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "draw_board_outline",
+            {"x_mm": 10.0, "y_mm": 10.0, "width_mm": 80.0, "height_mm": 60.0},
+        )
+    assert result.isError
+    text = _text(result)
+    assert "EXTERNAL_EDIT_DETECTED" in text
+    assert len(bridge.outlines) == 0  # el guard bloqueó ANTES de tocar IPC
+
+
+@pytest.mark.unit
+async def test_draw_board_outline_rejects_external_disk_edit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Sesión 34a: misma asimetría A7, para la segunda mitad del guard
+    (P3.2, ``check_no_external_disk_edit`` — independiente de ``base_snap``).
+    Mismo patrón offline que
+    ``test_save_board_external_edit_detected_without_base_snap``
+    (``tests/test_pcb_session11.py``)."""
+    from kicad_mcp.snapshots import collect_project_mtimes, get_default_store
+    from kicad_mcp.toon.schema import NormalizedState
+
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    pcb = project / "proj.kicad_pcb"
+    sch = project / "proj.kicad_sch"
+    get_default_store().register(
+        NormalizedState(kind="pcb", snap=0, components=()), collect_project_mtimes(sch)
+    )
+    # Edición externa silenciosa del .kicad_pcb — nadie de este proceso la registró.
+    st = pcb.stat()
+    os.utime(pcb, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
+
+    bridge = _outline_bridge(outline="none")
+    mcp = _make_server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "draw_board_outline",
+            {"x_mm": 10.0, "y_mm": 10.0, "width_mm": 80.0, "height_mm": 60.0},
+        )
+    assert result.isError
+    text = _text(result)
+    assert "EXTERNAL_EDIT_DETECTED" in text
+    assert len(bridge.outlines) == 0
+
+
 # --- integration_gui: E2E de add_track contra KiCad real (B2, D-09.2) ---------
 
 

@@ -1,0 +1,43 @@
+kicad-mcp
+Copyright 2026 The kicad-mcp contributors
+
+This product is licensed under the Apache License, Version 2.0 (see
+LICENSE). It is distributed as source code and depends, at runtime, on
+external tools and libraries with their own, different licenses. None
+of them are modified or redistributed by this project; they are listed
+here for clarity, not because Apache 2.0 requires it for all of them.
+
+## Runtime dependencies with a license other than Apache 2.0
+
+| Component | License | How it is used |
+|---|---|---|
+| KiCad 10.0.4 | GPL-3.0-or-later | External application. kicad-mcp talks to a running KiCad instance over its local IPC socket (`kicad-python`) and invokes `kicad-cli` as a subprocess. KiCad itself is neither modified, embedded, nor redistributed. |
+| `pcbnew` (KiCad's SWIG Python bindings) | GPL-3.0-or-later | Invoked as short-lived `python3 -c "..."` subprocesses against the **system** Python that ships with KiCad — never imported into this project's virtual environment or shipped with it (see `src/kicad_mcp/bridge/autoroute.py`). |
+| Freerouting 2.1.0 | GPL-3.0-or-later | Invoked as a separate headless JVM subprocess (a `.jar` supplied by the user via `KICAD_MCP_FREEROUTING_JAR`) to autoroute a board. Not linked into kicad-mcp; communicates via files on disk (DSN/SES). |
+| `kicad-skip` | LGPL-2.1-or-later | Regular pip dependency (declared in `pyproject.toml`), imported dynamically to edit `.kicad_sch` files directly (KiCad 10 does not expose schematic editing over IPC). Unmodified, used as an ordinary library. |
+| `kicad-python` | MIT | Regular pip dependency. IPC client library for the KiCad API. |
+| `mcp` (Model Context Protocol SDK) | MIT | Regular pip dependency. |
+| `pydantic` | MIT | Regular pip dependency. |
+| `protobuf` (transitive, via `kicad-python`) | BSD-3-Clause | Transitive dependency, unmodified. |
+
+## Why this doesn't create a licensing conflict
+
+Apache 2.0 code invoking GPL/LGPL programs as **separate processes**
+(subprocess + IPC/socket, files on disk) — rather than linking against
+their code or redistributing them — is the standard pattern used
+throughout the KiCad automation ecosystem, and does not place this
+project's own source under GPL. KiCad, `pcbnew`, and Freerouting are
+never vendored, statically or dynamically linked, or shipped as part
+of a kicad-mcp release; a user must install/provide them separately.
+This note is descriptive, not legal advice — see `docs/BACKLOG.md` and
+`CLAUDE.md` frontera F5 for the project's policy on adding dependencies.
+
+## Acknowledgments
+
+This project's Validation Suite exercises real open hardware designs
+published by their respective authors under their own licenses:
+ANAVI Technology (`anavi-dev-mic`, `anavi-macro-pad-12`) and Great
+Scott Gadgets (`hackrf-one`). See `docs/analisis/validation-suite-sintesis-A-B-C.md`
+and `validation-suite/` for details; those projects' own licenses
+govern their respective design files, which are not part of this
+project's own copyright claim.

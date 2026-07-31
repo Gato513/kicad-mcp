@@ -328,10 +328,35 @@ Fase 1-3— nunca ejercitó, no una regresión del código.
    limpios. Ver `docs/analisis/auditoria-contratos-bridge.md` (documento
    principal, input para 34b/34c) y `docs/historico/sesiones/34a-reporte.md`.
 
-**34b (LICENSE + README público inicial + CONTRIBUTING.md)** es la
-próxima sesión, con la salvedad de que `F-V3-ZONE-FILL-CRASH` y el
-crash-loop de Freerouting quedan como candidatos a investigación
-intermedia si reaparecen antes del release.
+6. Sesión 34b — **LICENSE + NOTICE + README público + CONTRIBUTING.md —
+   ✅ cerrada (2026-07-31).** Primera exposición pública consciente del
+   proyecto: escritura estructurada de documentación OSS a partir del
+   input consolidado en `docs/analisis/auditoria-contratos-bridge.md` §6
+   (sesión 34a). Entregables: `LICENSE` (Apache 2.0, titular "The
+   kicad-mcp contributors"), `NOTICE` (dependencias con licencia distinta
+   — corrige la premisa del prompt original: `kicad-skip` es
+   LGPL-2.1-or-later, no MIT; documenta que `pcbnew` se invoca por
+   subprocess contra el Python del sistema, nunca importado en el venv),
+   `README.md` reemplazado por versión pública en inglés (pitch + escala
+   validada + 10 limitaciones conocidas, cada una linkeada a su fuente),
+   `README.es.md` (traducción resumida), `CONTRIBUTING.md` (setup + los 3
+   hábitos metodológicos de Fase 4 en lenguaje accesible + los 4 ejes de
+   D-34a.1 con ejemplos concretos + checklist de PR). Cada afirmación
+   pública pasó el filtro D-33.1, auditable en
+   `docs/analisis/readme-honestidad-check.md` (16/16 sostenidas, 2 con
+   matiz ya incorporado al texto). Precondiciones de rama del prompt
+   original no se cumplían (`master` sin renombrar a `main`, `sesion-01`
+   viva) — se ramificó desde `master` sin bloquear la sesión, rename
+   diferido al arquitecto. Suite offline 394/394 sin cambios (sesión
+   puramente documental, `src/` intocado). Ver
+   `docs/historico/sesiones/34b-reporte.md`.
+
+**34a-fix-1 (fix de `delete_tracks_bulk`, asimetría A1)** es la próxima
+sesión, con la salvedad de que `F-V3-ZONE-FILL-CRASH` y el crash-loop de
+Freerouting quedan como candidatos a investigación intermedia si
+reaparecen antes del release. Precede a **34c** (docs de arquitectura
+para colaboradores externos), de modo que 34c documente la asimetría A1
+ya resuelta.
 
 ## Estado actual: Fase 3 — consolidación (histórico, cerrada sesión 29)
 

@@ -789,6 +789,61 @@ nuevo acotado.
 
 **Fuente:** sesión 34a, `docs/analisis/auditoria-contratos-bridge.md` §5.
 
+### D-34b.1 — Apache License 2.0 como licencia del proyecto
+
+**Contexto:** primera sesión de preparación de release Open Source que
+produce artefactos legales (`LICENSE`/`NOTICE`). Requiere elegir licencia
+antes de escribir cualquier documento público.
+
+**Decisión:** Apache License 2.0, titular `The kicad-mcp contributors`.
+Razonamiento:
+
+1. **Compatibilidad con las dependencias GPL/LGPL del proyecto.** KiCad y
+   Freerouting (GPL-3.0-or-later) se invocan como procesos externos
+   (socket IPC, subprocess JVM) — nunca linkeados ni redistribuidos —, y
+   `kicad-skip` (LGPL-2.1-or-later, corregido en esta sesión: el prompt
+   original asumía MIT) es una dependencia pip ordinaria sin
+   modificación. Ninguno de los tres impone su licencia sobre el código
+   propio de `kicad-mcp` bajo ese modelo de invocación — verificado por
+   inspección directa de `src/kicad_mcp/bridge/autoroute.py` y de los
+   metadatos de paquete instalados, no asumido. Detalle completo en
+   `NOTICE`.
+2. **Grant de patentes explícito** (§3 de Apache 2.0) — protección
+   adicional sobre MIT/BSD para un proyecto que integra con software de
+   terceros con historiales de patentes en el espacio EDA/RF.
+3. **Estándar de facto en tooling de desarrollador moderno** (comparado
+   con MIT/BSD, sin la complejidad copyleft de GPL/LGPL para quien
+   consuma `kicad-mcp` como dependencia).
+
+**Consecuencia operacional:** ninguna — no requiere headers de copyright
+en archivos de `src/` bajo el modelo minimal (frontera declarada fuera de
+alcance de 34b, revisable post-release si se decide agregar).
+
+**Fuente:** sesión 34b.
+
+### D-34b.2 — README en inglés como versión principal, español como secundaria
+
+**Contexto:** toda la documentación del proyecto hasta esta sesión fue en
+español, escrita para el agente ejecutor y el arquitecto. El README
+público es la primera pieza dirigida a un lector externo, y el ecosistema
+OSS de referencia (KiCad, MCP, EDA en general) opera predominantemente en
+inglés.
+
+**Decisión:** `README.md` (raíz) es la versión principal, en inglés,
+mantenida primero ante cualquier actualización futura. `README.es.md` es
+una traducción **resumida** (pitch, qué hace, limitaciones conocidas,
+link al principal) — no traduce quickstart completo ni el mapa de
+documentación, para no duplicar mantenimiento de dos documentos extensos
+en paralelo. `CONTRIBUTING.md` no se traduce: la colaboración OSS técnica
+del proyecto se espera mayormente en inglés.
+
+**Consecuencia operacional:** toda actualización futura del README
+prioriza el inglés; `README.es.md` se actualiza en el mismo commit sólo
+si el cambio afecta el pitch o las limitaciones conocidas — un cambio
+puramente de estructura/links no obliga a retraducir.
+
+**Fuente:** sesión 34b.
+
 ## 3. Decisiones superadas (referencia histórica, no vigentes)
 
 - **D-V3.1** (revert humano post-route): superada por recarga programática (`Board.revert()`, sesión 18) — ya no hay contacto humano por route.

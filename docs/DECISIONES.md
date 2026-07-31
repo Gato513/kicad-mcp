@@ -659,6 +659,53 @@ cuando un camino de diseño legítimo no aplica).
 
 **Fuente:** sesión 32d.
 
+### D-33.1 — Principio de refutación (metodológico, permanente)
+
+**Contexto:** adoptado por el arquitecto antes de sesión 33 (Validation
+Suite Nivel C, HackRF One) como formalización de un patrón que ya venía
+aplicándose informalmente. Precedentes que lo sostienen: sesión 26 forzó
+un cierre parcial porque no intentó refutar la hipótesis del apotema
+(refinada correctamente recién en sesión 30, cuando sí se trató como
+refutable); sesión 32c se auto-corrigió dos veces (clave incorrecta de
+`unconnected_items`, y `HitTestFilledArea()` no confiable) porque el
+ejecutor aplicó lógica refutatoria activa; sesión 32d refutó H1 sobre
+`anavi-macro-pad-12` al descubrir la variante same-layer del guardrail.
+Sesión 33 lo aplicó sistemáticamente y produjo 2 refutaciones concretas
+en una sola sesión (ver abajo).
+
+**Decisión:** cada hipótesis, verificación, o explicación propuesta
+durante el trabajo del proyecto debe responder primero: **"¿qué
+resultado demostraría que esto es falso?"** Solo si el resultado
+sobrevive al intento explícito de refutación se acepta como explicación
+válida. Aplica a: verificaciones de admisión de la Validation Suite,
+diagnósticos de causa raíz de fricciones, hipótesis de investigación
+(ya exigido por D-30.1 en ese contexto específico — D-33.1 lo generaliza
+a todo el proyecto), y decisiones de diseño de prompts (ya exigido por
+D-31c.1 para ADRs — D-33.1 lo extiende a cualquier explicación
+propuesta).
+
+**Evidencia de poder práctico (sesión 33, el mismo día de adopción):**
+al investigar un crash de KiCad durante `add_zone(fill=true)`, la
+hipótesis inicial ("VCC y VAA superpuestas al 100% en el mismo layer
+sin prioridad definida causan el conflicto de fill") parecía plausible
+y suficiente para cerrar el hallazgo. Aplicando D-33.1, se preguntó
+explícitamente qué resultado la refutaría — y se diseñó el siguiente
+intento (VCC/VAA en mitades disjuntas del bbox, sin overlap geométrico)
+específicamente para intentar refutarla. **El crash se reprodujo
+idéntico** (mismos 710 fragmentos, misma 4ª llamada) — refutando la
+hipótesis de overlap en el acto, antes de que quedara documentada como
+causa raíz incorrecta en el reporte final. Sin D-33.1 aplicado
+explícitamente, la hipótesis de overlap habría quedado registrada como
+explicación aceptada.
+
+**Consecuencia operacional:** no es una carga de proceso adicional — es
+una pregunta de una línea antes de aceptar cualquier explicación. El
+costo de no aplicarlo (documentar una causa raíz incorrecta, que
+después alguien más tiene que descubrir que estaba mal) es
+sistemáticamente mayor que el costo de preguntarla.
+
+**Fuente:** sesión 33, formalizado al cierre.
+
 ## 3. Decisiones superadas (referencia histórica, no vigentes)
 
 - **D-V3.1** (revert humano post-route): superada por recarga programática (`Board.revert()`, sesión 18) — ya no hay contacto humano por route.

@@ -140,6 +140,10 @@ insuficiente a radios ~1.8mm) y fix aterrizado (N=16→64 +
 - D-32d.2: rechazo de guardrail nunca es error — sólo fallo técnico de
   `add_via` o de `save_board()` post-stitching lo son, con códigos ya
   existentes, sin códigos nuevos (sesión 32d).
+- D-33.1: principio de refutación — toda hipótesis/explicación se
+  formula preguntando primero "¿qué resultado la refuta?", generaliza a
+  todo el proyecto lo que D-30.1/D-31c.1 ya exigían en sus contextos
+  específicos (sesión 33, metodológico, permanente).
 - ADR-0013: refs duplicados/sin anotar se resuelven por anotación, no
   borrado — `set_footprint_ref` + pre-check `DUPLICATE_REFS` en
   `route_board` (sesión 31b, cierre F-V1-02). ADR-0010 intacta.
@@ -158,7 +162,7 @@ bloquean `route_board`) es un gap real del flujo, expuesto por una
 condición de diseño (refs sin anotar) que el despertador —única placa de
 Fase 1-3— nunca ejercitó, no una regresión del código.
 
-**Estado de la secuencia de Fase 4** (post-sesión 31c, 2026-07-29):
+**Estado de la secuencia de Fase 4** (post-sesión 33, 2026-07-30):
 1. Investigación P1 solder mask ANT1 — ✅ cerrada (sesión 30).
 2. Validation Suite Nivel A — **✅ cerrada (sesión 31c).** Sesión 31
    admitió `anavi-dev-mic` (con excepción documentada de criterio 6) y
@@ -205,7 +209,7 @@ Fase 1-3— nunca ejercitó, no una regresión del código.
    fricciones P2/P3") con elementos de 2. Ver
    `validation-suite/level-b/anavi-macro-pad-12/validation-report.md`,
    `metrics.md` y `docs/historico/sesiones/32-reporte.md`.
-4-5. Sin cambios — condicionados al cierre de las 3 validaciones.
+4. Preparación de release Open Source — pendiente, sesión 34+.
    **F-V2-REFILL-SILENCIOSO cerrado (sesión 32b):** la excepción de
    `reload_board_from_disk` ya no se descarta en silencio — cuando el
    refill de seguridad de `route_board(refill=true)` no puede correr por
@@ -257,8 +261,37 @@ Fase 1-3— nunca ejercitó, no una regresión del código.
    sin automatización posible en este MVP — confirmado con un probe
    directo por IPC en sesión 32d). Ver
    `docs/historico/sesiones/32d-reporte.md`.
-   **33 (Nivel C)** arranca en la próxima sesión, candidato a confirmar
-   siguiendo el patrón de admisión de Bloque 0 de sesiones 31/32.
+3. Validation Suite Nivel C — **✅ cerrada (sesión 33), cierra la
+   trilogía A+B+C.** Admitido `hackrf-one` (Great Scott Gadgets, 437
+   footprints, 380 nets, 4 capas — ~7× Nivel B) con 3 correcciones D-33.1
+   a premisas del prompt (fecha de mantenimiento, licencia CERN-OHL-P,
+   escala real del `.kicad_pcb`). **Resultado: Escenario 6/7 —
+   refutación por escalabilidad.** `route_board` no completó: Freerouting
+   2.1.0 entró en un régimen de excepciones internas repetidas
+   (`NullPointerException` en `MazeSearchAlgo`, sin progreso medible en
+   ~55 min) hasta el timeout duro de 3600s — diagnóstico distinto al de
+   sesión 32 (score estancado cerca de completar). Los 4 criterios
+   D-30.3 quedan **no evaluables** (sin ruteo, forzar ratios habría sido
+   precisión falsa). **Hallazgo independiente reproducido 3 veces:**
+   `add_zone(fill=true)` crashea KiCad de forma determinística en la
+   3ª-4ª llamada consecutiva sobre boards de esta escala, sin
+   correlación con overlap geométrico (hipótesis de overlap refutada
+   explícitamente en el 2º intento — D-33.1 en acción el mismo día de
+   su adopción). Registrado `F-V3-ZONE-FILL-CRASH` (P0/P1) y
+   `F-V3-ROUTER-TIMEOUT-HARD` (P0, bug upstream de Freerouting). D-33.1
+   (principio de refutación) formalizado al cierre. Síntesis de los 3
+   puntos de evidencia sobre D-30.3 en
+   `docs/analisis/validation-suite-sintesis-A-B-C.md` — recomienda
+   mantener tracks/cobre, revisar con cautela vías (evidencia
+   insuficiente), formalizar el criterio DRC por severidad (D-32.1,
+   confirmado 3/3), e incorporar la descomposición por capa (nueva en
+   esta sesión) como métrica auxiliar para boards multi-capa. Ver
+   `validation-suite/level-c/hackrf-one/validation-report.md`,
+   `metrics.md` y `docs/historico/sesiones/33-reporte.md`.
+
+**34 (preparación release OSS)** es la próxima sesión, con la salvedad
+de que `F-V3-ZONE-FILL-CRASH` y el crash-loop de Freerouting quedan como
+candidatos a investigación intermedia si reaparecen antes del release.
 
 ## Estado actual: Fase 3 — consolidación (histórico, cerrada sesión 29)
 

@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.2",
+  "board_path": "validation-suite/level-c/hackrf-one/working/hackrf-one.kicad_pcb",
+  "measured_at": "2026-07-31T01:30:53.632357+00:00",
+  "kicad_version": "10.0.4",
+  "method": "union",
+  "drc_errors": 555,
+  "drc_warnings": 412,
+  "drc_by_rule": {
+    "starved_thermal": 47,
+    "padstack": 2,
+    "footprint_type_mismatch": 7,
+    "nonmirrored_text_on_back_layer": 1,
+    "text_height": 199,
+    "text_thickness": 13,
+    "lib_footprint_issues": 199,
+    "unconnected_items": 499
+  },
+  "total_track_length_mm": 0,
+  "via_count": 0,
+  "copper_area_mm2": 11096.148,
+  "copper_area_mm2_aditivo": 11505.7098,
+  "copper_area_by_layer_mm2": {
+    "C1F": 1272.5772,
+    "C2": 8860.3162,
+    "C3": 455.8062,
+    "C4B": 507.4483
+  },
+  "footprint_count": 437,
+  "net_count": 380,
+  "copper_layer_count": 4,
+  "board_area_mm2": 9074.4402,
+  "track_segment_count": 0,
+  "zone_count": 1,
+  "density_pct": 97.64,
+  "track_length_by_net_mm": {},
+  "via_count_by_net": {},
+  "orphan_vias": [],
+  "track_length_by_layer_mm": {},
+  "track_segment_count_by_layer": {},
+  "via_count_by_type": {},
+  "method_notes": []
+}

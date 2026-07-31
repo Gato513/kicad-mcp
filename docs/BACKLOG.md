@@ -13,6 +13,74 @@ aproximado de severidad.
 
 ## P0 — Bloqueantes de dogfooding / release
 
+### F-V3-ZONE-FILL-CRASH — `add_zone(fill=true)` crashea KiCad de forma reproducible en la 3ª-4ª llamada sobre boards grandes — Abierto, no investigado
+
+**Origen:** sesión 33, Validation Suite Nivel C (HackRF One, 437
+footprints / 380 nets / 4 capas).
+
+**Reproducido 3 veces** con geometrías distintas, siempre con el mismo
+resultado: KiCad se cae (2 veces) o queda colgado transitoriamente y se
+recupera solo (1 vez), y el disco queda con exactamente **710 zonas**
+(3 reales + 707 fragmentos sin net, esparcidos entre las 2 capas
+internas) tras cada intento fallido.
+
+1. **Intento 1:** GND (In1.Cu, bbox completo, OK) → VCC + VAA (In2.Cu,
+   ambas con el bbox completo superpuesto al 100%, prioridad 0 sin
+   definir cuál gana) → crash en la 4ª llamada (`USB_SHIELD`/F.Cu).
+2. **Intento 2 (refutación explícita, D-33.1):** mismo orden pero VCC/VAA
+   en mitades disjuntas del bbox (sin overlap geométrico) → **mismo
+   crash exacto**, mismos 710 fragmentos, en la misma 4ª llamada. Refuta
+   la hipótesis de overlap del intento 1.
+3. **Intento 3:** igual que 2 pero con 20s de delay entre cada
+   `add_zone` (por si era una condición de carrera) → **mismo crash**,
+   3ª reproducción idéntica.
+
+**Patrón observado, no investigado:** el crash ocurre consistentemente
+en la 3ª-4ª llamada consecutiva a `add_zone(fill=true)`, sin
+correlación con la geometría/overlap de las zonas. Posibles hipótesis
+no evaluadas: acumulación de estado en el motor de fill/conectividad de
+pcbnew tras N llamadas sucesivas sobre un board de esta densidad (437
+footprints); interacción con el mismo mecanismo de segfault ya
+documentado en `validation-suite/tools/prepare_working.py` (remove+move
+en el mismo proceso). Limpieza determinística posible vía `pcbnew`
+directo (`board.Remove(zone)` para cada zona + `save` +
+`reload_board_from_disk`), sin pérdida de otro estado del board.
+
+**Severidad:** bloquea flujos que necesiten 3+ zonas de cobre sobre
+boards grandes (típico en diseños multi-capa con múltiples planos de
+alimentación). No bloquea el caso de 1-2 zonas (verificado limpio en
+Nivel A/B y en esta misma sesión con GND único). Candidato a
+investigación P4.0-style si reaparece en un board de escala comparable.
+
+**Fuente:** sesión 33. Detalle forense completo en
+`validation-suite/level-c/hackrf-one/validation-report.md` §Fricciones.
+
+### F-V3-ROUTER-TIMEOUT-HARD — Freerouting 2.1.0 entra en crash-loop interno sobre boards grandes (HackRF One) — Bug upstream, no investigado
+
+**Origen:** sesión 33, Validation Suite Nivel C (HackRF One).
+
+`route_board(timeout_s=3600)` no completó. El log interno de
+Freerouting (33 líneas totales en ~55 min de corrida) no registra
+**ninguna** línea de score/progreso — solo 6 `NullPointerException`
+repetidas en `MazeSearchAlgo.expand_to_target_doors` (`target_shape`
+null), distribuidas de forma intermitente a lo largo de toda la
+corrida. Diagnóstico distinto al de sesión 32 (score estancado cerca de
+completar, con progreso real hasta ahí): acá el motor no avanza,
+crashea internamente en loop sin indicio de por qué esta topología
+específica (4 capas, 380 nets, plano GND parcial) dispara la excepción.
+
+**Severidad:** bloquea `route_board` end-to-end sobre boards de esta
+escala/topología. No es un bug de `kicad-mcp` (`route_board` se
+comportó correctamente ante el fallo — 0 persistencia corrupta, mismo
+contrato D-23.2/ADR-0012 que en cualquier timeout). Es un bug upstream
+de Freerouting 2.1.0, fuera del control del proyecto — documentar como
+límite conocido del flujo automatizado en la documentación de
+release, no "arreglar" desde `kicad-mcp`.
+
+**Fuente:** sesión 33. Log completo en
+`validation-suite/level-c/hackrf-one/working/.kicad-mcp/autoroute/freerouting.log`
+(no versionado — archivo de trabajo).
+
 ### F-V2-REFILL-SILENCIOSO — `route_board(refill=true)` puede no persistir el refill sin ningún error visible — ✅ CERRADO sesión 32b
 
 **Origen:** sesión 32, segunda Validation Suite (Nivel B, ANAVI Macro Pad 12).

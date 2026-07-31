@@ -106,6 +106,31 @@ aditivas** — ninguna clave de 1.0 cambia de nombre ni de significado.
   de track sano que simplemente termina en una vía intermedia). Vigilancia
   del patrón F-D5-01 / F-V1c-01 (vía o isla GND sin conectividad cerrada).
 
+## Extensiones de sesión 33 (``schema_version`` 1.1 → 1.2, aditivas)
+
+Nivel C (HackRF One, 4 capas) necesita distinguir "Freerouting sub-ruteó
+uniformemente" de "Freerouting no usó las capas internas" — la sola
+``copper_area_by_layer_mm2`` (ya existente desde 1.1, vía ``_copper_layers()``
+→ ``LSET.CuStack()``, que ya itera las N capas habilitadas del board sin
+cambios) no alcanza porque no distingue *tracks* de *cobre de zona*: una capa
+interna puede tener zona GND llena y cero tracks activos, y el agregado de
+área no lo expondría.
+
+- ``track_length_by_layer_mm`` / ``track_segment_count_by_layer``: igual que
+  ``track_length_by_net_mm`` pero agrupado por ``track.GetLayerName()`` en
+  vez de por net — el numerador (longitud) y su denominador honesto
+  (cantidad de segmentos, para no confundir "poco cobre" con "pocos
+  segmentos largos") de la pregunta "¿el router usó las capas internas para
+  rutear, o sólo para el plano?".
+- ``via_count_by_type``: ``via.GetViaType()`` mapeado a
+  ``through``/``blind``/``buried``/``microvia``/``not_defined`` (constantes
+  ``pcbnew.VIATYPE_*``). En un 2-capas la distinción es trivial (todo
+  ``through``); en 4 capas deja de serlo — un blind/buried real cambiaría la
+  interpretación del criterio de vías de D-30.3.
+
+Ninguna clave de 1.0/1.1 cambia de nombre ni de significado — los JSON ya
+medidos de Nivel A/B siguen siendo válidos bajo 1.2 (lectura hacia atrás).
+
 ## Chequeos de cordura
 
 - ``union_mm2 <= aditivo_mm2 + 1e-6`` por capa (tolerancia de redondeo
@@ -136,7 +161,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 
 try:
     import pcbnew
@@ -303,6 +328,43 @@ def _via_count_by_net(vias: list[Any]) -> dict[str, int]:
     return by_net
 
 
+def _track_length_by_layer(segments_and_arcs: list[Any]) -> tuple[dict[str, float], dict[str, int]]:
+    """``total_track_length_mm``/``track_segment_count`` descompuestos por
+    capa de cobre (sesión 33, Nivel C) — distingue "el router usó la capa
+    interna para rutear" de "sólo tiene el plano de la zona". Devuelve
+    ``(longitud_mm_por_capa, segmentos_por_capa)``, mismo criterio de
+    longitud que ``_track_length_by_net`` (``GetLength()``, excluye vías).
+    """
+    length_by_layer: dict[str, float] = {}
+    count_by_layer: dict[str, int] = {}
+    for t in segments_and_arcs:
+        name = t.GetLayerName()
+        length_by_layer[name] = length_by_layer.get(name, 0.0) + pcbnew.ToMM(t.GetLength())
+        count_by_layer[name] = count_by_layer.get(name, 0) + 1
+    return {k: round(v, 4) for k, v in length_by_layer.items()}, count_by_layer
+
+
+_VIATYPE_NAMES = {
+    pcbnew.VIATYPE_THROUGH: "through",
+    pcbnew.VIATYPE_BLIND: "blind",
+    pcbnew.VIATYPE_BURIED: "buried",
+    pcbnew.VIATYPE_MICROVIA: "microvia",
+    pcbnew.VIATYPE_NOT_DEFINED: "not_defined",
+}
+
+
+def _via_count_by_type(vias: list[Any]) -> dict[str, int]:
+    """``via_count`` descompuesto por tipo (sesión 33, Nivel C) — trivial en
+    2 capas (todo ``through``), deja de serlo en 4+: un blind/buried real
+    cambia la interpretación del criterio de vías de D-30.3.
+    """
+    by_type: dict[str, int] = {}
+    for v in vias:
+        name = _VIATYPE_NAMES.get(v.GetViaType(), "unknown")
+        by_type[name] = by_type.get(name, 0) + 1
+    return by_type
+
+
 def _orphan_vias(board: Any, vias: list[Any]) -> list[dict[str, Any]]:
     """Vías sin ningún ítem conectado más allá de sí mismas (vigilancia
     F-D5-01 / F-V1c-01, sesión 32).
@@ -398,6 +460,10 @@ def measure(pcb_path: Path) -> dict[str, Any]:
 
     drc = _run_drc(pcb_path)
 
+    track_length_by_layer_mm, track_segment_count_by_layer = _track_length_by_layer(
+        segments_and_arcs
+    )
+
     return {
         "schema_version": SCHEMA_VERSION,
         "board_path": str(pcb_path),
@@ -422,6 +488,9 @@ def measure(pcb_path: Path) -> dict[str, Any]:
         "track_length_by_net_mm": _track_length_by_net(segments_and_arcs),
         "via_count_by_net": _via_count_by_net(vias),
         "orphan_vias": _orphan_vias(board, vias),
+        "track_length_by_layer_mm": track_length_by_layer_mm,
+        "track_segment_count_by_layer": track_segment_count_by_layer,
+        "via_count_by_type": _via_count_by_type(vias),
         "method_notes": method_notes,
     }
 

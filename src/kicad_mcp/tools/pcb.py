@@ -19,10 +19,11 @@ import difflib
 import json
 import math
 import os
+import re
 import time
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from ..audit.logger import record as audit_record
 from ..bridge.autoroute import classify_net_routing, run_autoroute
@@ -55,6 +56,31 @@ from ..tools.world import _resolve_root_pcb, _resolve_root_schematic
 # ad-hoc (_encode_tracks/_encode_zones/_encode_component_detail). NO extiende
 # TOON (F1 intacto): es una utilidad interna, no cambia el schema TOON.
 from ..toon.encoder import _sanitize
+
+# Sesión 37: el espacio es el delimitador POSICIONAL de las líneas de ítem de
+# los tres formatos ad-hoc, pero `_sanitize` (§5 de TOON) no lo neutraliza —
+# TOON es `|`-delimited y ahí un espacio es inocuo. Un `net_name` como
+# "GND EN" sobrevive a `_sanitize` y desplaza todas las columnas siguientes
+# (H36.1, sesión 36). Este wrapper compone las dos capas SIN tocar `toon/`:
+# el núcleo no se dobla para servir a la deuda ad-hoc.
+_WHITESPACE_RE: Final = re.compile(r"\s")
+
+
+def _sanitize_space_delimited(raw: str) -> str:
+    """``_sanitize`` + neutralización de TODO whitespace, para campos que van
+    en una línea space-delimited de los formatos ad-hoc (D37.1, sesión 37):
+    ``_CONTROL_RE`` de TOON ya cubre ``\\t\\n\\r\\v\\f``, pero no el espacio
+    ni los separadores unicode (ej. NBSP), alcanzables vía netlists
+    importadas. Devuelve sólo el texto: el flag ``suspicious`` de
+    ``_sanitize`` no tiene canal en estos formatos (decisión #3, sesión 36).
+
+    NO usar en el header ``DETAIL|<ref>|pcb|...`` de
+    ``_encode_component_detail``: ahí ``|`` es el delimitador y un espacio en
+    ``ref`` es inocuo (H2, sesión 37) — ese sitio sigue usando ``_sanitize``
+    puro.
+    """
+    return _WHITESPACE_RE.sub("_", _sanitize(raw)[0])
+
 
 # Tolerancia por defecto del matching geométrico del borrado dirigido (D-11.2):
 # la track/via cuyo segmento pasa a ≤ este radio del punto es candidata. 0.5 mm
@@ -825,12 +851,18 @@ def _encode_zones(items: tuple[ZoneItem, ...], filter_desc: str) -> str:
     ``add_zone(bbox=...)``); ``verts=N`` (sólo el conteo, no las coordenadas)
     para polígonos arbitrarios — el agente que las necesite las tiene desde
     la llamada que las creó.
+
+    ``net_name`` es entrada no confiable (CLAUDE.md regla 6): se sanitiza con
+    ``_sanitize_space_delimited`` (sesión 37), que además de los caracteres
+    estructurales de TOON (§5) neutraliza el espacio — delimitador posicional
+    de esta línea (sesión 36, R2 + sesión 37, cierre del gap del espacio).
     """
     header = f"ZONES|v1|{filter_desc}|{len(items)}" if filter_desc else f"ZONES|v1|{len(items)}"
     lines = [header]
     for z in items:
-        # Sesión 36 (R2): net_name es entrada no confiable (CLAUDE.md regla 6).
-        net = _sanitize(z.net_name)[0] if z.net_name else "-"
+        # Sesión 37: net_name va en línea space-delimited (H36.1, gap del
+        # espacio) — _sanitize_space_delimited neutraliza también whitespace.
+        net = _sanitize_space_delimited(z.net_name) if z.net_name else "-"
         if _zone_is_axis_aligned_rect(z.vertices_mm):
             geom = (
                 f"bbox={float(z.bbox_min_x):.3f},{float(z.bbox_min_y):.3f};"
@@ -3279,12 +3311,21 @@ def _encode_component_detail(detail: ComponentDetail) -> str:
     La capa se abrevia a la del pad tal cual (``F.Cu``/``B.Cu``/``*.Cu``).
     Posiciones en mm con 1 decimal (grid de KiCad ≥ 0.05 mm; 1 decimal basta
     para ubicar y es barato en tokens).
+
+    ``ref``/``number``/``net_name`` son entrada no confiable (CLAUDE.md regla
+    6). El header (``DETAIL|<ref>|pcb|...``) es ``|``-delimitado — un espacio
+    en ``ref`` es inocuo ahí, así que usa ``_sanitize`` puro (H2, sesión 37).
+    Las líneas de pad son space-delimited — ``number``/``net_name`` usan
+    ``_sanitize_space_delimited`` (sesión 37), que además neutraliza el
+    espacio, delimitador posicional de esa línea (H36.1, sesión 36).
     """
     w = float(detail.bbox_max_x) - float(detail.bbox_min_x)
     h = float(detail.bbox_max_y) - float(detail.bbox_min_y)
     rot_f = float(detail.rotation_deg)
     rot: int | float = int(rot_f) if rot_f.is_integer() else rot_f
-    # Sesión 36 (R2): ref/number/net_name son entrada no confiable (CLAUDE.md regla 6).
+    # Sesión 36 (R2): ref es entrada no confiable (CLAUDE.md regla 6). Header
+    # |-delimitado (H2, sesión 37): un espacio en ref no rompe el parser, no
+    # se usa _sanitize_space_delimited acá.
     ref = _sanitize(detail.ref)[0]
     header = (
         f"DETAIL|{ref}|pcb|at:{float(detail.x_mm):.1f},{float(detail.y_mm):.1f}"
@@ -3295,8 +3336,9 @@ def _encode_component_detail(detail: ComponentDetail) -> str:
     )
     lines = [header, f"[PADS] {len(detail.pads)}"]
     for p in detail.pads:
-        num = _sanitize(p.number)[0] if p.number else "-"
-        net = _sanitize(p.net_name)[0] if p.net_name else "-"
+        # Sesión 37: number/net_name van en línea space-delimited (H36.1).
+        num = _sanitize_space_delimited(p.number) if p.number else "-"
+        net = _sanitize_space_delimited(p.net_name) if p.net_name else "-"
         lines.append(
             f"{num} {net} {float(p.x_mm):.1f},{float(p.y_mm):.1f} "
             f"{float(p.w_mm):.2f}x{float(p.h_mm):.2f} {p.layer}"
@@ -3340,6 +3382,11 @@ def _encode_tracks(items: tuple[CopperItem, ...], filter_desc: str) -> str:
     Coordenadas/anchos en mm con 3 decimales (grid de KiCad llega a 0.01 mm;
     1 decimal como en ``get_component_detail`` sería insuficiente para
     cirugía de precisión).
+
+    ``net_name`` es entrada no confiable (CLAUDE.md regla 6): se sanitiza con
+    ``_sanitize_space_delimited`` (sesión 37), que además de los caracteres
+    estructurales de TOON (§5) neutraliza el espacio — delimitador posicional
+    de esta línea (sesión 36, R2 + sesión 37, cierre del gap del espacio).
     """
     segs = [it for it in items if it.kind in ("track", "arc")]
     vias = [it for it in items if it.kind == "via"]
@@ -3355,8 +3402,9 @@ def _encode_tracks(items: tuple[CopperItem, ...], filter_desc: str) -> str:
         sx, sy = float(it.start_x_mm), float(it.start_y_mm)
         ex = float(it.end_x_mm) if it.end_x_mm is not None else sx
         ey = float(it.end_y_mm) if it.end_y_mm is not None else sy
-        # Sesión 36 (R2): net_name es entrada no confiable (CLAUDE.md regla 6).
-        net = _sanitize(it.net_name)[0]
+        # Sesión 37: net_name va en línea space-delimited (H36.1, gap del
+        # espacio) — _sanitize_space_delimited neutraliza también whitespace.
+        net = _sanitize_space_delimited(it.net_name)
         line = (
             f"{kind_letter} {it.kiid} {net} {it.layer} w{w} "
             f"({sx:.3f},{sy:.3f})->({ex:.3f},{ey:.3f})"
@@ -3368,7 +3416,8 @@ def _encode_tracks(items: tuple[CopperItem, ...], filter_desc: str) -> str:
         size = f"{float(it.size_mm):.3f}" if it.size_mm is not None else "?"
         drill = f"{float(it.drill_mm):.3f}" if it.drill_mm is not None else "?"
         layers = "-".join(it.via_layers) if it.via_layers else "?"
-        net = _sanitize(it.net_name)[0]
+        # Sesión 37: idem, línea de vía también space-delimited.
+        net = _sanitize_space_delimited(it.net_name)
         lines.append(
             f"V {it.kiid} {net} "
             f"({float(it.start_x_mm):.3f},{float(it.start_y_mm):.3f}) "

@@ -27,10 +27,23 @@ corrigió la docstring del archivo, que afirmaba (falsamente para esos 9)
 `Edit`/`Write` sobre `pyproject.toml` y `CLAUDE.md` a nivel de permisos del
 harness. El consentimiento verbal del arquitecto en el chat no puede
 saltear un `deny` — es un bloqueo técnico, no un prompt de confirmación.
-Los parches H2 (Parche A y B) quedan preparados como diff exacto en
+Los parches H2 (Parche A y B) quedaron preparados como diff exacto en
 `docs/historico/drafts/patches-h2-final.diff`, verificados contra el árbol
-real, pendientes de aplicación manual por el arquitecto (o de que habilite
-esas dos rutas en `.claude/settings.json` para que el agente los aplique).
+real, y el arquitecto los aplicó manualmente (2026-08-04).
+
+**Actualización de cierre (2026-08-04):** la aplicación manual inicial tenía
+dos errores — faltaba el `not` antes de `integration_gui_slow` en `addopts`
+(invertía la lógica del filtro: exigía el marker en vez de excluirlo,
+colapsando la colecta a ~5 tests) y un `+` literal colado al inicio de
+`CLAUDE.md:29` (residuo de un diff mal aplicado). Ambos detectados y
+corregidos en la misma sesión de verificación, commit `4620b97`. Verificado
+post-fix: `pytest --collect-only` (con el `addopts` corregido, sin `-m`
+explícito) → **385** tests, coincide con el conteo esperado de H3 (394 antes
+del reetiquetado − 9 tests movidos a `integration`); `pytest` completo → **0
+failed**; `mypy src/` limpio. `ruff check` reporta 2 errores, ambos en
+`docs/historico/drafts/pr-broken-fixtures/*.py` (drafts untracked, ya
+señalados como riesgo no bloqueante más abajo en este reporte) — no afectan
+código trackeado.
 
 ## H1 — El workflow bloquea integraciones rotas
 
@@ -247,15 +260,14 @@ sesión futura si no se registra ahora.
 | 4 | Comandos del workflow == comandos locales | ✅ |
 | 5 | H3 con evidencia (0 failed sin kicad-cli; 9/9 pasan con kicad-cli) | ✅ |
 | 6 | Docstring `test_sch.py` actualizada | ✅ |
-| 7 | Parches H2 (`pyproject.toml`, `CLAUDE.md`) | ⚠️ preparados, no aplicados (bloqueo de permisos) |
+| 7 | Parches H2 (`pyproject.toml`, `CLAUDE.md`) | ✅ aplicados y corregidos (commit `4620b97`) |
 | 8 | Este reporte | ✅ |
 
 ## Próxima sesión (propuesta para sesión 36)
 
-1. Cerrar los criterios #2, #3 y #7 pendientes: aplicar
-   `docs/historico/drafts/patches-h2-final.diff`, pushear ambas ramas, abrir
-   los dos PRs draft, confirmar los cuatro jobs en cada uno, activar branch
-   protection sobre `master`.
+1. Cerrar los criterios #2 y #3 pendientes (#7 ya cerrado en esta
+   verificación): pushear ambas ramas, abrir los dos PRs draft, confirmar
+   los cuatro jobs en cada uno, activar branch protection sobre `master`.
 2. Badge de CI en `README.md` (explícitamente fuera de esta sesión) una vez
    el workflow esté estable en `master` con nombre canónico fijado.
 3. Investigación de causa raíz del mis-labeling (propuesta arriba): si

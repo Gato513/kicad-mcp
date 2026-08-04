@@ -24,14 +24,14 @@ módulo que no conozcas. Contratos arquitectónicos vigentes: `docs/adr/`
 ## Comandos
 
 ```bash
-python3 scripts/verificar_entorno.py     # FASE 0 de toda sesión — ver regla abajo
-uv sync                                  # instalar deps
-uv run pytest -m "not integration"       # tests (unit + golden) — SIEMPRE antes de commit
-uv run pytest -m integration             # requiere KiCad corriendo — NO en CI
-uv run pytest -m integration_gui_slow    # tests GUI lentos (route_board, dogfooding) — NO en CI
+python3 scripts/verificar_entorno.py                                                        # FASE 0 de toda sesión — ver regla abajo
+uv sync                                                                                     # instalar deps
+uv run pytest -m "not integration and not integration_gui and not integration_gui_slow"    # tests (unit + golden) — SIEMPRE antes de commit
+uv run pytest -m integration                                                                # requiere KiCad corriendo — NO en CI
+uv run pytest -m integration_gui_slow                                                       # tests GUI lentos (route_board, dogfooding) — NO en CI
 uv run ruff check --fix && uv run ruff format
 uv run mypy src/
-npx @modelcontextprotocol/inspector uv run kicad-mcp   # probar el server a mano
+npx @modelcontextprotocol/inspector uv run kicad-mcp                                        # probar el server a mano
 ```
 
 **Fase 0 obligatoria:** ejecutar `verificar_entorno.py` al inicio de cada
@@ -148,7 +148,7 @@ tests/fixtures/  # proyectos KiCad de prueba — procesar con código, NUNCA lee
 
 ## Definition of Done (toda tarea)
 
-1. `pytest -m "not integration"` verde, `ruff` limpio, `mypy` limpio.
+1. `pytest -m "not integration and not integration_gui and not integration_gui_slow"` verde, `ruff` limpio, `mypy` limpio.
 2. Tests de integración (`-m integration` y/o `-m integration_gui_slow`)
    que correspondan a la tool tocada, verdes. Si el cambio toca `route_board`,
    `fill_zones`, `add_zone` o el pipeline de zonas/keepouts, el test de

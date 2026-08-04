@@ -16,6 +16,21 @@ vía cliente MCP en proceso. Se verifica:
 
 El archivo mutado queda en ``tmp_path``; no toca el repo. Nada de KiCad
 IPC — la superficie es 100 % ``.kicad_sch`` sobre disco (D-08.5 #3).
+
+**Corrección (sesión 35):** "sin I/O externo" no es lo mismo que "sin
+``kicad-cli``". Los tests que ejercitan ``add_symbol``, ``set_value``,
+``set_footprint`` y ``connect_pins`` de punta a punta pasan por
+``tools/sch.py`` → ``bridge/state_builder.build_state_cached`` →
+``bridge/netlist.load_netlist``, que shellea a
+``kicad-cli sch export netlist`` (subprocess); los helpers locales
+``_netlist_comps``/``_netlist_nodes_by_net`` de este archivo hacen lo mismo
+para verificar el efecto. Estaban marcados ``unit`` ("lógica pura, sin
+I/O" según ``pyproject.toml``) y fallaban con ``[KICAD_CLI_MISSING]`` en un
+entorno sin ``kicad-cli`` — mis-labeling detectado al armar el CI de la
+sesión 35 (ver ``docs/historico/sesiones/35-reporte.md``). Esos 9 tests
+ahora están marcados ``integration`` y corren con
+``uv run pytest -m integration``. El resto del archivo (validaciones de
+rechazo que no llegan a exportar netlist) sigue siendo ``unit`` de verdad.
 """
 
 from __future__ import annotations
@@ -172,7 +187,7 @@ def _netlist_nodes_by_net(sheet_path: Path, tmp_path: Path) -> dict[str, list[tu
 # --- éxito -------------------------------------------------------------------
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 async def test_add_symbol_happy_path_on_001_basico(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -217,7 +232,7 @@ async def test_add_symbol_happy_path_on_001_basico(
     assert accepted[0]["result"]["snap"] >= 1
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 async def test_add_symbol_registers_disk_snapshot_with_fresh_mtimes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -425,7 +440,7 @@ async def test_add_symbol_rejects_path_outside_project(
 # --- set_value / set_footprint (D-12.1) --------------------------------------
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 async def test_set_value_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """set_value R1 -> 22k: efecto verificado en disco + confirm ≤50 + snap + audit."""
     project = _copy_fixture("001_basico", tmp_path)
@@ -450,7 +465,7 @@ async def test_set_value_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert accepted[0]["result"]["old"] == "10k"
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 async def test_set_value_disk_snapshot_has_mtimes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -524,7 +539,7 @@ async def test_set_value_rejects_control_chars(
     assert _prop_in(project / "fixture.kicad_sch", "R1", "Value") == "10k"
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 async def test_set_footprint_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """set_footprint R1 -> lib:name: efecto verificado en disco + confirm ≤50."""
     project = _copy_fixture("001_basico", tmp_path)
@@ -578,7 +593,7 @@ async def test_set_footprint_rejects_missing_ref(
 # --- connect_pins (D-12.2) ---------------------------------------------------
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 async def test_connect_pins_golden_netlist(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """GOLDEN (D-12.2): dos pines → connect_pins → netlist → misma net con el nombre pedido."""
     project = _copy_fixture("001_basico", tmp_path)
@@ -606,7 +621,7 @@ async def test_connect_pins_golden_netlist(monkeypatch: pytest.MonkeyPatch, tmp_
     assert ("R1", "2") in nodes and ("R2", "2") in nodes, nodes
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 async def test_connect_pins_snapshot_and_audit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -733,7 +748,7 @@ async def test_connect_pins_rejects_cross_sheet(
 # --- add_symbol cross-file desde paleta (D-12.3) -----------------------------
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 async def test_add_symbol_cross_file_from_explicit_palette(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -763,7 +778,7 @@ async def test_add_symbol_cross_file_from_explicit_palette(
     assert "R50" in _netlist_comps(project / "design.kicad_sch", tmp_path)
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 async def test_add_symbol_default_palette_lookup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

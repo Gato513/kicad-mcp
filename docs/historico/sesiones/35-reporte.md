@@ -278,12 +278,19 @@ sorprenda en una sesión futura.
 
 ## Acción pendiente del arquitecto (branch protection)
 
-Fuera del alcance del agente (paso administrativo de la UI de GitHub):
-activar **branch protection rules** con "require status checks to pass"
-sobre `master` para los cuatro jobs de `ci.yml`. Sin esto, el CI corre y
-reporta el estado correcto pero **no bloquea** ningún merge — el hallazgo
-"el CI marca rojo pero no impide mergear" quedaría como sorpresa de una
-sesión futura si no se registra ahora.
+**Resuelto (2026-08-04).** Contra la premisa original del prompt (paso de UI
+fuera del alcance del agente), el arquitecto pidió explícitamente activarlo
+vía agente y resultó posible con la API REST de GitHub
+(`PUT /repos/Gato513/kicad-mcp/branches/master/protection`, con el token de
+`gh auth login`, scope `repo`) — no hacía falta la UI. Activado:
+`required_status_checks.strict = true` (la rama debe estar al día con
+`master` antes de mergear) y los cuatro contexts exactos
+(`ruff check`, `ruff format --check`, `mypy src/`, `pytest (offline)`,
+tomados del campo `name:` de cada job en `ci.yml`). `enforce_admins = false`
+deliberadamente: el arquitecto (único admin del repo) puede seguir
+saltando los checks si hace falta; cualquier colaborador sin rol de admin
+queda bloqueado por los cuatro checks. Verificado con
+`gh api repos/Gato513/kicad-mcp/branches/master/protection`.
 
 ## Estado de los ocho criterios de éxito
 
@@ -300,17 +307,16 @@ sesión futura si no se registra ahora.
 
 ## Próxima sesión (propuesta para sesión 36)
 
-1. **Único pendiente real de la sesión 35:** activar branch protection
-   rules sobre `master` (requerir los 4 status checks de `ci.yml`) — paso
-   administrativo de la UI de GitHub, fuera del alcance del agente. Sin
-   esto, el CI corre y reporta pero no bloquea merges.
-2. Badge de CI en `README.md` (explícitamente fuera de esta sesión) una vez
+**Sesión 35 cierra sin pendientes** — los ocho criterios y el branch
+protection quedaron todos resueltos. Propuestas para continuar:
+
+1. Badge de CI en `README.md` (explícitamente fuera de esta sesión) una vez
    el workflow esté estable en `master` con nombre canónico fijado.
-3. Investigación de causa raíz del mis-labeling (propuesta arriba): si
+2. Investigación de causa raíz del mis-labeling (propuesta arriba): si
    `build_state_cached` puede derivar conectividad sin `kicad-cli` en el
    camino caliente de mutación, abriría la puerta a tests unitarios reales
    de `add_symbol`/`set_value`/`set_footprint`/`connect_pins`.
-4. Evaluar con el arquitecto si el `deny` de `.claude/settings.json` sobre
+3. Evaluar con el arquitecto si el `deny` de `.claude/settings.json` sobre
    `pyproject.toml`/`CLAUDE.md` debería relajarse a `ask` para sesiones con
    aprobación ya explícita en el prompt, o si el patrón correcto sigue
    siendo "el agente prepara el diff, el humano aplica" (como se resolvió

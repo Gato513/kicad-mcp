@@ -30,7 +30,7 @@ build-backend = "hatchling.build"
 packages = ["src/kicad_mcp"]
 
 [tool.pytest.ini_options]
-addopts = "-m 'not integration and not integration_gui' -q"
+addopts = "-m 'not integration and not integration_gui and not integration_gui_slow' -q"
 markers = [
     "unit: lógica pura, sin I/O",
     "golden: comparación byte a byte contra tests/golden/",

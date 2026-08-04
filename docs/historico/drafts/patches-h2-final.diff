@@ -1,0 +1,69 @@
+Parches H2 (sesión 35) — para aplicar a mano
+==============================================
+
+El harness bloquea Edit/Write sobre `pyproject.toml` y `CLAUDE.md` vía
+`.claude/settings.json` (deny list) incluso con autorización verbal del
+arquitecto en el chat — el deny es un bloqueo técnico a nivel de tool
+permission, no un prompt de confirmación que el consentimiento en chat
+pueda saltear. La única forma de aplicarlos es que el arquitecto los aplique
+a mano (o edite `.claude/settings.json` para sacar esas dos entradas de
+`deny` y me pida reintentar en esta misma rama).
+
+Ambos ya fueron verificados: `uv run pytest --collect-only` pasa de 403 a
+394 tests recolectados con el Parche A aplicado (verificado en un checkout
+temporal fuera del árbol protegido — ver docs/historico/sesiones/35-reporte.md).
+
+--------------------------------------------------------------------------
+Parche A — pyproject.toml:33
+--------------------------------------------------------------------------
+
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -30,7 +30,7 @@
+ packages = ["src/kicad_mcp"]
+
+ [tool.pytest.ini_options]
+-addopts = "-m 'not integration and not integration_gui' -q"
++addopts = "-m 'not integration and not integration_gui and not integration_gui_slow' -q"
+ markers = [
+     "unit: lógica pura, sin I/O",
+     "golden: comparación byte a byte contra tests/golden/",
+
+--------------------------------------------------------------------------
+Parche B — CLAUDE.md (líneas 29 y 151, más una advertencia nueva)
+--------------------------------------------------------------------------
+
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -26,7 +26,7 @@
+ ```bash
+ python3 scripts/verificar_entorno.py     # FASE 0 de toda sesión — ver regla abajo
+ uv sync                                  # instalar deps
+-uv run pytest -m "not integration"       # tests (unit + golden) — SIEMPRE antes de commit
++uv run pytest -m "not integration and not integration_gui and not integration_gui_slow"  # tests (unit + golden) — SIEMPRE antes de commit
+ uv run pytest -m integration             # requiere KiCad corriendo — NO en CI
+ uv run pytest -m integration_gui_slow    # tests GUI lentos (route_board, dogfooding) — NO en CI
+ uv run ruff check --fix && uv run ruff format
+@@ -148,7 +148,7 @@
+ ## Definition of Done (toda tarea)
+
+-1. `pytest -m "not integration"` verde, `ruff` limpio, `mypy` limpio.
++1. `pytest -m "not integration and not integration_gui and not integration_gui_slow"` verde, `ruff` limpio, `mypy` limpio.
+ 2. Tests de integración (`-m integration` y/o `-m integration_gui_slow`)
+    que correspondan a la tool tocada, verdes. Si el cambio toca `route_board`,
+
+Además, agregar una nota nueva al final de la sección "## Comandos" (o donde
+el arquitecto prefiera) advirtiendo del riesgo identificado en sesión 35:
+
+    **Nota (sesión 35):** los 9 tests de `test_sch.py` que shellean a
+    `kicad-cli` (vía `add_symbol`/`set_value`/`set_footprint`/`connect_pins`)
+    están marcados `integration`, no `unit` — no corren en
+    `pytest -m "not integration and ..."`. Para correrlos localmente:
+    `uv run pytest -m integration`. Ver docs/historico/sesiones/35-reporte.md.
+
+--------------------------------------------------------------------------
+Verificación post-parche (ejecutar sobre el árbol con ambos aplicados)
+--------------------------------------------------------------------------
+
+    uv run pytest --collect-only -q | tail -3      # → 394 tests (era 403)
+    grep -n 'not integration' CLAUDE.md             # sólo debe verse la forma completa

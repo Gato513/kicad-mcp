@@ -386,6 +386,58 @@ código **nunca leía Edge.Cuts**, iba directo al fallback (margen de
 - **Sin ADR** — implementa comportamiento ya documentado, sin cambiar
   contrato externo (DoD #4, "aclaración de comportamiento").
 
+## P1-1 — Sanitización de los tres encoders ad-hoc de `tools/pcb.py` — ✅ CERRADO sesión 37
+
+**Origen:** R2 de `docs/analisis/auditoria-tecnica-integral-2026-08.md:367`
+(plan de acción C2 en `:429`, deuda técnica DT4 en `:385`). `_encode_tracks`,
+`_encode_zones` y `_encode_component_detail` (`tools/pcb.py`) interpolan
+`net_name`/`ref`/`pad.number` de KiCad — entrada no confiable por CLAUDE.md
+regla 6 — en formatos delimitados por espacios/`|` propios (NO TOON, F1
+intacto por diseño).
+
+- **Sesión 36 (parcial):** aplicó `toon.encoder._sanitize` en los tres
+  puntos de interpolación (cierra caracteres estructurales `\n`/`|`/`:`/`>`
+  y control-chars) + 3 goldens byte-exactos nuevos
+  (`tests/golden/004_pcb_tracks_canarios/`, `005_pcb_zones_canarios/`,
+  `006_pcb_component_detail_canarios/`, `tests/test_pcb_encoders_golden.py`).
+  Evaluando H36.1 activamente (no asumida), descubrió que `_sanitize` **no**
+  neutraliza el espacio — el delimitador posicional real de las tres
+  gramáticas ad-hoc (a diferencia de TOON, `|`-delimited). Documentado como
+  golden de caracterización (líneas `T4`/`Z4`/pads 4-5) y escalado a sesión
+  37 en vez de fixearlo apurado.
+- **Sesión 37 (cierre):** mini-sanitizador local `_sanitize_space_delimited`
+  (`tools/pcb.py`, junto al import de `_sanitize`) — compone `_sanitize` +
+  `re.sub(r"\s", "_", ...)` (D37.1: whitespace unicode completo, no sólo
+  `U+0020`, alcanzable vía netlists importadas; `_CONTROL_RE` de TOON ya
+  cubre `\t\n\r\v\f` pero no el espacio). Aplicado en los 5 sitios
+  space-delimited: `net_name` en `_encode_tracks` (segmentos y vías) y
+  `_encode_zones`, `number`/`net_name` de pad en `_encode_component_detail`.
+  El header `DETAIL|<ref>|pcb|...` de `_encode_component_detail` (`|`-delimitado)
+  **no** se toca — H2 confirmada, un espacio ahí es inocuo.
+  `toon/` no se tocó (ruta (a) del ADR propuesto en 36; la ruta (b), extender
+  `_sanitize`, fue descartada explícitamente por el arquitecto para no
+  invertir la dependencia núcleo↔deuda ad-hoc).
+- **Goldens actualizados exactamente en las 4 líneas anticipadas** (`T4` en
+  004, `Z4` en 005, pads 4-5 en 006) — H3 confirmada, regenerar con el código
+  nuevo y diffear contra el golden previo no tocó ninguna otra línea.
+- **Riesgo real, no sólo teórico:** hay consumidores posicionales activos que
+  `.split(" ")`/`.split()` estas líneas — `tests/test_pcb_session16_gui.py:126`,
+  `tests/test_pcb_session19d_gui.py:142`,
+  `tests/test_pcb_session21_hole_clearance_gui.py:115`,
+  `tests/test_reload_e2e_gui.py:122`. Un `net_name="GND EN"` sin el fix
+  leería `net="GND"`, `layer="EN"` — corrupción silenciosa.
+- **Campos fuera de alcance, quedan como candidatos futuros** (ya listados
+  en la decisión #4 de sesión 36, sin sesión asignada): `filter_desc`
+  (headers de `_encode_tracks`/`_encode_zones`), `it.kiid`/`z.kiid`,
+  `it.layer`/`z.layer`/`p.layer` (`CopperItem.layer: str | None` renderiza
+  el literal `None` cuando falta), `z.kind`, `it.via_layers`,
+  `detail.bbox_source`, y `CopperItem.net_name` vacío sin fallback `or "-"`
+  (a diferencia de `ZoneItem.net_name`/`PadDetail.number`/`net_name`, que sí
+  lo tienen). Ver `docs/historico/sesiones/37-reporte.md`.
+- **Verificación:** `pytest tests/test_pcb_encoders_golden.py` → 3 passed;
+  suite offline completa → 388 passed (mismo baseline que sesión 36); `ruff
+  check`/`ruff format --check`/`mypy src/` limpios.
+
 ## P1 (investigación Fase 4) — Conectividad GND no cierra tras refill (F-D5-01 / F-V1c-01 / F-V2-VIA-HUERFANA) — CERRADO PARCIALMENTE sesión 32d, ver sub-patrón abierto abajo
 
 **3ª instancia confirmada del patrón → cumple el trigger de promoción

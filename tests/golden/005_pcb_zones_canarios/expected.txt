@@ -1,0 +1,6 @@
+ZONES|v1|kind:CANARIOS|5
+Z Z1 copper GND_EN F.Cu bbox=0.000,0.000;10.000,10.000 area=100.00 filled=1
+Z Z2 copper A_B F.Cu verts=3 area=100.00 filled=1
+Z Z3 keepout A"B F.Cu bbox=0.000,0.000;10.000,10.000 area=100.00 filled=1
+Z Z4 copper GND EN B.Cu bbox=20.000,0.000;30.000,10.000 area=100.00 filled=1
+Z Z5 keepout - F.Cu bbox=0.000,0.000;5.000,5.000 area=25.00 filled=1

@@ -51,6 +51,11 @@ from ..snapshots import (
 )
 from ..tools.world import _resolve_root_pcb, _resolve_root_schematic
 
+# Sesión 36 (R2): reuso de la sanitización §5 de TOON en los tres encoders
+# ad-hoc (_encode_tracks/_encode_zones/_encode_component_detail). NO extiende
+# TOON (F1 intacto): es una utilidad interna, no cambia el schema TOON.
+from ..toon.encoder import _sanitize
+
 # Tolerancia por defecto del matching geométrico del borrado dirigido (D-11.2):
 # la track/via cuyo segmento pasa a ≤ este radio del punto es candidata. 0.5 mm
 # = ~20 mil, holgado frente al grid de 1.27 mm pero fino para no barrer vecinas.
@@ -824,7 +829,8 @@ def _encode_zones(items: tuple[ZoneItem, ...], filter_desc: str) -> str:
     header = f"ZONES|v1|{filter_desc}|{len(items)}" if filter_desc else f"ZONES|v1|{len(items)}"
     lines = [header]
     for z in items:
-        net = z.net_name or "-"
+        # Sesión 36 (R2): net_name es entrada no confiable (CLAUDE.md regla 6).
+        net = _sanitize(z.net_name)[0] if z.net_name else "-"
         if _zone_is_axis_aligned_rect(z.vertices_mm):
             geom = (
                 f"bbox={float(z.bbox_min_x):.3f},{float(z.bbox_min_y):.3f};"
@@ -3278,8 +3284,10 @@ def _encode_component_detail(detail: ComponentDetail) -> str:
     h = float(detail.bbox_max_y) - float(detail.bbox_min_y)
     rot_f = float(detail.rotation_deg)
     rot: int | float = int(rot_f) if rot_f.is_integer() else rot_f
+    # Sesión 36 (R2): ref/number/net_name son entrada no confiable (CLAUDE.md regla 6).
+    ref = _sanitize(detail.ref)[0]
     header = (
-        f"DETAIL|{detail.ref}|pcb|at:{float(detail.x_mm):.1f},{float(detail.y_mm):.1f}"
+        f"DETAIL|{ref}|pcb|at:{float(detail.x_mm):.1f},{float(detail.y_mm):.1f}"
         f"|rot:{rot}|bbox:{w:.1f}x{h:.1f}"
         f"|box:{float(detail.bbox_min_x):.1f},{float(detail.bbox_min_y):.1f};"
         f"{float(detail.bbox_max_x):.1f},{float(detail.bbox_max_y):.1f}"
@@ -3287,8 +3295,8 @@ def _encode_component_detail(detail: ComponentDetail) -> str:
     )
     lines = [header, f"[PADS] {len(detail.pads)}"]
     for p in detail.pads:
-        num = p.number or "-"
-        net = p.net_name or "-"
+        num = _sanitize(p.number)[0] if p.number else "-"
+        net = _sanitize(p.net_name)[0] if p.net_name else "-"
         lines.append(
             f"{num} {net} {float(p.x_mm):.1f},{float(p.y_mm):.1f} "
             f"{float(p.w_mm):.2f}x{float(p.h_mm):.2f} {p.layer}"
@@ -3347,8 +3355,10 @@ def _encode_tracks(items: tuple[CopperItem, ...], filter_desc: str) -> str:
         sx, sy = float(it.start_x_mm), float(it.start_y_mm)
         ex = float(it.end_x_mm) if it.end_x_mm is not None else sx
         ey = float(it.end_y_mm) if it.end_y_mm is not None else sy
+        # Sesión 36 (R2): net_name es entrada no confiable (CLAUDE.md regla 6).
+        net = _sanitize(it.net_name)[0]
         line = (
-            f"{kind_letter} {it.kiid} {it.net_name} {it.layer} w{w} "
+            f"{kind_letter} {it.kiid} {net} {it.layer} w{w} "
             f"({sx:.3f},{sy:.3f})->({ex:.3f},{ey:.3f})"
         )
         if it.kind == "arc" and it.mid_x_mm is not None and it.mid_y_mm is not None:
@@ -3358,8 +3368,9 @@ def _encode_tracks(items: tuple[CopperItem, ...], filter_desc: str) -> str:
         size = f"{float(it.size_mm):.3f}" if it.size_mm is not None else "?"
         drill = f"{float(it.drill_mm):.3f}" if it.drill_mm is not None else "?"
         layers = "-".join(it.via_layers) if it.via_layers else "?"
+        net = _sanitize(it.net_name)[0]
         lines.append(
-            f"V {it.kiid} {it.net_name} "
+            f"V {it.kiid} {net} "
             f"({float(it.start_x_mm):.3f},{float(it.start_y_mm):.3f}) "
             f"d{size}/{drill} {layers}"
         )

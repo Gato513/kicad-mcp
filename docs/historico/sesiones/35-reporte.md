@@ -47,15 +47,41 @@ código trackeado.
 
 ## H1 — El workflow bloquea integraciones rotas
 
-**Estado: pendiente de acción del arquitecto.** No hay `gh` instalado en este
-entorno y CLAUDE.md prohíbe `push` sin excepción explícita del arquitecto (se
-preguntó y se optó por que el agente prepare las ramas localmente y el
-arquitecto las pushee).
+**Estado: confirmada con evidencia real de GitHub Actions (2026-08-04).** El
+arquitecto instaló `gh`, se autenticó, pusheó ambas ramas y abrió los dos PRs
+(sin marcarlos `draft`, desviación menor del plan original que no afecta la
+validación — la CI corre sobre el head SHA independientemente del estado
+draft/ready o de la rama base).
 
-Ambas ramas están commiteadas y listas:
+- **PR #4** (clean, `sesion/35-ci-github-actions` → `master`, head
+  `622a94f`, incluye los fixes de H2): los 4 jobs **verdes**
+  (`ruff check`, `ruff format --check`, `mypy src/`, `pytest offline` →
+  **385 passed, 0 failed**). Corrió dos veces (trigger `push` + trigger
+  `pull_request`, ambos declarados en el workflow), mismas conclusiones en
+  las dos corridas. **Mergeado a `master`** (merge commit `897d6a0`,
+  2026-08-04T15:57:50Z).
+- **PR #5** (broken, `sesion/35-pr-broken-canary` → `master` — base
+  desviada del plan, que pedía `sesion/35-ci-github-actions`; sin efecto
+  sobre el resultado de la CI, sólo cambia el diff mostrado en la UI del
+  PR), head `072c896`: los 4 jobs **fallan**, cada uno con causa
+  identificable en el log:
+  - `ruff check` → `F401 'os' imported but unused` (`_ci_broken_lint.py`)
+  - `ruff format --check` → `Would reformat: src/kicad_mcp/_ci_broken_format.py`
+  - `mypy src/` → `Incompatible return value type (got "int", expected "str")` (`_ci_broken_mypy.py:15`)
+  - `pytest (offline)` → `AssertionError` del canario, `1 failed, 385 passed, 77 deselected`
+  - **Cerrado sin merge** (por diseño — nunca debía mergearse).
 
-- `sesion/35-ci-github-actions` — `git log --oneline -1` → `38db5bc`.
-- `sesion/35-pr-broken-canary` (parte de la anterior) — `072c896`.
+Nota: esta rama (`sesion/35-pr-broken-canary`, creada como `072c896` sobre
+`38db5bc`) nunca incorporó los commits de fix de H2 (`4620b97`, `622a94f`) —
+no hacía falta, porque el job de `pytest` del workflow pasa su propio filtro
+`-m` explícito por CLI (independiente del `addopts` de `pyproject.toml`, por
+diseño de §Alcance/A del prompt), así que el bug de `addopts` nunca afectó a
+la CI, sólo a la invocación local sin `-m` explícito — de ahí que ambas
+ramas reporten el mismo "385 passed" base.
+
+H1 queda **confirmada**: el workflow bloquea (reporta rojo con causa clara)
+exactamente las cuatro clases de ruptura, y dejaría pasar únicamente el
+código que cumple los cuatro criterios de la DoD.
 
 Cada una de las 4 fixtures del PR-broken fue verificada **localmente antes
 de commitear**, corriendo los 4 comandos exactos del workflow sobre el árbol
@@ -75,14 +101,9 @@ dispara `B011` de `ruff` (`flake8-bugbear`, parte del `select` activo en
 `pyproject.toml`) y hubiera contaminado también el job de lint —
 comprobado empíricamente antes de decidir el cambio.
 
-**Pendiente:** el arquitecto pushea ambas ramas, abre los dos PRs en modo
-`draft` (clean contra `sesion/35-ci-github-actions`, broken contra
-`sesion/35-pr-broken-canary`), y confirma que:
-- PR-clean: los 4 jobs verdes en <15 min.
-- PR-broken: los 4 jobs rojos con causa identificable en el log.
-
-Sin esa confirmación, H1 no está cerrada — el workflow existe y fue
-razonado con cuidado, pero no corrió en un runner real de GitHub Actions.
+**Resuelto:** el arquitecto instaló `gh`, se autenticó, pusheó ambas ramas y
+abrió los PRs #4 y #5. Resultado real en runner de GitHub Actions
+documentado arriba en §H1.
 
 ## H2 — Brecha del filtro de pytest (auditoría R8)
 
@@ -202,6 +223,12 @@ tests unitarios reales de esas tools sin `kicad-cli`.
    denegados por configuración). Ambos coincidieron exactamente con los del
    draft: `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1),
    `astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9` (v9.0.0).
+8. **Disposición final de los PRs (2026-08-04, tras validar H1 en runner
+   real):** PR #5 (broken) cerrado sin merge — nunca debía mergearse, era
+   sólo el canario de H1. PR #4 (clean) mergeado a `master` (`897d6a0`) —
+   trae el CI real más los fixes de H2 ya verificados, decisión explícita
+   del arquitecto vía `AskUserQuestion` frente a la alternativa de cerrar
+   ambos sin mergear (que hubiera dejado `ci.yml` fuera de `master`).
 
 ## Fricciones nuevas
 
@@ -230,6 +257,14 @@ tests unitarios reales de esas tools sin `kicad-cli`.
   parsear "PASSED"/"FAILED" de la salida de pytest debe pasar
   `-vv` (dos niveles) o `-p no:cacheprovider --tb=short -rA` en vez de
   confiar en que `-v` sobreescriba `addopts`.
+- **`gh pr merge` bloqueado por el clasificador de auto-mode** (a diferencia
+  de `gh pr close`, que sí pasó): mergear a `master` vía agente disparó un
+  bloqueo aunque el arquitecto ya lo había autorizado explícitamente en el
+  chat inmediatamente antes. Mismo patrón que el `deny` de permisos sobre
+  `pyproject.toml`/`CLAUDE.md` — la autorización conversacional no alcanza
+  para saltear un bloqueo de la capa de herramientas; el arquitecto tuvo que
+  correr `gh pr merge 4 --merge` él mismo. Documentado para que una sesión
+  futura no asuma que puede automatizar merges a `master` de punta a punta.
 
 ## Riesgo registrado (no bloqueante)
 
@@ -255,8 +290,8 @@ sesión futura si no se registra ahora.
 | # | Criterio | Estado |
 |---|---|---|
 | 1 | `ci.yml` existe, sintaxis válida | ✅ (validación manual; `actionlint` no disponible) |
-| 2 | PR-clean 4 jobs verdes <15 min | ⚠️ pendiente de push del arquitecto |
-| 3 | PR-broken 4 jobs rojos con causa identificable | ⚠️ pendiente de push del arquitecto (fixtures verificadas localmente) |
+| 2 | PR-clean 4 jobs verdes <15 min | ✅ confirmado en GitHub Actions, PR #4 mergeado a `master` (`897d6a0`) |
+| 3 | PR-broken 4 jobs rojos con causa identificable | ✅ confirmado en GitHub Actions, PR #5 cerrado sin merge |
 | 4 | Comandos del workflow == comandos locales | ✅ |
 | 5 | H3 con evidencia (0 failed sin kicad-cli; 9/9 pasan con kicad-cli) | ✅ |
 | 6 | Docstring `test_sch.py` actualizada | ✅ |
@@ -265,9 +300,10 @@ sesión futura si no se registra ahora.
 
 ## Próxima sesión (propuesta para sesión 36)
 
-1. Cerrar los criterios #2 y #3 pendientes (#7 ya cerrado en esta
-   verificación): pushear ambas ramas, abrir los dos PRs draft, confirmar
-   los cuatro jobs en cada uno, activar branch protection sobre `master`.
+1. **Único pendiente real de la sesión 35:** activar branch protection
+   rules sobre `master` (requerir los 4 status checks de `ci.yml`) — paso
+   administrativo de la UI de GitHub, fuera del alcance del agente. Sin
+   esto, el CI corre y reporta pero no bloquea merges.
 2. Badge de CI en `README.md` (explícitamente fuera de esta sesión) una vez
    el workflow esté estable en `master` con nombre canónico fijado.
 3. Investigación de causa raíz del mis-labeling (propuesta arriba): si

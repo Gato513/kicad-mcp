@@ -22,16 +22,29 @@ de reducirla — de ahí que DT2 preceda a DT1 en la secuencia del roadmap.
 
 ### Anatomía real del preámbulo (P3 de la sesión, previa al diseño)
 
-Inspección de las 19 tools MCP mutantes registradas en el código (16 sitios
+Inspección de las 19 tools MCP mutantes registradas en el código (17 sitios
 de preámbulo — `_delete_copper` sirve a `delete_track`+`delete_via`,
 `_set_property_core` a `set_value`+`set_footprint`) encontró **tres
 familias estructurales**, no una uniforme:
 
 | Familia | Sitios | Forma del preámbulo |
 |---|---|---|
-| **A — W-IPC de PCB** | 11 | `_guard_live_stale` → `check_no_external_disk_edit` → `_project_root` → `_check_base_snap` → `_resolve_board` |
+| **A — W-IPC de PCB** | 12 | `_guard_live_stale` → `check_no_external_disk_edit` → `_project_root` → `_check_base_snap` → `_resolve_board` |
 | **B — excepciones deliberadas** | 2 (`route_board`, `reload_board_from_disk`) | sin guard de entrada simétrico, `root` de otra fuente, orden de Gate G1 distinto (D-14.3, ADR-0011, ADR-0012) |
 | **C — W-disco de esquemático** | 3 (`add_symbol`, `set_value`/`set_footprint` vía `_set_property_core`, `connect_pins`) | sólo `root` + `validate_base_snap` + G1 — sin guard IPC, sin `_resolve_board` |
+
+**Corrección (errata post-merge, 2026-08-05):** la versión original de esta
+tabla contaba 11 sitios en la Familia A y 16 en el total — error aritmético:
+`delete_tracks_bulk` es estructuralmente Familia A (mismo guard, sólo
+desplazado tras el early-return de `dry_run`, ver más abajo) pero había
+quedado fuera de la suma de la fila. Familia A son en realidad **13 tools**
+(`move_footprint`, `set_footprint_ref`, `add_track`, `add_via`,
+`save_board`, `delete_track`, `delete_via`, `delete_tracks_bulk`,
+`draw_board_outline`, `add_zone`, `add_keepout_zone`, `fill_zones`,
+`delete_zone`) que colapsan a **12 sitios** por la fusión
+`delete_track`+`delete_via` → `_delete_copper`. 12+2+3 = **17** sitios
+totales, no 16. El conteo de tools decoradas (12) y el análisis de
+exclusiones no cambian — sólo la aritmética del total de sitios.
 
 Además, el **epílogo** (`tool_call_timer`, `ensure_session_backup`,
 `audit_record`, registro del snapshot post-mutación, `log_tool_call`) **no
@@ -94,12 +107,14 @@ API observable por el LLM cliente intacta.
 `inspect.signature(func).bind_partial(*args, **kwargs)`, no por posición
 fija — indiferente a si la tool lo recibe posicional o por keyword.
 
-### Superficie decidida: 12 tools, no 16
+### Superficie decidida: 12 tools de 17 sitios
 
-De los 16 sitios de preámbulo, **12 llevan el decorador**:
-`move_footprint`, `set_footprint_ref`, `add_track`, `add_via`,
-`save_board`, `delete_track`, `delete_via`, `draw_board_outline`,
-`add_zone`, `add_keepout_zone`, `fill_zones`, `delete_zone`.
+De los 17 sitios de preámbulo, **12 tools llevan el decorador**
+(11 sitios de código distintos, ya que `delete_track`/`delete_via`
+comparten `_delete_copper`): `move_footprint`, `set_footprint_ref`,
+`add_track`, `add_via`, `save_board`, `delete_track`, `delete_via`,
+`draw_board_outline`, `add_zone`, `add_keepout_zone`, `fill_zones`,
+`delete_zone`.
 
 **Excluidas, con justificación:**
 
@@ -144,12 +159,12 @@ gana ni pierde una línea de log por este cambio.
 - **Un solo decorador que también cubra el epílogo** (timer + log +
   snapshot + audit), con las tools devolviendo un `MutationResult`
   estructurado. Descartado: el epílogo no es uniforme (ver Contexto);
-  forzarlo exige invertir el control de cada `return`, tocando los 16
+  forzarlo exige invertir el control de cada `return`, tocando los 17
   sitios de forma no quirúrgica y con alto riesgo sobre el criterio de
   "cero cambio observable" (H3). Evaluado y rechazado explícitamente por
   el arquitecto en la consulta de diseño de esta sesión.
 - **Jerarquía de 2-3 decoradores especializados** (uno por familia). Con
-  sólo 12 sitios cubiertos y dos flags booleanos alcanzando para expresar
+  sólo 12 tools cubiertas y dos flags booleanos alcanzando para expresar
   las asimetrías reales, una jerarquía habría sido complejidad sin
   beneficio — el criterio del prompt ("mejor jerarquía pequeña que
   decorador todopoderoso, PERO sólo si el análisis lo pide") no se
@@ -157,7 +172,7 @@ gana ni pierde una línea de log por este cambio.
 - **Partición 39a/39b** (análisis+ADR en una sesión, implementación en
   otra). Evaluada como salida válida si la varianza real superaba lo
   manejable en una sesión; el análisis de P3 mostró que sí cabía completo
-  (superficie acotada a 12 sitios de forma casi idéntica, 2 asimetrías
+  (superficie acotada a 12 tools de forma casi idéntica, 2 asimetrías
   expresables en flags) — no se activó.
 - **`tools/_common.py`** como ubicación. Descartado a favor de
   `tools/_mutating.py`: un nombre genérico habría sido la puerta de

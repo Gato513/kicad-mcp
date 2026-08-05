@@ -510,22 +510,30 @@ a DT2 en `BACKLOG.md`). Prerrequisito declarado de `DT1` (sesión 40,
 partición de `tools/pcb.py`): sin un lugar único para el preámbulo
 transversal, DT1 fijaría la deuda en más archivos en vez de reducirla.
 
-**Conteo real (P3 de la sesión):** 19 tools MCP mutantes registradas, 16
+**Conteo real (P3 de la sesión):** 19 tools MCP mutantes registradas, **17**
 sitios de preámbulo (`_delete_copper` sirve a `delete_track`+`delete_via`,
 `_set_property_core` a `set_value`+`set_footprint`). Anatomía real: **tres
 familias estructurales**, no una uniforme (H1 del prompt, parcialmente
-refutada) — Familia A (11 tools W-IPC de PCB, preámbulo casi literal),
-Familia B (`route_board`/`reload_board_from_disk`, desviaciones
+refutada) — Familia A (13 tools W-IPC de PCB → 12 sitios, preámbulo casi
+literal), Familia B (`route_board`/`reload_board_from_disk`, desviaciones
 deliberadas de contrato D-14.3/ADR-0011/ADR-0012), Familia C (3 mutantes
 de esquemático, sin guard IPC). El epílogo (timer/G1/audit/snapshot/log)
 resultó NO uniforme entre las 19 — fuera de alcance del decorador.
 
+*(Errata post-merge, 2026-08-05: la versión original de esta entrada decía
+"16 sitios" / "11 tools" en la Familia A — error aritmético, `delete_tracks_bulk`
+es Familia A pero había quedado fuera de la suma. Corregido acá y en
+`docs/adr/0014-mutating-tool-decorator.md`; el reporte de sesión
+`docs/historico/sesiones/39-reporte.md` preserva el conteo original, sin
+tocar, por convención de bitácora.)*
+
 **Decisión:** `@mutating_tool` (`src/kicad_mcp/tools/_mutating.py`) cubre
 sólo las guardas de ENTRADA (`_guard_live_stale` + `check_no_external_disk_edit`
-+ `_check_base_snap`) de la Familia A. Aplicado a **12 de las 16 tools**
-(`move_footprint`, `set_footprint_ref`, `add_track`, `add_via`,
-`save_board`, `delete_track`, `delete_via`, `draw_board_outline`,
-`add_zone`, `add_keepout_zone`, `fill_zones`, `delete_zone`).
++ `_check_base_snap`) de la Familia A. Aplicado a **12 tools de los 17
+sitios reales** (`move_footprint`, `set_footprint_ref`, `add_track`,
+`add_via`, `save_board`, `delete_track`, `delete_via`,
+`draw_board_outline`, `add_zone`, `add_keepout_zone`, `fill_zones`,
+`delete_zone`).
 **Excluidas con justificación** (ver `docs/adr/0014-mutating-tool-decorator.md`):
 `delete_tracks_bulk` (preámbulo post early-return de `dry_run` — hoistearlo
 cambiaría comportamiento observable), Familia B completa (contrato
@@ -534,8 +542,8 @@ decorador hermano en sesión futura).
 
 - **Reducción medida:** `tools/pcb.py` 3507 → 3419 líneas (-88, -2.5%).
   4 helpers movidos a `_mutating.py` (~49 líneas relocadas, no borradas).
-  12 sitios de preámbulo colapsados a 1 línea de decorador cada uno (10
-  sitios con reducción neta de -4/-5 líneas; `delete_track`/`delete_via`
+  12 tools con preámbulo colapsado a 1 línea de decorador cada una (10
+  con reducción neta de -4/-5 líneas; `delete_track`/`delete_via`
   netean +1 cada uno porque su guard vivía una sola vez en el núcleo
   compartido `_delete_copper`, que además ganó un párrafo de docstring
   explicando por qué `base_snap_check=False`).

@@ -386,7 +386,7 @@ código **nunca leía Edge.Cuts**, iba directo al fallback (margen de
 - **Sin ADR** — implementa comportamiento ya documentado, sin cambiar
   contrato externo (DoD #4, "aclaración de comportamiento").
 
-## P1-1 — Sanitización de los tres encoders ad-hoc de `tools/pcb.py` — ✅ CERRADO sesión 37
+## P1-1 — Sanitización de los tres encoders ad-hoc de `tools/pcb.py` — ✅ CERRADO sesión 37, gaps derivados cerrados/delegados sesión 38
 
 **Origen:** R2 de `docs/analisis/auditoria-tecnica-integral-2026-08.md:367`
 (plan de acción C2 en `:429`, deuda técnica DT4 en `:385`). `_encode_tracks`,
@@ -437,6 +437,69 @@ intacto por diseño).
 - **Verificación:** `pytest tests/test_pcb_encoders_golden.py` → 3 passed;
   suite offline completa → 388 passed (mismo baseline que sesión 36); `ruff
   check`/`ruff format --check`/`mypy src/` limpios.
+- **Sesión 38 — cierre de 4 de los 7 campos listados arriba, veredicto
+  explícito en los 7:**
+  - `CopperItem.net_name` vacío → fallback `"-"` (`_encode_tracks`), ya
+    consistente con `ZoneItem`/`PadDetail`. **Cerrado.**
+  - `CopperItem.layer` (`str | None` renderizando `None`) → fallback `"-"`.
+    Defensivo, no correctivo: hoy sólo las vías traen `layer=None` y esa
+    rama no emite `layer` — inalcanzable en producción, pero el tipo lo
+    permite y el fix cierra el flanco a costo cero. **Cerrado.**
+  - `z.layer` (no estaba en los 4 candidatos originales del prompt de la
+    sesión, pero sí en el desglose `it.layer`/`z.layer`/`p.layer` de esta
+    misma entrada) → puede ser `""` (`bridge/ipc.py`, `layers[0] if layers
+    else ""`), mismo colapso de columna que tenía `CopperItem.net_name`.
+    Fallback `"-"`. **Cerrado** (correctivo, caso alcanzable).
+  - `filter_desc` → sanitiza cada componente (`net`/`layer`/`kind`) antes de
+    ensamblar, en `_tracks_filter_desc`/`_zones_filter_desc`. **Correctivo,
+    no defensivo:** `layer` de `get_tracks`/`get_zones` no se valida en
+    ningún punto (a diferencia de `net`/`kind`/`bbox`) y llegaba crudo al
+    header — un `layer` con `\n` forjaba líneas dentro del bloque
+    `TRACKS|v1|...`/`ZONES|v1|...`. **Cerrado.**
+  - `kiid` → **NO cerrado, abre `P1-2`** (ver abajo): es identificador de
+    round-trip (`delete_track(id=...)`, `get_copper_by_kiid`), sanitizarlo
+    rompe la resolución del id — requiere discusión de diseño, no es un fix
+    mecánico.
+  - `bbox_source`, `kind`, `p.layer` → **refutados**, no son gaps reales:
+    conjuntos cerrados de literales hard-codeados internos
+    (`{"courtyard","pads"}` para `bbox_source`; `"via"/"arc"/"track"`/bool
+    `is_keepout` para `kind`) o siempre no-vacíos (`_pad_layer_str` —
+    `"*.Cu"` o nombre de enum en toda rama), nunca texto de archivo KiCad.
+  - Canarios nuevos: `T5` en `004_pcb_tracks_canarios` (`net_name=""` +
+    `layer=null`), `Z6` en `005_pcb_zones_canarios` (`layer=""`). `006` sin
+    cambios (los dos candidatos que la tocaban quedaron refutados).
+    `filter_desc` sin cobertura golden posible (el arnés recibe el string ya
+    ensamblado) — cubierto en `tests/test_pcb_session38_filter_desc.py`.
+  - Ver `docs/historico/sesiones/38-reporte.md` para el detalle con traza al
+    código de cada veredicto.
+
+## P1-2 — `kiid` sin sanitizar en los encoders ad-hoc de `tools/pcb.py` — Abierto, sin sesión asignada
+
+**Origen:** decisión #4 de sesión 36, verificado y promovido a entrada propia
+en sesión 38 (el resto de esa decisión se cerró en la misma sesión, ver
+`P1-1` arriba).
+
+**Ubicación:** `it.kiid` en `_encode_tracks` (`tools/pcb.py`, líneas de
+segmento y de vía), `z.kiid` en `_encode_zones`. Ambos vienen de
+`str(it.id.value)`/`str(z.id.value)` (`bridge/ipc.py`) — el KIID nativo de
+KiCad, no texto arbitrario de archivo, pero tampoco garantizado libre de
+caracteres estructurales por contrato (D-16.2/D-16.3 no lo especifican).
+
+**Por qué no es un fix mecánico:** `kiid` es un identificador de
+**round-trip** — el agente lo recibe de `get_tracks`/`get_zones` y lo
+devuelve tal cual a `delete_track(id=...)`, `get_copper_by_kiid`, etc.
+Aplicarle `_sanitize`/`_sanitize_space_delimited` (que truncan a 40 chars y
+reemplazan caracteres) mutilaría el id y rompería esa resolución — el
+consumidor recibiría un id que ya no identifica nada. El fix correcto, si
+hace falta uno, es de otra naturaleza (ej. rechazar/loguear un ítem con
+`kiid` sospechoso en vez de sanitizarlo, o documentar la garantía de KiCad de
+que el KIID nunca contiene esos caracteres y cerrar el candidato como
+refutado con esa evidencia) — decisión de diseño, no mecánica.
+
+**Advertencia para quien la tome:** el sitio de emisión vive en el mismo
+bloque de `tools/pcb.py` que DT1 (sesión 40, refactor de los encoders
+ad-hoc) va a tocar — evaluar si conviene resolver ahí en vez de una sesión
+aparte.
 
 ## P1 (investigación Fase 4) — Conectividad GND no cierra tras refill (F-D5-01 / F-V1c-01 / F-V2-VIA-HUERFANA) — CERRADO PARCIALMENTE sesión 32d, ver sub-patrón abierto abajo
 

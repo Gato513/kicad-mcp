@@ -54,6 +54,19 @@
       "width_mm": 0.25
     },
     {
+      "kind": "track",
+      "kiid": "T5",
+      "net_name": "",
+      "layer": null,
+      "start_x_mm": 60.0,
+      "start_y_mm": 10.0,
+      "end_x_mm": 70.0,
+      "end_y_mm": 10.0,
+      "mid_x_mm": null,
+      "mid_y_mm": null,
+      "width_mm": 0.25
+    },
+    {
       "kind": "via",
       "kiid": "V1",
       "net_name": "",

@@ -826,14 +826,28 @@ def _zone_is_axis_aligned_rect(vertices: tuple[tuple[Mm, Mm], ...]) -> bool:
 
 def _zones_filter_desc(layer: str | None, net: str | None, kind: str | None) -> str:
     """Cabecera legible del filtro aplicado a ``get_zones`` (P4, espejo de
-    ``_tracks_filter_desc``)."""
+    ``_tracks_filter_desc``).
+
+    ``layer``/``net``/``kind`` son parámetros de la tool MCP: ``kind`` está
+    restringido a ``("copper","keepout")`` y ``net`` se valida contra
+    ``list_net_names`` antes de llegar acá, pero ``layer`` **no se valida en
+    ningún punto** — sólo se usa como filtro de igualdad. Sin sanitizar,
+    un ``layer`` con ``\\n`` forja líneas adicionales dentro del bloque
+    ``ZONES|v1|...`` (sesión 38, corrige el gap; no es defensa en
+    profundidad, es el fix a una inyección real). Se sanitiza cada
+    componente ANTES de ensamblar, con ``_sanitize`` puro (no
+    ``_sanitize_space_delimited``): este header es ``|``-delimitado, un
+    espacio en un valor es inocuo acá (mismo criterio que H2, sesión 37).
+    Sanitizar el string ya ensamblado destruiría la propia sintaxis
+    ``layer:x|net:y`` porque ``_sanitize`` neutraliza ``|`` y ``:``.
+    """
     parts = []
     if layer is not None:
-        parts.append(f"layer:{layer}")
+        parts.append(f"layer:{_sanitize(layer)[0]}")
     if net is not None:
-        parts.append(f"net:{net}")
+        parts.append(f"net:{_sanitize(net)[0]}")
     if kind is not None:
-        parts.append(f"kind:{kind}")
+        parts.append(f"kind:{_sanitize(kind)[0]}")
     return "|".join(parts)
 
 
@@ -856,6 +870,11 @@ def _encode_zones(items: tuple[ZoneItem, ...], filter_desc: str) -> str:
     ``_sanitize_space_delimited`` (sesión 37), que además de los caracteres
     estructurales de TOON (§5) neutraliza el espacio — delimitador posicional
     de esta línea (sesión 36, R2 + sesión 37, cierre del gap del espacio).
+
+    ``layer`` cae a ``"-"`` si viene vacío (sesión 38): ``list_zones`` puede
+    producir ``layer=""`` cuando la zona no reporta capas (``bridge/ipc.py``,
+    ``layers[0] if layers else ""``) — mismo colapso de columna que tenía
+    ``CopperItem.net_name`` antes de esta sesión.
     """
     header = f"ZONES|v1|{filter_desc}|{len(items)}" if filter_desc else f"ZONES|v1|{len(items)}"
     lines = [header]
@@ -863,6 +882,8 @@ def _encode_zones(items: tuple[ZoneItem, ...], filter_desc: str) -> str:
         # Sesión 37: net_name va en línea space-delimited (H36.1, gap del
         # espacio) — _sanitize_space_delimited neutraliza también whitespace.
         net = _sanitize_space_delimited(z.net_name) if z.net_name else "-"
+        # Sesión 38: layer vacío ("") colapsa la columna igual que net_name.
+        layer = z.layer or "-"
         if _zone_is_axis_aligned_rect(z.vertices_mm):
             geom = (
                 f"bbox={float(z.bbox_min_x):.3f},{float(z.bbox_min_y):.3f};"
@@ -871,7 +892,7 @@ def _encode_zones(items: tuple[ZoneItem, ...], filter_desc: str) -> str:
         else:
             geom = f"verts={len(z.vertices_mm)}"
         lines.append(
-            f"Z {z.kiid} {z.kind} {net} {z.layer} {geom} "
+            f"Z {z.kiid} {z.kind} {net} {layer} {geom} "
             f"area={z.area_mm2:.2f} filled={1 if z.filled else 0}"
         )
     return "\n".join(lines) + "\n"
@@ -3350,14 +3371,27 @@ def _tracks_filter_desc(
     net: str | None, bbox: tuple[float, float, float, float] | None, layer: str | None
 ) -> str:
     """Cabecera legible de qué filtro se aplicó (D-16.1) — el agente confirma
-    qué recibió sin adivinar por el conteo de líneas."""
+    qué recibió sin adivinar por el conteo de líneas.
+
+    ``net``/``bbox``/``layer`` son parámetros de la tool MCP: ``net`` se
+    valida contra ``list_net_names`` y ``bbox`` es float-formateado, pero
+    ``layer`` **no se valida en ningún punto** — sólo se usa como filtro de
+    igualdad. Sin sanitizar, un ``layer`` con ``\\n`` forja líneas
+    adicionales dentro del bloque ``TRACKS|v1|...`` (sesión 38, corrige el
+    gap; no es defensa en profundidad, es el fix a una inyección real). Se
+    sanitiza cada componente ANTES de ensamblar, con ``_sanitize`` puro (no
+    ``_sanitize_space_delimited``): este header es ``|``-delimitado, un
+    espacio en un valor es inocuo acá (mismo criterio que H2, sesión 37).
+    Sanitizar el string ya ensamblado destruiría la propia sintaxis
+    ``net:x|layer:y`` porque ``_sanitize`` neutraliza ``|`` y ``:``.
+    """
     parts = []
     if net is not None:
-        parts.append(f"net:{net}")
+        parts.append(f"net:{_sanitize(net)[0]}")
     if bbox is not None:
         parts.append(f"bbox:{bbox[0]:.1f},{bbox[1]:.1f};{bbox[2]:.1f},{bbox[3]:.1f}")
     if layer is not None:
-        parts.append(f"layer:{layer}")
+        parts.append(f"layer:{_sanitize(layer)[0]}")
     return "|".join(parts)
 
 
@@ -3387,6 +3421,13 @@ def _encode_tracks(items: tuple[CopperItem, ...], filter_desc: str) -> str:
     ``_sanitize_space_delimited`` (sesión 37), que además de los caracteres
     estructurales de TOON (§5) neutraliza el espacio — delimitador posicional
     de esta línea (sesión 36, R2 + sesión 37, cierre del gap del espacio).
+
+    ``net_name`` vacío cae a ``"-"`` (sesión 38), consistente con
+    ``ZoneItem.net_name``/``PadDetail.net_name``. ``layer`` cae a ``"-"`` si
+    es ``None`` (sesión 38) — defensivo: hoy sólo ``CopperItem`` de vía trae
+    ``layer=None`` y esa rama no emite ``layer``, así que el caso no es
+    alcanzable por el bridge en producción, pero el tipo (`str | None`)
+    lo permite y el fallback cierra el flanco a costo cero.
     """
     segs = [it for it in items if it.kind in ("track", "arc")]
     vias = [it for it in items if it.kind == "via"]
@@ -3404,10 +3445,11 @@ def _encode_tracks(items: tuple[CopperItem, ...], filter_desc: str) -> str:
         ey = float(it.end_y_mm) if it.end_y_mm is not None else sy
         # Sesión 37: net_name va en línea space-delimited (H36.1, gap del
         # espacio) — _sanitize_space_delimited neutraliza también whitespace.
-        net = _sanitize_space_delimited(it.net_name)
+        # Sesión 38: fallback "-" para net_name vacío y layer None.
+        net = _sanitize_space_delimited(it.net_name) if it.net_name else "-"
+        layer = it.layer or "-"
         line = (
-            f"{kind_letter} {it.kiid} {net} {it.layer} w{w} "
-            f"({sx:.3f},{sy:.3f})->({ex:.3f},{ey:.3f})"
+            f"{kind_letter} {it.kiid} {net} {layer} w{w} ({sx:.3f},{sy:.3f})->({ex:.3f},{ey:.3f})"
         )
         if it.kind == "arc" and it.mid_x_mm is not None and it.mid_y_mm is not None:
             line += f"~({float(it.mid_x_mm):.3f},{float(it.mid_y_mm):.3f})"
@@ -3417,7 +3459,10 @@ def _encode_tracks(items: tuple[CopperItem, ...], filter_desc: str) -> str:
         drill = f"{float(it.drill_mm):.3f}" if it.drill_mm is not None else "?"
         layers = "-".join(it.via_layers) if it.via_layers else "?"
         # Sesión 37: idem, línea de vía también space-delimited.
-        net = _sanitize_space_delimited(it.net_name)
+        # Sesión 38: fallback "-" para net_name vacío (gap declarado en
+        # decisión #4, sesión 36 — CopperItem.net_name no tenía guard `or "-"`
+        # a diferencia de ZoneItem/PadDetail).
+        net = _sanitize_space_delimited(it.net_name) if it.net_name else "-"
         lines.append(
             f"V {it.kiid} {net} "
             f"({float(it.start_x_mm):.3f},{float(it.start_y_mm):.3f}) "

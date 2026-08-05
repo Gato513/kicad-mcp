@@ -44,18 +44,20 @@ from ..bridge.state_builder import build_state_from_board, build_state_from_snap
 from ..errors import ErrorCode, KicadMcpError
 from ..gates.g1 import ensure_session_backup
 from ..logging_config import estimate_tokens, log_tool_call, tool_call_timer
-from ..snapshots import (
-    check_no_external_disk_edit,
-    collect_project_mtimes,
-    get_default_store,
-    validate_base_snap,
-)
-from ..tools.world import _resolve_root_pcb, _resolve_root_schematic
+from ..snapshots import check_no_external_disk_edit, collect_project_mtimes, get_default_store
+from ..tools.world import _resolve_root_pcb
 
 # Sesión 36 (R2): reuso de la sanitización §5 de TOON en los tres encoders
 # ad-hoc (_encode_tracks/_encode_zones/_encode_component_detail). NO extiende
 # TOON (F1 intacto): es una utilidad interna, no cambia el schema TOON.
 from ..toon.encoder import _sanitize
+from ._mutating import (
+    _check_base_snap,
+    _guard_live_stale,
+    _project_root,
+    _resolve_root_schematic_or_pcb,
+    mutating_tool,
+)
 
 # Sesión 37: el espacio es el delimitador POSICIONAL de las líneas de ítem de
 # los tres formatos ad-hoc, pero `_sanitize` (§5 de TOON) no lo neutraliza —
@@ -103,32 +105,6 @@ _OPPOSITE_LAYER: dict[str, str] = {"F.Cu": "B.Cu", "B.Cu": "F.Cu"}
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
-
-
-def _project_root() -> Path:
-    return _resolve_root_schematic().parent
-
-
-def _guard_live_stale() -> None:
-    """D-14.1: bloquea mutar/guardar el board vivo si el disco tiene un ruteo
-    (de ``route_board``) que el editor vivo aún no refleja.
-
-    Una mutación IPC + ``save_board`` posteriores PISARÍAN el ruteo con cobre
-    viejo. Se destraba recargando el board en KiCad (File→Revert) y confirmando
-    con ``get_world_context(kind='pcb', confirm_reloaded=true)`` (ADR-0011).
-    Las tools de DISCO (run_drc, export_*, sch) NO pasan por acá: leen el estado
-    correcto y no se bloquean.
-    """
-    if get_default_store().is_live_stale():
-        raise KicadMcpError(
-            code=ErrorCode.EXTERNAL_EDIT_DETECTED,
-            message="El disco tiene el ruteo de route_board y el editor vivo no.",
-            hint=(
-                "el disco tiene el ruteo y el editor vivo no; recargá el board en "
-                "KiCad (File→Revert) y confirmá con "
-                "get_world_context(kind='pcb', confirm_reloaded=true)"
-            ),
-        )
 
 
 def _similars(target: str, candidates: list[str], *, limit: int = 3) -> list[str]:
@@ -287,17 +263,6 @@ def _resolve_board(bridge: IpcBridge) -> BoardHandle:
             hint="Abrí el .kicad_pcb del proyecto activo en KiCad.",
         )
     return board
-
-
-def _check_base_snap(base_snap: int) -> None:
-    """Delega en :func:`validate_base_snap` para preservar contrato compartido.
-
-    Sesión 05 T2: la lógica vive en ``snapshots/validation.py`` para que
-    ``get_context_delta`` (world) valide de la misma forma y en un único
-    sitio. Snapshots vivos (``mtimes=None``) omiten el chequeo de mtime.
-    """
-    schematic = _resolve_root_schematic()
-    validate_base_snap(get_default_store(), base_snap, schematic)
 
 
 def _dist_point_segment(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> float:
@@ -1068,14 +1033,10 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="move_footprint",
         description="Mueve un footprint del PCB a (x_mm, y_mm)",
     )
+    @mutating_tool("move_footprint", disk_check=False)  # asimetría real, ver ADR-0014
     def move_footprint(ref: str, x_mm: float, y_mm: float, base_snap: int | None = None) -> str:
         with tool_call_timer() as timer:
-            _guard_live_stale()  # D-14.1
             root = _project_root()
-            # Validación de snap opcional (sesión 04 T4). Se hace ANTES de
-            # tocar IPC para que un stale/edición externa no dispare G1.
-            if base_snap is not None:
-                _check_base_snap(base_snap)
             board = _resolve_board(bridge)
 
             # D-08.1: UNA sola pasada O(board) para el pre-work. Devuelve
@@ -1180,6 +1141,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             "(ej. 4x 'REF**') a un ref único. Sin kiid, lista las instancias candidatas."
         ),
     )
+    @mutating_tool("set_footprint_ref")
     def set_footprint_ref(
         ref: str,
         new_ref: str,
@@ -1198,13 +1160,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # — no puede usarse como delete_footprint disfrazado sobre un
         # footprint con ref único.
         with tool_call_timer() as timer:
-            _guard_live_stale()  # D-14.1
-            check_no_external_disk_edit(  # P3.2: red de seguridad, independiente de base_snap
-                get_default_store(), _resolve_root_schematic_or_pcb()
-            )
             root = _project_root()
-            if base_snap is not None:
-                _check_base_snap(base_snap)
             board = _resolve_board(bridge)
 
             ctx = bridge.read_board_context(board)
@@ -1305,6 +1261,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="add_track",
         description="Agrega un track entre punto/pad y punto/pad (REF.PAD), mezclables por extremo",
     )
+    @mutating_tool("add_track")
     def add_track(
         net: str,
         start_x_mm: float | None = None,
@@ -1318,13 +1275,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         base_snap: int | None = None,
     ) -> str:
         with tool_call_timer() as timer:
-            _guard_live_stale()  # D-14.1
-            check_no_external_disk_edit(  # P3.2: red de seguridad, independiente de base_snap
-                get_default_store(), _resolve_root_schematic_or_pcb()
-            )
             root = _project_root()
-            if base_snap is not None:
-                _check_base_snap(base_snap)
             board = _resolve_board(bridge)
 
             # D-16.3: cada endpoint elige independientemente pad O coordenadas
@@ -1483,6 +1434,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="add_via",
         description="Agrega una via pasante en (x_mm, y_mm) asignada a un net",
     )
+    @mutating_tool("add_via")
     def add_via(
         x_mm: float,
         y_mm: float,
@@ -1499,13 +1451,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # sin re-lectura ni verificación puntual por KIID). No hay retry en la
         # escritura (D-07.1): add_via viaja por _supervise directo en el bridge.
         with tool_call_timer() as timer:
-            _guard_live_stale()  # D-14.1
-            check_no_external_disk_edit(  # P3.2: red de seguridad, independiente de base_snap
-                get_default_store(), _resolve_root_schematic_or_pcb()
-            )
             root = _project_root()
-            if base_snap is not None:
-                _check_base_snap(base_snap)
             board = _resolve_board(bridge)
 
             read_start = time.perf_counter()
@@ -1602,6 +1548,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="save_board",
         description="Persiste el board vivo del PCB Editor a disco",
     )
+    @mutating_tool("save_board")
     def save_board(base_snap: int | None = None) -> str:
         # D-11.1: baja el estado vivo (mutado por IPC) al .kicad_pcb de disco.
         # Tras el save, disco y vivo convergen: registramos un snapshot NUEVO
@@ -1609,13 +1556,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # ecoamos su snap_id. G1 aplica (backup 1ª vez por sesión). Sin retry
         # en la escritura (D-07.1). busy → se propaga tal cual.
         with tool_call_timer() as timer:
-            _guard_live_stale()  # D-14.1: no pisar el ruteo de disco con vivo viejo
-            check_no_external_disk_edit(  # P3.2: red de seguridad, independiente de base_snap
-                get_default_store(), _resolve_root_schematic_or_pcb()
-            )
             root = _project_root()
-            if base_snap is not None:
-                _check_base_snap(base_snap)
             board = _resolve_board(bridge)
             backup_info = ensure_session_backup(root)  # Gate G1
             bridge.save_board(board)
@@ -1735,11 +1676,16 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         Ambas convergen en el mismo cierre: borrar por KIID y registrar un
         snapshot derivado del pre-estado (el borrado no altera el
         NormalizedState de footprints, patrón add_track/add_via).
+
+        Sesión 39 (DT2): ``_guard_live_stale``/``check_no_external_disk_edit``
+        los aplica ``@mutating_tool`` en ``delete_track``/``delete_via`` (los
+        únicos llamadores). ``_check_base_snap`` se queda ACÁ adentro y no
+        sube al decorador (``base_snap_check=False`` en ambos): corre DESPUÉS
+        de la validación id-vs-coords de abajo — hoistearlo cambiaría, para
+        una llamada que mezcla ``id`` con ``net``/coordenadas Y un
+        ``base_snap`` stale, el código de error emitido de ``INVALID_PARAMS``
+        a ``SNAPSHOT_STALE`` (cambio de F3). Ver ADR-0014.
         """
-        _guard_live_stale()  # D-14.1
-        check_no_external_disk_edit(  # P3.2: red de seguridad, independiente de base_snap
-            get_default_store(), _resolve_root_schematic_or_pcb()
-        )
         root = _project_root()
         uses_id = track_id is not None
         uses_coords = net is not None or x_mm is not None or y_mm is not None
@@ -1858,6 +1804,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="delete_track",
         description="Borra track/arco por id (get_tracks) o la más cercana a (net, near_x/y_mm)",
     )
+    @mutating_tool("delete_track", base_snap_check=False)  # ver docstring de _delete_copper
     def delete_track(
         id: str | None = None,
         net: str | None = None,
@@ -1881,6 +1828,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="delete_via",
         description="Borra una via por id (get_tracks) o la más cercana a (net, x_mm, y_mm)",
     )
+    @mutating_tool("delete_via", base_snap_check=False)  # ver docstring de _delete_copper
     def delete_via(
         id: str | None = None,
         net: str | None = None,
@@ -2308,6 +2256,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="draw_board_outline",
         description="Crea un contorno rectangular en Edge.Cuts (x_mm, y_mm, width_mm, height_mm)",
     )
+    @mutating_tool("draw_board_outline")
     def draw_board_outline(
         x_mm: float,
         y_mm: float,
@@ -2324,15 +2273,10 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # tool W-IPC de PCB sin _guard_live_stale()/check_no_external_disk_edit()
         # — mutaba el vivo aunque el disco tuviera un ruteo pendiente de recarga
         # (D-14.1) o hubiera sido editado externamente (P3.2). Fix trivial:
-        # mismo guard que sus 9 pares W-IPC, sin cambio de contrato.
+        # mismo guard que sus 9 pares W-IPC, sin cambio de contrato. Sesión 39
+        # (DT2): ese guard ahora lo aplica ``@mutating_tool`` arriba.
         with tool_call_timer() as timer:
-            _guard_live_stale()  # D-14.1 (sesión 34a: asimetría A7, faltaba acá)
-            check_no_external_disk_edit(  # P3.2: red de seguridad, independiente de base_snap
-                get_default_store(), _resolve_root_schematic_or_pcb()
-            )
             root = _project_root()
-            if base_snap is not None:
-                _check_base_snap(base_snap)
             board = _resolve_board(bridge)
 
             params = _outline_params(x_mm, y_mm, width_mm, height_mm)
@@ -2403,6 +2347,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="add_zone",
         description="Crea una zona de cobre conectada a un net en una capa (bbox o polygon)",
     )
+    @mutating_tool("add_zone")
     def add_zone(
         net: str,
         layer: str,
@@ -2423,13 +2368,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # fill=False no hay nada que persistir (zona sin rellenar, vivo≠disco
         # como cualquier otra mutación sin save explícito).
         with tool_call_timer() as timer:
-            _guard_live_stale()  # D-14.1
-            check_no_external_disk_edit(  # P3.2
-                get_default_store(), _resolve_root_schematic_or_pcb()
-            )
             root = _project_root()
-            if base_snap is not None:
-                _check_base_snap(base_snap)
 
             raw_params: dict[str, Any] = {
                 "net": net,
@@ -2531,6 +2470,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="add_keepout_zone",
         description="Crea una zona keepout (bloquea tracks/vias/pours/footprints) en una capa",
     )
+    @mutating_tool("add_keepout_zone")
     def add_keepout_zone(
         layer: str,
         bbox: list[float] | None = None,
@@ -2545,13 +2485,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # sin net. Caso de uso canónico: keepout circular ~15mm bajo ANT1 del
         # despertador (polígono de 12-16 vértices aproxima el círculo, MVP).
         with tool_call_timer() as timer:
-            _guard_live_stale()  # D-14.1
-            check_no_external_disk_edit(  # P3.2
-                get_default_store(), _resolve_root_schematic_or_pcb()
-            )
             root = _project_root()
-            if base_snap is not None:
-                _check_base_snap(base_snap)
 
             raw_params: dict[str, Any] = {
                 "layer": layer,
@@ -2693,6 +2627,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="fill_zones",
         description="Refill de todas las zonas de cobre del board (o valida zone_id si se pasa)",
     )
+    @mutating_tool("fill_zones")
     def fill_zones(zone_id: str | None = None, base_snap: int | None = None) -> dict[str, Any]:
         # P4.3 (sesión 19): kipy 0.7.1 no tiene fill selectivo por zona
         # (docs/investigacion/19-zonas-ipc.md §1/§3) — refill_zones() SIEMPRE
@@ -2703,13 +2638,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         # clearance del vivo se persiste incondicionalmente con save_board()
         # antes de retornar — POST_ZONE_PERSIST_FAILED si la escritura falla.
         with tool_call_timer() as timer:
-            _guard_live_stale()  # D-14.1
-            check_no_external_disk_edit(  # P3.2
-                get_default_store(), _resolve_root_schematic_or_pcb()
-            )
             root = _project_root()
-            if base_snap is not None:
-                _check_base_snap(base_snap)
             board = _resolve_board(bridge)
 
             if zone_id is not None:
@@ -2792,18 +2721,13 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="delete_zone",
         description="Borra una zona (cobre o keepout) por id (de get_zones)",
     )
+    @mutating_tool("delete_zone")
     def delete_zone(id: str, base_snap: int | None = None) -> str:
         # P4.4 (sesión 19): CRUD completo, simétrico con delete_track/delete_via
         # (sesión 16) — pero sólo por id: a diferencia del cobre, una zona no
         # tiene un "punto cercano" natural para matching geométrico ambiguo.
         with tool_call_timer() as timer:
-            _guard_live_stale()  # D-14.1
-            check_no_external_disk_edit(  # P3.2
-                get_default_store(), _resolve_root_schematic_or_pcb()
-            )
             root = _project_root()
-            if base_snap is not None:
-                _check_base_snap(base_snap)
             board = _resolve_board(bridge)
 
             item = bridge.get_zone_by_kiid(board, id)
@@ -3287,18 +3211,6 @@ def _open_board_or_none(bridge: IpcBridge) -> BoardHandle | None:
         if exc.code is ErrorCode.KICAD_NOT_RUNNING:
             return None
         raise
-
-
-def _resolve_root_schematic_or_pcb() -> Path:
-    """``.kicad_sch`` raíz si existe; si no, el ``.kicad_pcb`` (proyecto pcb-only).
-
-    ``collect_project_mtimes`` toma el ``.kicad_sch`` y su ``.kicad_pcb``
-    homónimo; para un proyecto pcb-only ancla en el pcb (fixture 005).
-    """
-    try:
-        return _resolve_root_schematic()
-    except KicadMcpError:
-        return _resolve_root_pcb()
 
 
 def _copper_candidate_dict(item: CopperItem) -> dict[str, Any]:

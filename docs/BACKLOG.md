@@ -501,6 +501,55 @@ bloque de `tools/pcb.py` que DT1 (sesión 40, refactor de los encoders
 ad-hoc) va a tocar — evaluar si conviene resolver ahí en vez de una sesión
 aparte.
 
+## DT2 — Boilerplate transversal ×19 sin decorador — ✅ CERRADO sesión 39
+
+**Origen:** `docs/analisis/auditoria-tecnica-integral-2026-08.md` (fila DT2
+de la tabla de deuda técnica en `:383`, plan de acción M1 en `:440`; el doc
+en sí no está trackeado en el repo — esta entrada es la primera referencia
+a DT2 en `BACKLOG.md`). Prerrequisito declarado de `DT1` (sesión 40,
+partición de `tools/pcb.py`): sin un lugar único para el preámbulo
+transversal, DT1 fijaría la deuda en más archivos en vez de reducirla.
+
+**Conteo real (P3 de la sesión):** 19 tools MCP mutantes registradas, 16
+sitios de preámbulo (`_delete_copper` sirve a `delete_track`+`delete_via`,
+`_set_property_core` a `set_value`+`set_footprint`). Anatomía real: **tres
+familias estructurales**, no una uniforme (H1 del prompt, parcialmente
+refutada) — Familia A (11 tools W-IPC de PCB, preámbulo casi literal),
+Familia B (`route_board`/`reload_board_from_disk`, desviaciones
+deliberadas de contrato D-14.3/ADR-0011/ADR-0012), Familia C (3 mutantes
+de esquemático, sin guard IPC). El epílogo (timer/G1/audit/snapshot/log)
+resultó NO uniforme entre las 19 — fuera de alcance del decorador.
+
+**Decisión:** `@mutating_tool` (`src/kicad_mcp/tools/_mutating.py`) cubre
+sólo las guardas de ENTRADA (`_guard_live_stale` + `check_no_external_disk_edit`
++ `_check_base_snap`) de la Familia A. Aplicado a **12 de las 16 tools**
+(`move_footprint`, `set_footprint_ref`, `add_track`, `add_via`,
+`save_board`, `delete_track`, `delete_via`, `draw_board_outline`,
+`add_zone`, `add_keepout_zone`, `fill_zones`, `delete_zone`).
+**Excluidas con justificación** (ver `docs/adr/0014-mutating-tool-decorator.md`):
+`delete_tracks_bulk` (preámbulo post early-return de `dry_run` — hoistearlo
+cambiaría comportamiento observable), Familia B completa (contrato
+deliberado), Familia C completa (estructuralmente distinta, candidata a
+decorador hermano en sesión futura).
+
+- **Reducción medida:** `tools/pcb.py` 3507 → 3419 líneas (-88, -2.5%).
+  4 helpers movidos a `_mutating.py` (~49 líneas relocadas, no borradas).
+  12 sitios de preámbulo colapsados a 1 línea de decorador cada uno (10
+  sitios con reducción neta de -4/-5 líneas; `delete_track`/`delete_via`
+  netean +1 cada uno porque su guard vivía una sola vez en el núcleo
+  compartido `_delete_copper`, que además ganó un párrafo de docstring
+  explicando por qué `base_snap_check=False`).
+- **Verificación:** suite offline **392 → 406 passed** (392 baseline
+  intacto sin modificar un solo test existente + 14 tests nuevos de
+  `tests/test_mutating_tool.py`, aislados con spies + 2 canarios de
+  registro contra `tools/pcb.py` real). `ruff check`/`ruff format
+  --check`/`mypy src/` limpios.
+- **Sin cambio observable:** mismos códigos de error, misma taxonomía F3,
+  mismas firmas de tool (FastMCP ve la firma original vía
+  `functools.wraps`/`__wrapped__`).
+- Ver `docs/historico/sesiones/39-reporte.md` para el detalle completo y
+  la propuesta de sesión 40 (DT1).
+
 ## P1 (investigación Fase 4) — Conectividad GND no cierra tras refill (F-D5-01 / F-V1c-01 / F-V2-VIA-HUERFANA) — CERRADO PARCIALMENTE sesión 32d, ver sub-patrón abierto abajo
 
 **3ª instancia confirmada del patrón → cumple el trigger de promoción

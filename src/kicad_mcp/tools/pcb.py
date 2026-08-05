@@ -856,6 +856,11 @@ def _encode_zones(items: tuple[ZoneItem, ...], filter_desc: str) -> str:
     ``_sanitize_space_delimited`` (sesión 37), que además de los caracteres
     estructurales de TOON (§5) neutraliza el espacio — delimitador posicional
     de esta línea (sesión 36, R2 + sesión 37, cierre del gap del espacio).
+
+    ``layer`` cae a ``"-"`` si viene vacío (sesión 38): ``list_zones`` puede
+    producir ``layer=""`` cuando la zona no reporta capas (``bridge/ipc.py``,
+    ``layers[0] if layers else ""``) — mismo colapso de columna que tenía
+    ``CopperItem.net_name`` antes de esta sesión.
     """
     header = f"ZONES|v1|{filter_desc}|{len(items)}" if filter_desc else f"ZONES|v1|{len(items)}"
     lines = [header]
@@ -863,6 +868,8 @@ def _encode_zones(items: tuple[ZoneItem, ...], filter_desc: str) -> str:
         # Sesión 37: net_name va en línea space-delimited (H36.1, gap del
         # espacio) — _sanitize_space_delimited neutraliza también whitespace.
         net = _sanitize_space_delimited(z.net_name) if z.net_name else "-"
+        # Sesión 38: layer vacío ("") colapsa la columna igual que net_name.
+        layer = z.layer or "-"
         if _zone_is_axis_aligned_rect(z.vertices_mm):
             geom = (
                 f"bbox={float(z.bbox_min_x):.3f},{float(z.bbox_min_y):.3f};"
@@ -871,7 +878,7 @@ def _encode_zones(items: tuple[ZoneItem, ...], filter_desc: str) -> str:
         else:
             geom = f"verts={len(z.vertices_mm)}"
         lines.append(
-            f"Z {z.kiid} {z.kind} {net} {z.layer} {geom} "
+            f"Z {z.kiid} {z.kind} {net} {layer} {geom} "
             f"area={z.area_mm2:.2f} filled={1 if z.filled else 0}"
         )
     return "\n".join(lines) + "\n"
@@ -3387,6 +3394,13 @@ def _encode_tracks(items: tuple[CopperItem, ...], filter_desc: str) -> str:
     ``_sanitize_space_delimited`` (sesión 37), que además de los caracteres
     estructurales de TOON (§5) neutraliza el espacio — delimitador posicional
     de esta línea (sesión 36, R2 + sesión 37, cierre del gap del espacio).
+
+    ``net_name`` vacío cae a ``"-"`` (sesión 38), consistente con
+    ``ZoneItem.net_name``/``PadDetail.net_name``. ``layer`` cae a ``"-"`` si
+    es ``None`` (sesión 38) — defensivo: hoy sólo ``CopperItem`` de vía trae
+    ``layer=None`` y esa rama no emite ``layer``, así que el caso no es
+    alcanzable por el bridge en producción, pero el tipo (`str | None`)
+    lo permite y el fallback cierra el flanco a costo cero.
     """
     segs = [it for it in items if it.kind in ("track", "arc")]
     vias = [it for it in items if it.kind == "via"]
@@ -3404,10 +3418,11 @@ def _encode_tracks(items: tuple[CopperItem, ...], filter_desc: str) -> str:
         ey = float(it.end_y_mm) if it.end_y_mm is not None else sy
         # Sesión 37: net_name va en línea space-delimited (H36.1, gap del
         # espacio) — _sanitize_space_delimited neutraliza también whitespace.
-        net = _sanitize_space_delimited(it.net_name)
+        # Sesión 38: fallback "-" para net_name vacío y layer None.
+        net = _sanitize_space_delimited(it.net_name) if it.net_name else "-"
+        layer = it.layer or "-"
         line = (
-            f"{kind_letter} {it.kiid} {net} {it.layer} w{w} "
-            f"({sx:.3f},{sy:.3f})->({ex:.3f},{ey:.3f})"
+            f"{kind_letter} {it.kiid} {net} {layer} w{w} ({sx:.3f},{sy:.3f})->({ex:.3f},{ey:.3f})"
         )
         if it.kind == "arc" and it.mid_x_mm is not None and it.mid_y_mm is not None:
             line += f"~({float(it.mid_x_mm):.3f},{float(it.mid_y_mm):.3f})"
@@ -3417,7 +3432,10 @@ def _encode_tracks(items: tuple[CopperItem, ...], filter_desc: str) -> str:
         drill = f"{float(it.drill_mm):.3f}" if it.drill_mm is not None else "?"
         layers = "-".join(it.via_layers) if it.via_layers else "?"
         # Sesión 37: idem, línea de vía también space-delimited.
-        net = _sanitize_space_delimited(it.net_name)
+        # Sesión 38: fallback "-" para net_name vacío (gap declarado en
+        # decisión #4, sesión 36 — CopperItem.net_name no tenía guard `or "-"`
+        # a diferencia de ZoneItem/PadDetail).
+        net = _sanitize_space_delimited(it.net_name) if it.net_name else "-"
         lines.append(
             f"V {it.kiid} {net} "
             f"({float(it.start_x_mm):.3f},{float(it.start_y_mm):.3f}) "

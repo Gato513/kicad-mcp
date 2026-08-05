@@ -1,9 +1,10 @@
-"""Goldens de los tres encoders ad-hoc de ``tools/pcb.py`` (sesión 36, R2).
+"""Goldens de los tres encoders ad-hoc de ``tools/pcb.py`` (sesión 36, R2;
+sesión 37 cierra el gap del espacio, ver H36.1 abajo).
 
 ``_encode_tracks``, ``_encode_zones`` y ``_encode_component_detail`` NO son
 TOON (lo dicen sus propios docstrings) pero interpolan texto de KiCad
 (``net_name``/``ref``/``pad.number``) — entrada no confiable por regla 6 de
-CLAUDE.md. Hasta esta sesión lo hacían sin sanitizar (R2 de la auditoría
+CLAUDE.md. Hasta sesión 36 lo hacían sin sanitizar (R2 de la auditoría
 2026-08, primera pieza de DT4). El fix reusa ``toon.encoder._sanitize`` (§5)
 en los tres sitios de interpolación.
 
@@ -14,14 +15,16 @@ la misma capa arquitectónica (serialización pura) que ``encode_state`` en el
 módulo toon, sólo que acá el nombre lleva guion bajo por convención del
 archivo, no porque la tool pública no exista.
 
-**H36.1 (evaluada, refutada parcialmente):** ``_sanitize`` neutraliza los
-caracteres estructurales de TOON (control chars, ``>``, ``|``, ``:``) pero
-NO el espacio — que es el delimitador POSICIONAL de las tres gramáticas
-ad-hoc (space-delimited, a diferencia de TOON que es ``|``-delimited). Cada
-golden incluye un ítem con un ``net_name``/``number`` con espacio interno
-(p.ej. ``"GND EN"``) que sobrevive intacto y desplaza las columnas
-siguientes — gap conocido, documentado acá y en el reporte de sesión 36,
-escalado a sesión 37 (no se improvisa un wrapper en esta sesión).
+**H36.1 (evaluada, refutada parcialmente en sesión 36; gap cerrado en
+sesión 37):** ``_sanitize`` neutraliza los caracteres estructurales de TOON
+(control chars, ``>``, ``|``, ``:``) pero NO el espacio — que es el
+delimitador POSICIONAL de las tres gramáticas ad-hoc (space-delimited, a
+diferencia de TOON que es ``|``-delimited). Cada golden incluye un ítem con
+un ``net_name``/``number`` con espacio interno (p.ej. ``"GND EN"``); sesión
+37 cierra el gap con ``_sanitize_space_delimited`` (``tools/pcb.py``), que
+compone ``_sanitize`` con neutralización de whitespace en los campos
+space-delimited. Ver reportes de sesión 36 y 37 en
+``docs/historico/sesiones/``.
 """
 
 from __future__ import annotations
@@ -117,9 +120,10 @@ def _load_component_detail(d: dict) -> ComponentDetail:
 
 @pytest.mark.golden
 def test_golden_004_pcb_tracks_canarios_byte_por_byte() -> None:
-    """Canarios: ``\\n`` (T1), ``|`` (T2), ``"`` (A1, arco), ``" "`` (T4, gap
-    conocido), ``""`` (V1, gap conocido pre-existente en ``CopperItem`` — no
-    tiene fallback ``or "-"`` a diferencia de zonas/pads)."""
+    """Canarios: ``\\n`` (T1), ``|`` (T2), ``"`` (A1, arco), ``" "`` (T4,
+    sanitizado por ``_sanitize_space_delimited`` desde sesión 37), ``""``
+    (V1, gap conocido pre-existente en ``CopperItem`` — no tiene fallback
+    ``or "-"`` a diferencia de zonas/pads)."""
     d = json.loads((GOLDEN_DIR / "004_pcb_tracks_canarios" / "input.json").read_text())
     expected = (GOLDEN_DIR / "004_pcb_tracks_canarios" / "expected.txt").read_bytes()
     items = _load_tracks_items(d["items"])
@@ -130,8 +134,9 @@ def test_golden_004_pcb_tracks_canarios_byte_por_byte() -> None:
 @pytest.mark.golden
 def test_golden_005_pcb_zones_canarios_byte_por_byte() -> None:
     """Canarios: ``\\n`` (Z1), ``|`` (Z2), ``"`` (Z3, keepout), ``" "`` (Z4,
-    gap conocido). Z5 (``net_name=None``) no es un canario de sanitización:
-    es el sentinel ``or "-"`` pre-existente, incluido para cubrir la rama."""
+    sanitizado por ``_sanitize_space_delimited`` desde sesión 37). Z5
+    (``net_name=None``) no es un canario de sanitización: es el sentinel
+    ``or "-"`` pre-existente, incluido para cubrir la rama."""
     d = json.loads((GOLDEN_DIR / "005_pcb_zones_canarios" / "input.json").read_text())
     expected = (GOLDEN_DIR / "005_pcb_zones_canarios" / "expected.txt").read_bytes()
     items = _load_zone_items(d["items"])
@@ -144,8 +149,9 @@ def test_golden_006_pcb_component_detail_canarios_byte_por_byte() -> None:
     """``ref`` empaqueta varios canarios estructurales a la vez (``|``,
     ``:``, ``>``, ``\\n``, ``"``) en el header ``|``-delimitado, donde
     ``_sanitize`` los cierra sin excepción. Los pads cubren, uno por uno:
-    ``\\n``/``|``/``"``/``" "`` (gap) en ``number``, y ``" "`` (gap) en
-    ``net_name``."""
+    ``\\n``/``|``/``"``/``" "`` en ``number``, y ``" "`` en ``net_name`` —
+    ambos casos de espacio sanitizados por ``_sanitize_space_delimited``
+    desde sesión 37."""
     d = json.loads((GOLDEN_DIR / "006_pcb_component_detail_canarios" / "input.json").read_text())
     expected = (GOLDEN_DIR / "006_pcb_component_detail_canarios" / "expected.txt").read_bytes()
     detail = _load_component_detail(d)

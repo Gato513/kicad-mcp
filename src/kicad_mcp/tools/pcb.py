@@ -826,14 +826,28 @@ def _zone_is_axis_aligned_rect(vertices: tuple[tuple[Mm, Mm], ...]) -> bool:
 
 def _zones_filter_desc(layer: str | None, net: str | None, kind: str | None) -> str:
     """Cabecera legible del filtro aplicado a ``get_zones`` (P4, espejo de
-    ``_tracks_filter_desc``)."""
+    ``_tracks_filter_desc``).
+
+    ``layer``/``net``/``kind`` son parámetros de la tool MCP: ``kind`` está
+    restringido a ``("copper","keepout")`` y ``net`` se valida contra
+    ``list_net_names`` antes de llegar acá, pero ``layer`` **no se valida en
+    ningún punto** — sólo se usa como filtro de igualdad. Sin sanitizar,
+    un ``layer`` con ``\\n`` forja líneas adicionales dentro del bloque
+    ``ZONES|v1|...`` (sesión 38, corrige el gap; no es defensa en
+    profundidad, es el fix a una inyección real). Se sanitiza cada
+    componente ANTES de ensamblar, con ``_sanitize`` puro (no
+    ``_sanitize_space_delimited``): este header es ``|``-delimitado, un
+    espacio en un valor es inocuo acá (mismo criterio que H2, sesión 37).
+    Sanitizar el string ya ensamblado destruiría la propia sintaxis
+    ``layer:x|net:y`` porque ``_sanitize`` neutraliza ``|`` y ``:``.
+    """
     parts = []
     if layer is not None:
-        parts.append(f"layer:{layer}")
+        parts.append(f"layer:{_sanitize(layer)[0]}")
     if net is not None:
-        parts.append(f"net:{net}")
+        parts.append(f"net:{_sanitize(net)[0]}")
     if kind is not None:
-        parts.append(f"kind:{kind}")
+        parts.append(f"kind:{_sanitize(kind)[0]}")
     return "|".join(parts)
 
 
@@ -3357,14 +3371,27 @@ def _tracks_filter_desc(
     net: str | None, bbox: tuple[float, float, float, float] | None, layer: str | None
 ) -> str:
     """Cabecera legible de qué filtro se aplicó (D-16.1) — el agente confirma
-    qué recibió sin adivinar por el conteo de líneas."""
+    qué recibió sin adivinar por el conteo de líneas.
+
+    ``net``/``bbox``/``layer`` son parámetros de la tool MCP: ``net`` se
+    valida contra ``list_net_names`` y ``bbox`` es float-formateado, pero
+    ``layer`` **no se valida en ningún punto** — sólo se usa como filtro de
+    igualdad. Sin sanitizar, un ``layer`` con ``\\n`` forja líneas
+    adicionales dentro del bloque ``TRACKS|v1|...`` (sesión 38, corrige el
+    gap; no es defensa en profundidad, es el fix a una inyección real). Se
+    sanitiza cada componente ANTES de ensamblar, con ``_sanitize`` puro (no
+    ``_sanitize_space_delimited``): este header es ``|``-delimitado, un
+    espacio en un valor es inocuo acá (mismo criterio que H2, sesión 37).
+    Sanitizar el string ya ensamblado destruiría la propia sintaxis
+    ``net:x|layer:y`` porque ``_sanitize`` neutraliza ``|`` y ``:``.
+    """
     parts = []
     if net is not None:
-        parts.append(f"net:{net}")
+        parts.append(f"net:{_sanitize(net)[0]}")
     if bbox is not None:
         parts.append(f"bbox:{bbox[0]:.1f},{bbox[1]:.1f};{bbox[2]:.1f},{bbox[3]:.1f}")
     if layer is not None:
-        parts.append(f"layer:{layer}")
+        parts.append(f"layer:{_sanitize(layer)[0]}")
     return "|".join(parts)
 
 

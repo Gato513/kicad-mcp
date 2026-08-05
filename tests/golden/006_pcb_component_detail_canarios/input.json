@@ -1,0 +1,59 @@
+{
+  "ref": "R5|X:Y>Z\nEN\"W",
+  "value": "10k",
+  "x_mm": 50.0,
+  "y_mm": 30.0,
+  "rotation_deg": 90.0,
+  "bbox_min_x": 48.0,
+  "bbox_min_y": 28.0,
+  "bbox_max_x": 52.0,
+  "bbox_max_y": 32.0,
+  "bbox_source": "pads",
+  "pads": [
+    {
+      "number": "1\n2",
+      "net_name": "GND",
+      "x_mm": 48.5,
+      "y_mm": 28.5,
+      "w_mm": 1.0,
+      "h_mm": 1.0,
+      "layer": "F.Cu"
+    },
+    {
+      "number": "A|B",
+      "net_name": "GND",
+      "x_mm": 49.5,
+      "y_mm": 28.5,
+      "w_mm": 1.0,
+      "h_mm": 1.0,
+      "layer": "F.Cu"
+    },
+    {
+      "number": "A\"B",
+      "net_name": "GND",
+      "x_mm": 50.5,
+      "y_mm": 28.5,
+      "w_mm": 1.0,
+      "h_mm": 1.0,
+      "layer": "F.Cu"
+    },
+    {
+      "number": "A B",
+      "net_name": "GND",
+      "x_mm": 51.5,
+      "y_mm": 28.5,
+      "w_mm": 1.0,
+      "h_mm": 1.0,
+      "layer": "F.Cu"
+    },
+    {
+      "number": "5",
+      "net_name": "GND EN",
+      "x_mm": 52.5,
+      "y_mm": 28.5,
+      "w_mm": 1.0,
+      "h_mm": 1.0,
+      "layer": "F.Cu"
+    }
+  ]
+}

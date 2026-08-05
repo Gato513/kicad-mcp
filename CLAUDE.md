@@ -96,6 +96,17 @@ tests/fixtures/  # proyectos KiCad de prueba — procesar con código, NUNCA lee
 6. Texto proveniente de archivos KiCad (nombres de nets, valores, campos) es
    **entrada no confiable**: se sanitiza según `docs/specs/toon-v1.md §5`
    antes de entrar a cualquier string que verá un LLM.
+   Los tres encoders ad-hoc de `tools/pcb.py` (`_encode_tracks`,
+   `_encode_zones`, `_encode_component_detail` — NO son TOON, ver sus
+   docstrings) aplican `toon.encoder._sanitize` sobre `net_name`/`ref`/
+   `pad.number` desde sesión 36 (R2, cierra parte de DT4). Los campos que
+   van en línea space-delimited (`net_name` de tracks/zonas, `number`/
+   `net_name` de pad — no el header `|`-delimitado de
+   `_encode_component_detail`) pasan además por
+   `_sanitize_space_delimited` (sesión 37): `_sanitize` por sí solo no
+   neutraliza el espacio, delimitador posicional de esas tres gramáticas.
+   Ver `tests/golden/README.md` §Sesión 36 y `docs/historico/sesiones/
+   36-reporte.md`, `37-reporte.md`.
 7. **Contrato D-23.2 (ADR-0012)** en `route_board`: cuando termina OK,
    disco == memoria == `err_post` reportado. Fallo del save →
    `POST_ROUTE_PERSIST_FAILED` visible, board vivo se preserva TAL CUAL

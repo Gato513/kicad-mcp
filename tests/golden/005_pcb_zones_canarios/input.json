@@ -1,0 +1,40 @@
+{
+  "filter_desc": "kind:CANARIOS",
+  "items": [
+    {
+      "kind": "copper",
+      "kiid": "Z1",
+      "net_name": "GND\nEN",
+      "layer": "F.Cu",
+      "vertices_mm": [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]
+    },
+    {
+      "kind": "copper",
+      "kiid": "Z2",
+      "net_name": "A|B",
+      "layer": "F.Cu",
+      "vertices_mm": [[0.0, 0.0], [10.0, 0.0], [5.0, 10.0]]
+    },
+    {
+      "kind": "keepout",
+      "kiid": "Z3",
+      "net_name": "A\"B",
+      "layer": "F.Cu",
+      "vertices_mm": [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]
+    },
+    {
+      "kind": "copper",
+      "kiid": "Z4",
+      "net_name": "GND EN",
+      "layer": "B.Cu",
+      "vertices_mm": [[20.0, 0.0], [30.0, 0.0], [30.0, 10.0], [20.0, 10.0]]
+    },
+    {
+      "kind": "keepout",
+      "kiid": "Z5",
+      "net_name": null,
+      "layer": "F.Cu",
+      "vertices_mm": [[0.0, 0.0], [5.0, 0.0], [5.0, 5.0], [0.0, 5.0]]
+    }
+  ]
+}

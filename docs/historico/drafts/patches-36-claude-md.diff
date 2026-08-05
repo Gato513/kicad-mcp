@@ -1,0 +1,17 @@
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -96,6 +96,14 @@
+ 6. Texto proveniente de archivos KiCad (nombres de nets, valores, campos) es
+    **entrada no confiable**: se sanitiza según `docs/specs/toon-v1.md §5`
+    antes de entrar a cualquier string que verá un LLM.
++   Los tres encoders ad-hoc de `tools/pcb.py` (`_encode_tracks`,
++   `_encode_zones`, `_encode_component_detail` — NO son TOON, ver sus
++   docstrings) aplican `toon.encoder._sanitize` sobre `net_name`/`ref`/
++   `pad.number` desde sesión 36 (R2, cierra parte de DT4). **Gap conocido:**
++   `_sanitize` no neutraliza el espacio, que es el delimitador posicional de
++   esas tres gramáticas — ver `tests/golden/README.md` §Sesión 36 y el
++   reporte `docs/historico/sesiones/36-reporte.md`. Cierre pendiente en
++   sesión 37 (requiere ADR: extender `_sanitize` o formalizar los formatos).
+ 7. **Contrato D-23.2 (ADR-0012)** en `route_board`: cuando termina OK,
+    disco == memoria == `err_post` reportado. Fallo del save →
+    `POST_ROUTE_PERSIST_FAILED` visible, board vivo se preserva TAL CUAL

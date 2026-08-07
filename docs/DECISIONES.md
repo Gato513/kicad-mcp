@@ -230,7 +230,8 @@ esa decisión antes de commitear:
 - `docs/adr/*.md` — ADR de la decisión + ADRs que la citen.
 - `docs/BACKLOG.md` — items que la mencionen (cerrados o vigentes).
 - `docs/ROADMAP.md` — historial de sesiones que la cite.
-- `hoja-de-ruta-v4.md` (o versión vigente) — secuencia + estado técnico.
+- `hoja-de-ruta-v5.md` (hoja de ruta vigente; las anteriores quedan
+  archivadas en `docs/historico/roadmaps/`) — secuencia + estado técnico.
 - Docstrings en código que la referencien.
 
 **No aplica a:** decisiones marginales o triviales que aparecen en

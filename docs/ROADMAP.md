@@ -2,13 +2,18 @@
 
 Generado en la reorganización documental (2026-07-24), consolidado desde
 `docs/historico/CONTEXT-v7.md` (post-sesión 24). **La dirección estratégica
-vigente vive en `hoja-de-ruta-v4.md`** (raíz del repo) — este documento ya no
-duplica esa secuencia; queda como resumen de estado + historial de
-dogfooding, que `hoja-de-ruta-v4.md` no repite.
+vigente vive en `hoja-de-ruta-v5.md`** (raíz del repo) — este documento ya no
+duplica esa secuencia; queda como puente documental e historial del ciclo,
+no la dirección vigente. `hoja-de-ruta-v4.md` (Fase 3, superada) está
+archivada en `docs/historico/roadmaps/hoja-de-ruta-v4.md`.
 
 ---
 
-## Estado en una línea
+## Estado al cierre de Fase 3 (histórico, post-sesión 29)
+
+> El estado operativo vigente no vive acá — ver `hoja-de-ruta-v5.md`,
+> `docs/BACKLOG.md` y `docs/CONTEXT.md` (verificar su fecha y SHA antes de
+> usarlo como estado operativo).
 
 **Estado (post-sesión 29, 2026-07-25):** Fase 3 CERRADA con criterio
 de convergencia cumplido (3 verdes consecutivos D5/D6/D7). Superficie
@@ -16,7 +21,10 @@ ejercitada estable: colocación, contorno, zonas/plano, ruteo autónomo,
 DRC, exports. Contrato D-23.2 ratificado 25/25 en las 3 tools. Sesión
 30 = planificación estratégica de Fase 4.
 
-## Historial de dogfooding (la métrica que importa)
+## Historial de dogfooding de Fase 3 (D1–D7)
+
+> La evidencia equivalente de Fase 4 vive en `validation-suite/` (niveles
+> A/B/C) y en `docs/historico/sesiones/`.
 
 | Ronda | Sesión | Nota | Resultado |
 |---|---|---|---|
@@ -38,7 +46,9 @@ por regresión de calidad del ruteo — ver `docs/investigacion/23-fd4-02.md`
 para el análisis completo. **D5 (sesión 25) cerró en 9.5/10** — meta ≥9
 alcanzada, contrato D-23.2 ratificado 5/5 en producción; ver
 `docs/historico/sesiones/25-reporte.md` para el detalle completo y
-`hoja-de-ruta-v4.md` para el siguiente paso de la secuencia (sesión 26).
+`docs/historico/roadmaps/hoja-de-ruta-v4.md` (roadmap de Fase 3, archivado)
+para el siguiente paso de la secuencia tal como estaba definido entonces
+(sesión 26).
 
 ## Riesgos abiertos que condicionan el roadmap
 

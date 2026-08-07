@@ -9,13 +9,17 @@ originó). El objetivo: que nadie —humano o agente— necesite abrir
 
 En este orden, y solo lo que aplique a la tarea:
 
-1. **`CLAUDE.md`** (raíz) — siempre. Es el contrato del agente ejecutor:
-   comandos, fronteras F1–F5, reglas de código, Definition of Done. Se
-   auto-carga.
-2. **`hoja-de-ruta-v5.md`** (raíz) — hoja de ruta estratégica vigente.
-3. **`docs/BACKLOG.md`** — pendientes priorizados, para no reabrir un ítem ya
+1. **`AGENTS.md`** (raíz) — contrato transversal para trabajo multiagente:
+   roles, autoridad, independencia, handoffs. Leer cuando la herramienta lo
+   cargue como instrucciones del repositorio; no es requisito para una
+   tarea humana que no involucra agentes.
+2. **`CLAUDE.md`** (raíz) — siempre para el ejecutor Claude Code. Es su
+   contrato específico: comandos, fronteras F1–F5, reglas de código,
+   Definition of Done. Se auto-carga.
+3. **`hoja-de-ruta-v5.md`** (raíz) — hoja de ruta estratégica vigente.
+4. **`docs/BACKLOG.md`** — pendientes priorizados, para no reabrir un ítem ya
    conocido como investigación nueva.
-4. El **prompt/brief específico** de la tarea que te haya dado el humano.
+5. El **prompt/brief específico** de la tarea que te haya dado el humano.
 
 Eso alcanza para el 90% de las sesiones. Lo demás es "bajo demanda":
 
@@ -36,7 +40,8 @@ Eso alcanza para el 90% de las sesiones. Lo demás es "bajo demanda":
 
 | Archivo | Qué es | Mantenido por |
 |---|---|---|
-| `CLAUDE.md` | Contrato del agente ejecutor | Humano, tras cada sesión que cambie reglas |
+| `AGENTS.md` | Contrato transversal de coordinación multiagente: roles, autoridad, independencia, handoffs | Humano, tras cada sesión que cambie reglas de coordinación |
+| `CLAUDE.md` | Contrato del ejecutor Claude Code | Humano, tras cada sesión que cambie reglas |
 | `README.md` | Punto de entrada, quickstart, mapa de estructura | Humano/agente al DoD |
 | `docs/CONTEXT.md` | Visión consolidada del sistema y riesgos | Humano |
 | `docs/DECISIONES.md` | Índice de ADR + decisiones vigentes no formalizadas | Humano/agente |
@@ -90,8 +95,10 @@ Para el cierre de DT1 Slice 1, ver
 - `docs/metodologia/`: consolidar de `historico/prompts/` y `historico/sesiones/`
   los patrones que funcionaron/fallaron en el proceso de trabajo asistido por
   IA — es un objetivo secundario declarado del proyecto, pendiente de
-  suficiente evidencia acumulada.
-- Consolidar metodología/rol dentro de `CLAUDE.md` — con cuidado de no
-  confundir la persona "arquitecto" del chat de planificación (no escribe
-  código) con el agente ejecutor Claude Code (sí escribe código) — son roles
-  distintos aunque compartan proyecto.
+  suficiente evidencia acumulada. Distinto de `AGENTS.md`: esto sería
+  investigación/consolidación metodológica general, no el contrato operativo
+  de coordinación multiagente del proyecto.
+- La coordinación transversal entre roles (arquitecto de chat, que no
+  escribe código, y agente ejecutor Claude Code, que sí escribe código) ya
+  no se consolida dentro de `CLAUDE.md`: vive en `AGENTS.md`, que separa
+  esos roles institucionalmente.

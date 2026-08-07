@@ -386,11 +386,12 @@ código **nunca leía Edge.Cuts**, iba directo al fallback (margen de
 - **Sin ADR** — implementa comportamiento ya documentado, sin cambiar
   contrato externo (DoD #4, "aclaración de comportamiento").
 
-## P1-1 — Sanitización de los tres encoders ad-hoc de `tools/pcb.py` — ✅ CERRADO sesión 37, gaps derivados cerrados/delegados sesión 38
+## P1-1 — Sanitización de los tres encoders ad hoc — ✅ CERRADO sesión 37, gaps derivados cerrados/delegados sesión 38
 
 **Origen:** R2 de `docs/analisis/auditoria-tecnica-integral-2026-08.md:367`
 (plan de acción C2 en `:429`, deuda técnica DT4 en `:385`). `_encode_tracks`,
-`_encode_zones` y `_encode_component_detail` (`tools/pcb.py`) interpolan
+`_encode_zones` y `_encode_component_detail` (hoy en
+`tools/pcb_encoders.py`, con re-exports desde `tools/pcb.py`) interpolan
 `net_name`/`ref`/`pad.number` de KiCad — entrada no confiable por CLAUDE.md
 regla 6 — en formatos delimitados por espacios/`|` propios (NO TOON, F1
 intacto por diseño).
@@ -406,7 +407,7 @@ intacto por diseño).
   golden de caracterización (líneas `T4`/`Z4`/pads 4-5) y escalado a sesión
   37 en vez de fixearlo apurado.
 - **Sesión 37 (cierre):** mini-sanitizador local `_sanitize_space_delimited`
-  (`tools/pcb.py`, junto al import de `_sanitize`) — compone `_sanitize` +
+  (hoy en `tools/pcb_encoders.py`, junto al import de `_sanitize`) — compone `_sanitize` +
   `re.sub(r"\s", "_", ...)` (D37.1: whitespace unicode completo, no sólo
   `U+0020`, alcanzable vía netlists importadas; `_CONTROL_RE` de TOON ya
   cubre `\t\n\r\v\f` pero no el espacio). Aplicado en los 5 sitios
@@ -473,14 +474,15 @@ intacto por diseño).
   - Ver `docs/historico/sesiones/38-reporte.md` para el detalle con traza al
     código de cada veredicto.
 
-## P1-2 — `kiid` sin sanitizar en los encoders ad-hoc de `tools/pcb.py` — Abierto, sin sesión asignada
+## P1-2 — `kiid` sin sanitizar en los encoders ad hoc — Abierto, sin sesión asignada
 
 **Origen:** decisión #4 de sesión 36, verificado y promovido a entrada propia
 en sesión 38 (el resto de esa decisión se cerró en la misma sesión, ver
 `P1-1` arriba).
 
-**Ubicación:** `it.kiid` en `_encode_tracks` (`tools/pcb.py`, líneas de
-segmento y de vía), `z.kiid` en `_encode_zones`. Ambos vienen de
+**Ubicación actual:** `it.kiid` en `_encode_tracks` y `z.kiid` en
+`_encode_zones`, ambos en `tools/pcb_encoders.py` y re-exportados desde
+`tools/pcb.py`. Ambos vienen de
 `str(it.id.value)`/`str(z.id.value)` (`bridge/ipc.py`) — el KIID nativo de
 KiCad, no texto arbitrario de archivo, pero tampoco garantizado libre de
 caracteres estructurales por contrato (D-16.2/D-16.3 no lo especifican).
@@ -496,10 +498,37 @@ hace falta uno, es de otra naturaleza (ej. rechazar/loguear un ítem con
 que el KIID nunca contiene esos caracteres y cerrar el candidato como
 refutado con esa evidencia) — decisión de diseño, no mecánica.
 
-**Advertencia para quien la tome:** el sitio de emisión vive en el mismo
-bloque de `tools/pcb.py` que DT1 (sesión 40, refactor de los encoders
-ad-hoc) va a tocar — evaluar si conviene resolver ahí en vez de una sesión
-aparte.
+**Advertencia para quien la tome:** DT1 Slice 1 trasladó mecánicamente esos
+sitios en sesión 41 sin cambiar `kiid`; P1-2 permanece abierto y requiere una
+decisión de diseño separada.
+
+## DT1 — Partición de `tools/pcb.py` — ABIERTA
+
+La caracterización de sesión 40 (`docs/analisis/40-dt1-caracterizacion.md`)
+autorizó un primer slice mecánico y reversible. **DT1 Slice 1 — encoders ad
+hoc: CERRADA en sesión 41**, mediante PR #13 y merge
+`8d3696b890b4719ef19a96db26735b25da0214b5`. El cluster vive en el nuevo
+módulo `src/kicad_mcp/tools/pcb_encoders.py`; `tools/pcb.py` conserva siete
+re-exports explícitos. Ver `docs/historico/sesiones/41-reporte.md`.
+
+**Siguiente paso:** recaracterizar `tools/pcb.py` después del Slice 1 y
+seleccionar el segundo cluster mediante cohesión, dependencias, consumidores,
+monkeypatches, ciclos, re-exports, cobertura y reversibilidad. No seleccionar
+únicamente por LOC. La sesión concreta requiere decisión humana.
+
+## DT3 — Geometría de dominio dentro de `bridge/` — ABIERTA
+
+**Estado:** abierta; no modificada por las sesiones 40–41.
+
+**Descripción:** existen tipos o lógica geométrica de dominio dentro de
+`bridge/` cuya ubicación arquitectónica debe reevaluarse antes de una
+extracción.
+
+**Fuente histórica:** `docs/analisis/CONTEXTO_CHAT.md`, sección DT3, y
+`docs/analisis/40-dt1-caracterizacion.md`.
+
+**Próximo paso:** caracterización independiente. No mezclar con el siguiente
+slice de DT1 sin decisión humana.
 
 ## DT2 — Boilerplate transversal ×19 sin decorador — ✅ CERRADO sesión 39
 

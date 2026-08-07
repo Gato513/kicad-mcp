@@ -12,10 +12,7 @@ En este orden, y solo lo que aplique a la tarea:
 1. **`CLAUDE.md`** (raíz) — siempre. Es el contrato del agente ejecutor:
    comandos, fronteras F1–F5, reglas de código, Definition of Done. Se
    auto-carga.
-2. **`hoja-de-ruta-v4.md`** (raíz) — dirección estratégica vigente: secuencia
-   de Fase 3, gates de salida por sesión, criterio de convergencia.
-   `docs/ROADMAP.md` complementa con el historial de dogfooding pero ya no
-   duplica la secuencia.
+2. **`hoja-de-ruta-v5.md`** (raíz) — hoja de ruta estratégica vigente.
 3. **`docs/BACKLOG.md`** — pendientes priorizados, para no reabrir un ítem ya
    conocido como investigación nueva.
 4. El **prompt/brief específico** de la tarea que te haya dado el humano.
@@ -41,10 +38,10 @@ Eso alcanza para el 90% de las sesiones. Lo demás es "bajo demanda":
 |---|---|---|
 | `CLAUDE.md` | Contrato del agente ejecutor | Humano, tras cada sesión que cambie reglas |
 | `README.md` | Punto de entrada, quickstart, mapa de estructura | Humano/agente al DoD |
-| `hoja-de-ruta-v4.md` (raíz) | Dirección estratégica vigente de Fase 3: secuencia estricta, gates de salida, criterio de convergencia | Humano, se reemplaza por v5 al cerrar Fase 3 |
-| `docs/CONTEXT.md` | Visión del sistema, estado (Fase 3), riesgos — consolidado desde `CONTEXT-v7.md`, documento del arquitecto | Humano |
+| `docs/CONTEXT.md` | Visión consolidada del sistema y riesgos | Humano |
 | `docs/DECISIONES.md` | Índice de ADR + decisiones vigentes no formalizadas | Humano/agente |
-| `docs/ROADMAP.md` | Estado en una línea + historial de dogfooding (la secuencia vigente vive en `hoja-de-ruta-v4.md`) | Humano/agente |
+| `docs/ROADMAP.md` | Puente documental e historial del ciclo; no es la dirección vigente | Humano/agente |
+| `hoja-de-ruta-v5.md` | Dirección estratégica vigente | Humano/agente |
 | `docs/BACKLOG.md` | Pendientes priorizados | Humano/agente |
 | `docs/arquitectura.md` | Diseño del sistema v0.2, principios, riesgos de fondo | Estable, rara vez cambia |
 | `docs/glosario.md` | Dominio EDA/KiCad | Estable |
@@ -54,6 +51,8 @@ Eso alcanza para el 90% de las sesiones. Lo demás es "bajo demanda":
 | `docs/specs/*.md` | **Contratos** (TOON, catálogo de tools, restricciones, fixtures) — frontera F1/F3 | El agente actualiza el catálogo como parte del DoD; el resto no se edita sin aprobación |
 | `docs/adr/*.md` | Decisiones de arquitectura, una por archivo | Se agregan, nunca se editan retroactivamente |
 | `docs/investigacion/*.md` | Investigaciones de causa raíz (P4.0-style), referenciadas desde ADR/specs — lectura obligatoria antes de re-hipotetizar sobre un bug ya investigado | Se agregan por sesión, no se editan retroactivamente |
+| `docs/analisis/40-dt1-caracterizacion.md` | Caracterización canónica de DT1 y autorización de Slice 1 | Histórico de decisión, base para recaracterizar DT1 |
+| `docs/analisis/CONTEXTO_CHAT.md` | Handoff previo a sesión 40; su cierre lo declara obsoleto después de esa sesión | Histórico, no fuente viva |
 
 ## `docs/historico/` — evidencia del proceso, no operativo
 
@@ -67,7 +66,7 @@ contexto exacto de un bug ya cerrado.
 | `prompts/` | Prompts de sesión y de dogfooding — evidencia de cómo evolucionó el proceso de trabajo, no plantillas reutilizables |
 | `auditorias/` | Auditorías puntuales pre-sesión (PRE-06, PRE-07) |
 | `analisis/` | Análisis de estado/backlog de checkpoints intermedios (sesión 08) y la preparación inicial del repo para Claude Code |
-| `roadmaps/` | Hojas de ruta v2 y v3, superadas por `hoja-de-ruta-v4.md` (raíz) |
+| `roadmaps/` | Hojas de ruta v2, v3 y v4 archivadas (v4: `docs/historico/roadmaps/hoja-de-ruta-v4.md`); la vigente es `hoja-de-ruta-v5.md` en la raíz |
 | `dogfooding/` | Logs de fricciones de las 4 rondas de dogfooding (D1–D4) + brief del proyecto de referencia (despertador ATtiny85) |
 | `CONTEXT-v7.md` | El handoff monolítico previo a esta reorg — post-sesión 24, fuente de la consolidación de 2026-07-24 en `docs/CONTEXT.md` + `DECISIONES`/`ROADMAP`/`BACKLOG`. (Reemplaza a `CONTEXT-v3.md`, congelado en sesión 19e, que el arquitecto retiró al entregar v7.) |
 
@@ -79,8 +78,12 @@ anterior de esta misma reorg la había anidado bajo `historico/`, rompiendo
 esas referencias — corregido.
 
 **Regla:** si estás por citar algo de `historico/` en una decisión activa,
-promové el resumen a `DECISIONES.md`/`hoja-de-ruta-v4.md`/`BACKLOG.md` y
-dejá el puntero — no repitas el detalle completo fuera de `historico/`.
+promové el resumen a `DECISIONES.md`/`ROADMAP.md`/`BACKLOG.md` y dejá el
+puntero — no repitas el detalle completo fuera de `historico/`.
+
+Para el cierre de DT1 Slice 1, ver
+`docs/historico/sesiones/41-reporte.md` (sesión 41, PR #13, merge
+`8d3696b890b4719ef19a96db26735b25da0214b5`).
 
 ## Trabajo futuro fuera de esta reorg (no hacer todavía)
 

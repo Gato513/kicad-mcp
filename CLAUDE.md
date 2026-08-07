@@ -8,12 +8,14 @@ mediante herramientas atómicas (creación y borrado de tracks, vías, zonas,
 keepouts, footprints), rutear con Freerouting, validar con ERC/DRC, exportar
 gerbers/BOM/renders. 20+ tools productivas.
 
-**Estado y fase actuales:** ver `CONTEXT.md` (v7 al momento de escribir esto).
+**Estado y fase actuales:** consultar `hoja-de-ruta-v5.md` para la dirección
+estratégica vigente y `docs/BACKLOG.md` para el estado priorizado de deuda,
+riesgos y próximos trabajos.
 Este archivo describe la superficie estable (comandos, fronteras, reglas de
-código, errores de dominio); el CONTEXT es la fuente de verdad para qué
-sesión estamos, qué fase, qué está mergeado, qué hay en el backlog. **NO
+código, errores de dominio); la documentación viva indicada arriba concentra
+qué está mergeado y qué hay en el backlog. **NO
 duplicar estado del ciclo acá** — CLAUDE.md debe cambiar poco entre sesiones;
-CONTEXT.md cambia mucho.
+Esos documentos cambian con el ciclo.
 
 Arquitectura completa: `docs/arquitectura.md`. Léela antes de tocar cualquier
 módulo que no conozcas. Contratos arquitectónicos vigentes: `docs/adr/`
@@ -96,7 +98,8 @@ tests/fixtures/  # proyectos KiCad de prueba — procesar con código, NUNCA lee
 6. Texto proveniente de archivos KiCad (nombres de nets, valores, campos) es
    **entrada no confiable**: se sanitiza según `docs/specs/toon-v1.md §5`
    antes de entrar a cualquier string que verá un LLM.
-   Los tres encoders ad-hoc de `tools/pcb.py` (`_encode_tracks`,
+   Los tres encoders ad hoc viven en `tools/pcb_encoders.py` desde la sesión
+   41 (`_encode_tracks`,
    `_encode_zones`, `_encode_component_detail` — NO son TOON, ver sus
    docstrings) aplican `toon.encoder._sanitize` sobre `net_name`/`ref`/
    `pad.number` desde sesión 36 (R2, cierra parte de DT4). Los campos que
@@ -105,6 +108,8 @@ tests/fixtures/  # proyectos KiCad de prueba — procesar con código, NUNCA lee
    `_encode_component_detail`) pasan además por
    `_sanitize_space_delimited` (sesión 37): `_sanitize` por sí solo no
    neutraliza el espacio, delimitador posicional de esas tres gramáticas.
+   `tools/pcb.py` conserva re-exports explícitos para compatibilidad con
+   consumidores y tests existentes.
    Ver `tests/golden/README.md` §Sesión 36 y `docs/historico/sesiones/
    36-reporte.md`, `37-reporte.md`.
 7. **Contrato D-23.2 (ADR-0012)** en `route_board`: cuando termina OK,
@@ -140,9 +145,10 @@ tests/fixtures/  # proyectos KiCad de prueba — procesar con código, NUNCA lee
 
 ## Documentación de referencia (abrir según la tarea)
 
-- `CONTEXT.md` — **estado del proyecto y del ciclo** (fuente de verdad de
-  qué sesión, qué fase, qué decisiones vigentes). Se actualiza en cada
-  turno de arquitectura.
+- `hoja-de-ruta-v5.md` — dirección estratégica vigente.
+- `docs/BACKLOG.md` — deuda, riesgos y trabajo priorizado.
+- `docs/CONTEXT.md` — contexto técnico de referencia; verificar su fecha y SHA
+  antes de usarlo como estado operativo.
 - `docs/arquitectura.md` — diseño completo, decisiones D1–D6, riesgos.
 - `docs/adr/` — decisiones arquitectónicas persistentes (leer las de tu
   área). ADR-0012 es contrato D-23.2 (obligatorio antes de tocar
@@ -154,8 +160,6 @@ tests/fixtures/  # proyectos KiCad de prueba — procesar con código, NUNCA lee
 - `docs/specs/tool-catalog.md` — tools + taxonomía de errores (F3).
 - `docs/specs/restricciones-kicad.md` — límites técnicos de KiCad.
 - `docs/glosario.md` — dominio EDA; consultar ante CUALQUIER término dudoso.
-- `hoja-de-ruta-v4.md` — hoja de ruta vigente (Fase 3). La v3 histórica
-  está en `docs/historico/` para trazabilidad.
 
 ## Definition of Done (toda tarea)
 
@@ -177,15 +181,9 @@ tests/fixtures/  # proyectos KiCad de prueba — procesar con código, NUNCA lee
 
 ## Flujo de trabajo
 
-Tareas se toman de la ruta vigente (`hoja-de-ruta-v4.md`) y del backlog
-del CONTEXT.md. Ante ambigüedad en un spec: preguntar al humano, no inventar.
+Tareas se toman de `docs/BACKLOG.md` y del brief humano vigente;
+`hoja-de-ruta-v5.md` aporta la dirección estratégica vigente. Ante ambigüedad
+en un spec: preguntar al humano, no inventar.
 Una suposición no declarada es un bug futuro. Si un test integration falla
 y KiCad no está corriendo, ese es el motivo — no lo "arregles" mockeando el
 bridge en tests de integración.
-
-**Fase actual del proyecto** (2026-07-23, ver CONTEXT.md v7 para lo más
-reciente): consolidación (Fase 3). Interpretación de resultados invertida
-respecto a fases anteriores: un dogfooding verde es evidencia positiva de
-convergencia, no aburrimiento. Un P0 nuevo en Fase 3 se sospecha regresión
-del último fix mergeado hasta prueba en contrario. NO forzar hallazgos ni
-escalar complejidad prematuramente.

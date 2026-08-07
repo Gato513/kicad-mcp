@@ -23,7 +23,7 @@ modificar existentes requiere bump del formato a v2 y aprobación.
 
 El test compara **igualdad exacta de string** (byte a byte, un `\n` final).
 
-## Sesión 36 — encoders ad-hoc de `tools/pcb.py` (R2, no son TOON)
+## Sesión 36 — encoders ad hoc (R2, no son TOON)
 
 `004_pcb_tracks_canarios/`, `005_pcb_zones_canarios/` y
 `006_pcb_component_detail_canarios/` cubren `_encode_tracks`,
@@ -40,7 +40,8 @@ delimitador posicional de las tres gramáticas (space-delimited a nivel de
 ítem, a diferencia de TOON que es `|`-delimited) y `_sanitize` no lo toca.
 El ítem con espacio en cada golden (`T4`/`Z4`/pad 4-5) quedó marcado como
 **caracterización**: fija el gap conocido, no el comportamiento deseado.
-Sesión 37 cerró el gap con `_sanitize_space_delimited` (`tools/pcb.py`) — los
+Sesión 37 cerró el gap con `_sanitize_space_delimited` (hoy en
+`tools/pcb_encoders.py`) — los
 tres ítems cambiaron a `_` en lugar de conservar el espacio; ver §Sesión 37.
 `004` también incluye un ítem con `net_name=""` (vía `V1`): gap pre-existente
 distinto, `CopperItem.net_name` no tenía fallback `or "-"` a diferencia de
@@ -48,7 +49,7 @@ distinto, `CopperItem.net_name` no tenía fallback `or "-"` a diferencia de
 
 ## Sesión 37 — cierre del gap del espacio
 
-`_sanitize_space_delimited` (`tools/pcb.py`) compone `_sanitize` con
+`_sanitize_space_delimited` (hoy en `tools/pcb_encoders.py`) compone `_sanitize` con
 neutralización de todo whitespace (`re.sub(r"\s", "_", ...)`), aplicado en
 los 5 sitios space-delimited: `net_name` en `_encode_tracks` (segmentos y
 vías) y `_encode_zones`, `number`/`net_name` de pad en
@@ -86,3 +87,11 @@ veredicto (`docs/BACKLOG.md`, entrada `P1-1`):
 `006_pcb_component_detail_canarios` no cambió: `bbox_source` y `p.layer`
 (candidatos evaluados esta sesión) quedaron refutados — ver
 `docs/historico/sesiones/38-reporte.md`.
+
+## Sesión 41 — extracción mecánica de encoders (DT1 Slice 1)
+
+Los encoders y filtros ad hoc viven en
+`src/kicad_mcp/tools/pcb_encoders.py`. `src/kicad_mcp/tools/pcb.py` conserva
+siete re-exports explícitos para los consumidores existentes. El traslado fue
+mecánico y los tres goldens permanecieron byte-exactos; no se modificaron los
+archivos esperados en el Slice 1 (PR #13, merge `8d3696b`).

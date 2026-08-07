@@ -1,0 +1,106 @@
+# CI de kicad-mcp — sesión 35.
+#
+# Objetivo: convertir los cuatro criterios ejecutables de la Definition of Done
+# (CLAUDE.md:150-163) en gates automáticos sobre push y pull_request.
+#
+# Decisiones (registradas en el reporte de cierre):
+#   D-35.1  Cuatro jobs paralelos, no un job con cuatro steps. Justificación:
+#           criterio de éxito #3 exige que "los cuatro fallan" reporten
+#           independientemente en PR-broken; con un job, un `run` que falla
+#           corta los siguientes. Costo: `uv sync` corre 4 veces — mitigado
+#           por el cache de setup-uv (enable-cache: true).
+#   D-35.2  Filtro de pytest explícito en la CLI del CI, no dependiente de
+#           `addopts` del pyproject. Aísla al workflow del resultado de H2:
+#           el CI dice la verdad correcta con o sin el fix del pyproject.
+#   D-35.3  Versión de Python resuelta por `uv sync` desde `pyproject.toml`
+#           (requires-python) — no hardcodeada. Cumple el punto 3 de "Alcance
+#           / Dentro" del prompt.
+#   D-35.4  Actions pineadas por SHA con comentario de la tag (recomendación
+#           de seguridad de GitHub). Renovate/Dependabot son quienes deberían
+#           actualizarlas — no un editor humano al azar.
+#   D-35.5  `permissions: contents: read` mínimo. El workflow no publica,
+#           no crea PRs, no accede a secretos.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches:
+      - main
+      - 'sesion/*'
+
+permissions:
+  contents: read
+
+# Cancela corridas viejas del mismo ref cuando llega una nueva. Evita colas
+# de PR-clean pisándose con PR-broken durante la validación de H1.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  ruff-check:
+    name: ruff check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run ruff check
+        run: uv run ruff check
+
+  ruff-format:
+    name: ruff format --check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run ruff format --check
+        run: uv run ruff format --check
+
+  mypy:
+    name: mypy src/
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run mypy
+        run: uv run mypy src/
+
+  pytest-offline:
+    name: pytest (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run pytest (offline suite)
+        # Filtro explícito y completo — coincide con el comando canónico del
+        # §7 del contexto operativo. Corrige R8 de la auditoría en la CLI del
+        # CI independientemente de si el pyproject.toml también se corrige.
+        # Si `addopts` ya declara un `-m`, pytest usa el último — este gana.
+        run: uv run pytest -m "not integration and not integration_gui and not integration_gui_slow"

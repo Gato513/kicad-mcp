@@ -1,0 +1,2267 @@
+{
+  "V": {
+    "_DELETE_TOLERANCE_MM": {
+      "category": "constant_top",
+      "decoradores": [],
+      "end_lineno": 75,
+      "lineno": 75,
+      "loc": 1
+    },
+    "_OPPOSITE_LAYER": {
+      "category": "constant_top",
+      "decoradores": [],
+      "end_lineno": 89,
+      "lineno": 89,
+      "loc": 1
+    },
+    "_STITCH_RADIUS_MM": {
+      "category": "constant_top",
+      "decoradores": [],
+      "end_lineno": 88,
+      "lineno": 88,
+      "loc": 1
+    },
+    "_TRACKS_BUDGET_SAFETY": {
+      "category": "constant_top",
+      "decoradores": [],
+      "end_lineno": 82,
+      "lineno": 82,
+      "loc": 1
+    },
+    "_TRACKS_DEFAULT_BUDGET": {
+      "category": "constant_top",
+      "decoradores": [],
+      "end_lineno": 79,
+      "lineno": 79,
+      "loc": 1
+    },
+    "_audit_error": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 3161,
+      "lineno": 3154,
+      "loc": 8
+    },
+    "_bbox_distance_to_point": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 321,
+      "lineno": 311,
+      "loc": 11
+    },
+    "_closest_board_edge": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 379,
+      "lineno": 363,
+      "loc": 17
+    },
+    "_closest_point_copper_bbox": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 360,
+      "lineno": 347,
+      "loc": 14
+    },
+    "_copper_candidate_dict": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 3125,
+      "lineno": 3110,
+      "loc": 16
+    },
+    "_copper_distance_mm": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 284,
+      "lineno": 267,
+      "loc": 18
+    },
+    "_copper_distance_to_bbox": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 344,
+      "lineno": 324,
+      "loc": 21
+    },
+    "_copper_in_bbox": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 429,
+      "lineno": 418,
+      "loc": 12
+    },
+    "_copper_on_layer": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 437,
+      "lineno": 432,
+      "loc": 6
+    },
+    "_delete_copper": {
+      "category": "closure",
+      "decoradores": [],
+      "end_lineno": 1695,
+      "lineno": 1547,
+      "loc": 149
+    },
+    "_derive_post_state": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 165,
+      "lineno": 136,
+      "loc": 30
+    },
+    "_dist_point_segment": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 264,
+      "lineno": 253,
+      "loc": 12
+    },
+    "_dist_segment_to_pad": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 816,
+      "lineno": 777,
+      "loc": 40
+    },
+    "_evaluate_stitch_candidates": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 652,
+      "lineno": 591,
+      "loc": 62
+    },
+    "_find_duplicate_refs": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 133,
+      "lineno": 117,
+      "loc": 17
+    },
+    "_find_target": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 114,
+      "lineno": 100,
+      "loc": 15
+    },
+    "_find_track_pad_collision": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 848,
+      "lineno": 819,
+      "loc": 30
+    },
+    "_match_copper": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 308,
+      "lineno": 287,
+      "loc": 22
+    },
+    "_match_orphan_pad": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 543,
+      "lineno": 522,
+      "loc": 22
+    },
+    "_open_board_or_none": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 3107,
+      "lineno": 3096,
+      "loc": 12
+    },
+    "_opposite_layer_blocked": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 567,
+      "lineno": 546,
+      "loc": 22
+    },
+    "_orphan_pad_dict": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 577,
+      "lineno": 570,
+      "loc": 8
+    },
+    "_outline_params": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 3151,
+      "lineno": 3150,
+      "loc": 2
+    },
+    "_parse_pad_ref": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 860,
+      "lineno": 851,
+      "loc": 10
+    },
+    "_point_in_polygon": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 519,
+      "lineno": 503,
+      "loc": 17
+    },
+    "_polygon_is_simple": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 500,
+      "lineno": 480,
+      "loc": 21
+    },
+    "_refill_enforce_and_save": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 693,
+      "lineno": 655,
+      "loc": 39
+    },
+    "_register_post_snapshot": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 239,
+      "lineno": 168,
+      "loc": 72
+    },
+    "_resolve_board": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 250,
+      "lineno": 242,
+      "loc": 9
+    },
+    "_resolve_endpoint": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 918,
+      "lineno": 883,
+      "loc": 36
+    },
+    "_resolve_pad_coord": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 880,
+      "lineno": 863,
+      "loc": 18
+    },
+    "_rounded_rect_sdf": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 774,
+      "lineno": 760,
+      "loc": 15
+    },
+    "_segment_intersects_bbox": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 415,
+      "lineno": 382,
+      "loc": 34
+    },
+    "_segments_intersect": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 477,
+      "lineno": 440,
+      "loc": 38
+    },
+    "_similars": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 97,
+      "lineno": 95,
+      "loc": 3
+    },
+    "_stitched_via_dict": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 588,
+      "lineno": 580,
+      "loc": 9
+    },
+    "_track_params": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 3143,
+      "lineno": 3128,
+      "loc": 16
+    },
+    "_validate_zone_geometry": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 757,
+      "lineno": 696,
+      "loc": 62
+    },
+    "_via_params": {
+      "category": "helper_top",
+      "decoradores": [],
+      "end_lineno": 3147,
+      "lineno": 3146,
+      "loc": 2
+    },
+    "add_keepout_zone": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool",
+        "mutating_tool"
+      ],
+      "end_lineno": 2438,
+      "lineno": 2368,
+      "loc": 71
+    },
+    "add_track": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool",
+        "mutating_tool"
+      ],
+      "end_lineno": 1325,
+      "lineno": 1159,
+      "loc": 167
+    },
+    "add_via": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool",
+        "mutating_tool"
+      ],
+      "end_lineno": 1439,
+      "lineno": 1332,
+      "loc": 108
+    },
+    "add_zone": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool",
+        "mutating_tool"
+      ],
+      "end_lineno": 2361,
+      "lineno": 2245,
+      "loc": 117
+    },
+    "delete_track": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool",
+        "mutating_tool"
+      ],
+      "end_lineno": 1719,
+      "lineno": 1702,
+      "loc": 18
+    },
+    "delete_tracks_bulk": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool"
+      ],
+      "end_lineno": 1969,
+      "lineno": 1840,
+      "loc": 130
+    },
+    "delete_via": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool",
+        "mutating_tool"
+      ],
+      "end_lineno": 1743,
+      "lineno": 1726,
+      "loc": 18
+    },
+    "delete_zone": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool",
+        "mutating_tool"
+      ],
+      "end_lineno": 2662,
+      "lineno": 2619,
+      "loc": 44
+    },
+    "draw_board_outline": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool",
+        "mutating_tool"
+      ],
+      "end_lineno": 2238,
+      "lineno": 2154,
+      "loc": 85
+    },
+    "fill_zones": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool",
+        "mutating_tool"
+      ],
+      "end_lineno": 2612,
+      "lineno": 2525,
+      "loc": 88
+    },
+    "get_component_detail": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool"
+      ],
+      "end_lineno": 1995,
+      "lineno": 1975,
+      "loc": 21
+    },
+    "get_footprint_neighbors": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool"
+      ],
+      "end_lineno": 2147,
+      "lineno": 2004,
+      "loc": 144
+    },
+    "get_tracks": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool"
+      ],
+      "end_lineno": 1834,
+      "lineno": 1749,
+      "loc": 86
+    },
+    "get_zones": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool"
+      ],
+      "end_lineno": 2518,
+      "lineno": 2444,
+      "loc": 75
+    },
+    "move_footprint": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool",
+        "mutating_tool"
+      ],
+      "end_lineno": 1029,
+      "lineno": 931,
+      "loc": 99
+    },
+    "reload_board_from_disk": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool"
+      ],
+      "end_lineno": 1545,
+      "lineno": 1489,
+      "loc": 57
+    },
+    "route_board": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool"
+      ],
+      "end_lineno": 3093,
+      "lineno": 2668,
+      "loc": 426
+    },
+    "save_board": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool",
+        "mutating_tool"
+      ],
+      "end_lineno": 1480,
+      "lineno": 1446,
+      "loc": 35
+    },
+    "set_footprint_ref": {
+      "category": "mcp_tool",
+      "decoradores": [
+        "tool",
+        "mutating_tool"
+      ],
+      "end_lineno": 1152,
+      "lineno": 1039,
+      "loc": 114
+    }
+  },
+  "constant_reads": {
+    "_DELETE_TOLERANCE_MM": [
+      "_delete_copper"
+    ],
+    "_OPPOSITE_LAYER": [
+      "_evaluate_stitch_candidates"
+    ],
+    "_STITCH_RADIUS_MM": [
+      "_opposite_layer_blocked"
+    ],
+    "_TRACKS_BUDGET_SAFETY": [
+      "get_footprint_neighbors",
+      "get_tracks",
+      "get_zones"
+    ],
+    "_TRACKS_DEFAULT_BUDGET": [
+      "get_footprint_neighbors",
+      "get_tracks",
+      "get_zones"
+    ]
+  },
+  "consumidor": {
+    "_DELETE_TOLERANCE_MM": [
+      "_delete_copper"
+    ],
+    "_OPPOSITE_LAYER": [
+      "_evaluate_stitch_candidates"
+    ],
+    "_STITCH_RADIUS_MM": [
+      "_opposite_layer_blocked"
+    ],
+    "_TRACKS_BUDGET_SAFETY": [
+      "get_footprint_neighbors",
+      "get_tracks",
+      "get_zones"
+    ],
+    "_TRACKS_DEFAULT_BUDGET": [
+      "get_footprint_neighbors",
+      "get_tracks",
+      "get_zones"
+    ],
+    "_audit_error": [
+      "_delete_copper",
+      "_refill_enforce_and_save",
+      "add_keepout_zone",
+      "add_track",
+      "add_via",
+      "add_zone",
+      "delete_zone",
+      "draw_board_outline",
+      "fill_zones",
+      "move_footprint",
+      "set_footprint_ref"
+    ],
+    "_bbox_distance_to_point": [
+      "_closest_point_copper_bbox",
+      "_copper_distance_to_bbox",
+      "get_footprint_neighbors"
+    ],
+    "_closest_board_edge": [
+      "get_footprint_neighbors"
+    ],
+    "_closest_point_copper_bbox": [
+      "get_footprint_neighbors"
+    ],
+    "_copper_candidate_dict": [
+      "_delete_copper"
+    ],
+    "_copper_distance_mm": [
+      "_match_copper",
+      "_opposite_layer_blocked"
+    ],
+    "_copper_distance_to_bbox": [
+      "get_footprint_neighbors"
+    ],
+    "_copper_in_bbox": [
+      "delete_tracks_bulk",
+      "get_tracks"
+    ],
+    "_copper_on_layer": [
+      "_opposite_layer_blocked",
+      "delete_tracks_bulk",
+      "get_tracks"
+    ],
+    "_delete_copper": [
+      "delete_track",
+      "delete_via"
+    ],
+    "_derive_post_state": [
+      "_register_post_snapshot"
+    ],
+    "_dist_point_segment": [
+      "_copper_distance_mm"
+    ],
+    "_dist_segment_to_pad": [
+      "_find_track_pad_collision"
+    ],
+    "_evaluate_stitch_candidates": [
+      "route_board"
+    ],
+    "_find_duplicate_refs": [
+      "route_board"
+    ],
+    "_find_target": [
+      "move_footprint"
+    ],
+    "_find_track_pad_collision": [
+      "add_track"
+    ],
+    "_match_copper": [
+      "_delete_copper"
+    ],
+    "_match_orphan_pad": [
+      "_evaluate_stitch_candidates"
+    ],
+    "_open_board_or_none": [
+      "route_board"
+    ],
+    "_opposite_layer_blocked": [
+      "_evaluate_stitch_candidates"
+    ],
+    "_orphan_pad_dict": [
+      "_evaluate_stitch_candidates"
+    ],
+    "_outline_params": [
+      "draw_board_outline"
+    ],
+    "_parse_pad_ref": [
+      "_resolve_pad_coord"
+    ],
+    "_point_in_polygon": [
+      "_evaluate_stitch_candidates"
+    ],
+    "_polygon_is_simple": [
+      "_validate_zone_geometry"
+    ],
+    "_refill_enforce_and_save": [
+      "route_board"
+    ],
+    "_register_post_snapshot": [
+      "move_footprint"
+    ],
+    "_resolve_board": [
+      "_delete_copper",
+      "add_keepout_zone",
+      "add_track",
+      "add_via",
+      "add_zone",
+      "delete_tracks_bulk",
+      "delete_zone",
+      "draw_board_outline",
+      "fill_zones",
+      "get_component_detail",
+      "get_footprint_neighbors",
+      "get_tracks",
+      "get_zones",
+      "move_footprint",
+      "reload_board_from_disk",
+      "save_board",
+      "set_footprint_ref"
+    ],
+    "_resolve_endpoint": [
+      "add_track"
+    ],
+    "_resolve_pad_coord": [
+      "_resolve_endpoint"
+    ],
+    "_rounded_rect_sdf": [
+      "_dist_segment_to_pad"
+    ],
+    "_segment_intersects_bbox": [
+      "_copper_distance_to_bbox",
+      "_copper_in_bbox"
+    ],
+    "_segments_intersect": [
+      "_polygon_is_simple"
+    ],
+    "_similars": [
+      "_delete_copper",
+      "add_track",
+      "add_via",
+      "add_zone",
+      "delete_tracks_bulk",
+      "get_tracks",
+      "get_zones",
+      "move_footprint",
+      "set_footprint_ref"
+    ],
+    "_stitched_via_dict": [
+      "route_board"
+    ],
+    "_track_params": [
+      "add_track"
+    ],
+    "_validate_zone_geometry": [
+      "add_keepout_zone",
+      "add_zone"
+    ],
+    "_via_params": [
+      "add_via"
+    ],
+    "add_keepout_zone": [],
+    "add_track": [],
+    "add_via": [],
+    "add_zone": [],
+    "delete_track": [],
+    "delete_tracks_bulk": [],
+    "delete_via": [],
+    "delete_zone": [],
+    "draw_board_outline": [],
+    "fill_zones": [],
+    "get_component_detail": [],
+    "get_footprint_neighbors": [],
+    "get_tracks": [],
+    "get_zones": [],
+    "move_footprint": [],
+    "reload_board_from_disk": [],
+    "route_board": [],
+    "save_board": [],
+    "set_footprint_ref": []
+  },
+  "edges": [
+    [
+      "_closest_point_copper_bbox",
+      "_bbox_distance_to_point",
+      "CALL"
+    ],
+    [
+      "_copper_distance_mm",
+      "_dist_point_segment",
+      "CALL"
+    ],
+    [
+      "_copper_distance_to_bbox",
+      "_bbox_distance_to_point",
+      "CALL"
+    ],
+    [
+      "_copper_distance_to_bbox",
+      "_segment_intersects_bbox",
+      "CALL"
+    ],
+    [
+      "_copper_in_bbox",
+      "_segment_intersects_bbox",
+      "CALL"
+    ],
+    [
+      "_delete_copper",
+      "_DELETE_TOLERANCE_MM",
+      "CONSTANT_READ"
+    ],
+    [
+      "_delete_copper",
+      "_audit_error",
+      "CALL"
+    ],
+    [
+      "_delete_copper",
+      "_copper_candidate_dict",
+      "CALL"
+    ],
+    [
+      "_delete_copper",
+      "_match_copper",
+      "CALL"
+    ],
+    [
+      "_delete_copper",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "_delete_copper",
+      "_similars",
+      "CALL"
+    ],
+    [
+      "_dist_segment_to_pad",
+      "_rounded_rect_sdf",
+      "CALL"
+    ],
+    [
+      "_evaluate_stitch_candidates",
+      "_OPPOSITE_LAYER",
+      "ATTRIBUTE_READ"
+    ],
+    [
+      "_evaluate_stitch_candidates",
+      "_OPPOSITE_LAYER",
+      "CONSTANT_READ"
+    ],
+    [
+      "_evaluate_stitch_candidates",
+      "_match_orphan_pad",
+      "CALL"
+    ],
+    [
+      "_evaluate_stitch_candidates",
+      "_opposite_layer_blocked",
+      "CALL"
+    ],
+    [
+      "_evaluate_stitch_candidates",
+      "_orphan_pad_dict",
+      "CALL"
+    ],
+    [
+      "_evaluate_stitch_candidates",
+      "_point_in_polygon",
+      "CALL"
+    ],
+    [
+      "_find_track_pad_collision",
+      "_dist_segment_to_pad",
+      "CALL"
+    ],
+    [
+      "_match_copper",
+      "_copper_distance_mm",
+      "CALL"
+    ],
+    [
+      "_opposite_layer_blocked",
+      "_STITCH_RADIUS_MM",
+      "CONSTANT_READ"
+    ],
+    [
+      "_opposite_layer_blocked",
+      "_copper_distance_mm",
+      "CALL"
+    ],
+    [
+      "_opposite_layer_blocked",
+      "_copper_on_layer",
+      "CALL"
+    ],
+    [
+      "_polygon_is_simple",
+      "_segments_intersect",
+      "CALL"
+    ],
+    [
+      "_refill_enforce_and_save",
+      "_audit_error",
+      "CALL"
+    ],
+    [
+      "_register_post_snapshot",
+      "_derive_post_state",
+      "CALL"
+    ],
+    [
+      "_resolve_endpoint",
+      "_resolve_pad_coord",
+      "CALL"
+    ],
+    [
+      "_resolve_pad_coord",
+      "_parse_pad_ref",
+      "CALL"
+    ],
+    [
+      "_validate_zone_geometry",
+      "_polygon_is_simple",
+      "CALL"
+    ],
+    [
+      "add_keepout_zone",
+      "_audit_error",
+      "CALL"
+    ],
+    [
+      "add_keepout_zone",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "add_keepout_zone",
+      "_validate_zone_geometry",
+      "CALL"
+    ],
+    [
+      "add_track",
+      "_audit_error",
+      "CALL"
+    ],
+    [
+      "add_track",
+      "_find_track_pad_collision",
+      "CALL"
+    ],
+    [
+      "add_track",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "add_track",
+      "_resolve_endpoint",
+      "CALL"
+    ],
+    [
+      "add_track",
+      "_similars",
+      "CALL"
+    ],
+    [
+      "add_track",
+      "_track_params",
+      "CALL"
+    ],
+    [
+      "add_via",
+      "_audit_error",
+      "CALL"
+    ],
+    [
+      "add_via",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "add_via",
+      "_similars",
+      "CALL"
+    ],
+    [
+      "add_via",
+      "_via_params",
+      "CALL"
+    ],
+    [
+      "add_zone",
+      "_audit_error",
+      "CALL"
+    ],
+    [
+      "add_zone",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "add_zone",
+      "_similars",
+      "CALL"
+    ],
+    [
+      "add_zone",
+      "_validate_zone_geometry",
+      "CALL"
+    ],
+    [
+      "delete_track",
+      "_delete_copper",
+      "CALL"
+    ],
+    [
+      "delete_tracks_bulk",
+      "_copper_in_bbox",
+      "CALL"
+    ],
+    [
+      "delete_tracks_bulk",
+      "_copper_on_layer",
+      "CALL"
+    ],
+    [
+      "delete_tracks_bulk",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "delete_tracks_bulk",
+      "_similars",
+      "CALL"
+    ],
+    [
+      "delete_via",
+      "_delete_copper",
+      "CALL"
+    ],
+    [
+      "delete_zone",
+      "_audit_error",
+      "CALL"
+    ],
+    [
+      "delete_zone",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "draw_board_outline",
+      "_audit_error",
+      "CALL"
+    ],
+    [
+      "draw_board_outline",
+      "_outline_params",
+      "CALL"
+    ],
+    [
+      "draw_board_outline",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "fill_zones",
+      "_audit_error",
+      "CALL"
+    ],
+    [
+      "fill_zones",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "get_component_detail",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "get_footprint_neighbors",
+      "_TRACKS_BUDGET_SAFETY",
+      "CONSTANT_READ"
+    ],
+    [
+      "get_footprint_neighbors",
+      "_TRACKS_DEFAULT_BUDGET",
+      "CONSTANT_READ"
+    ],
+    [
+      "get_footprint_neighbors",
+      "_bbox_distance_to_point",
+      "CALL"
+    ],
+    [
+      "get_footprint_neighbors",
+      "_closest_board_edge",
+      "CALL"
+    ],
+    [
+      "get_footprint_neighbors",
+      "_closest_point_copper_bbox",
+      "CALL"
+    ],
+    [
+      "get_footprint_neighbors",
+      "_copper_distance_to_bbox",
+      "CALL"
+    ],
+    [
+      "get_footprint_neighbors",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "get_tracks",
+      "_TRACKS_BUDGET_SAFETY",
+      "CONSTANT_READ"
+    ],
+    [
+      "get_tracks",
+      "_TRACKS_DEFAULT_BUDGET",
+      "CONSTANT_READ"
+    ],
+    [
+      "get_tracks",
+      "_copper_in_bbox",
+      "CALL"
+    ],
+    [
+      "get_tracks",
+      "_copper_on_layer",
+      "CALL"
+    ],
+    [
+      "get_tracks",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "get_tracks",
+      "_similars",
+      "CALL"
+    ],
+    [
+      "get_zones",
+      "_TRACKS_BUDGET_SAFETY",
+      "CONSTANT_READ"
+    ],
+    [
+      "get_zones",
+      "_TRACKS_DEFAULT_BUDGET",
+      "CONSTANT_READ"
+    ],
+    [
+      "get_zones",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "get_zones",
+      "_similars",
+      "CALL"
+    ],
+    [
+      "move_footprint",
+      "_audit_error",
+      "CALL"
+    ],
+    [
+      "move_footprint",
+      "_find_target",
+      "CALL"
+    ],
+    [
+      "move_footprint",
+      "_register_post_snapshot",
+      "CALL"
+    ],
+    [
+      "move_footprint",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "move_footprint",
+      "_similars",
+      "CALL"
+    ],
+    [
+      "reload_board_from_disk",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "route_board",
+      "_evaluate_stitch_candidates",
+      "CALL"
+    ],
+    [
+      "route_board",
+      "_find_duplicate_refs",
+      "CALL"
+    ],
+    [
+      "route_board",
+      "_open_board_or_none",
+      "CALL"
+    ],
+    [
+      "route_board",
+      "_refill_enforce_and_save",
+      "CALL"
+    ],
+    [
+      "route_board",
+      "_stitched_via_dict",
+      "CALL"
+    ],
+    [
+      "save_board",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "set_footprint_ref",
+      "_audit_error",
+      "CALL"
+    ],
+    [
+      "set_footprint_ref",
+      "_resolve_board",
+      "CALL"
+    ],
+    [
+      "set_footprint_ref",
+      "_similars",
+      "CALL"
+    ]
+  ],
+  "frontera_entrante_src": {
+    "_DELETE_TOLERANCE_MM": [],
+    "_OPPOSITE_LAYER": [],
+    "_STITCH_RADIUS_MM": [],
+    "_TRACKS_BUDGET_SAFETY": [],
+    "_TRACKS_DEFAULT_BUDGET": [],
+    "_audit_error": [],
+    "_bbox_distance_to_point": [],
+    "_closest_board_edge": [],
+    "_closest_point_copper_bbox": [],
+    "_copper_candidate_dict": [],
+    "_copper_distance_mm": [],
+    "_copper_distance_to_bbox": [],
+    "_copper_in_bbox": [],
+    "_copper_on_layer": [],
+    "_delete_copper": [],
+    "_derive_post_state": [],
+    "_dist_point_segment": [],
+    "_dist_segment_to_pad": [],
+    "_evaluate_stitch_candidates": [],
+    "_find_duplicate_refs": [],
+    "_find_target": [],
+    "_find_track_pad_collision": [],
+    "_match_copper": [],
+    "_match_orphan_pad": [],
+    "_open_board_or_none": [],
+    "_opposite_layer_blocked": [],
+    "_orphan_pad_dict": [],
+    "_outline_params": [],
+    "_parse_pad_ref": [],
+    "_point_in_polygon": [],
+    "_polygon_is_simple": [],
+    "_refill_enforce_and_save": [],
+    "_register_post_snapshot": [],
+    "_resolve_board": [],
+    "_resolve_endpoint": [],
+    "_resolve_pad_coord": [],
+    "_rounded_rect_sdf": [],
+    "_segment_intersects_bbox": [],
+    "_segments_intersect": [],
+    "_similars": [],
+    "_stitched_via_dict": [],
+    "_track_params": [],
+    "_validate_zone_geometry": [],
+    "_via_params": [],
+    "add_keepout_zone": [],
+    "add_track": [],
+    "add_via": [],
+    "add_zone": [],
+    "delete_track": [],
+    "delete_tracks_bulk": [],
+    "delete_via": [],
+    "delete_zone": [],
+    "draw_board_outline": [],
+    "fill_zones": [],
+    "get_component_detail": [],
+    "get_footprint_neighbors": [],
+    "get_tracks": [],
+    "get_zones": [],
+    "move_footprint": [],
+    "reload_board_from_disk": [],
+    "route_board": [],
+    "save_board": [],
+    "set_footprint_ref": []
+  },
+  "frontera_entrante_tests": {
+    "_DELETE_TOLERANCE_MM": [],
+    "_OPPOSITE_LAYER": [],
+    "_STITCH_RADIUS_MM": [],
+    "_TRACKS_BUDGET_SAFETY": [],
+    "_TRACKS_DEFAULT_BUDGET": [],
+    "_audit_error": [],
+    "_bbox_distance_to_point": [],
+    "_closest_board_edge": [],
+    "_closest_point_copper_bbox": [],
+    "_copper_candidate_dict": [],
+    "_copper_distance_mm": [],
+    "_copper_distance_to_bbox": [],
+    "_copper_in_bbox": [],
+    "_copper_on_layer": [],
+    "_delete_copper": [],
+    "_derive_post_state": [],
+    "_dist_point_segment": [],
+    "_dist_segment_to_pad": [],
+    "_evaluate_stitch_candidates": [],
+    "_find_duplicate_refs": [
+      "tests/test_pcb_session31b_duplicate_refs.py"
+    ],
+    "_find_target": [],
+    "_find_track_pad_collision": [],
+    "_match_copper": [],
+    "_match_orphan_pad": [],
+    "_open_board_or_none": [],
+    "_opposite_layer_blocked": [],
+    "_orphan_pad_dict": [],
+    "_outline_params": [],
+    "_parse_pad_ref": [],
+    "_point_in_polygon": [],
+    "_polygon_is_simple": [],
+    "_refill_enforce_and_save": [],
+    "_register_post_snapshot": [],
+    "_resolve_board": [],
+    "_resolve_endpoint": [],
+    "_resolve_pad_coord": [],
+    "_rounded_rect_sdf": [],
+    "_segment_intersects_bbox": [],
+    "_segments_intersect": [],
+    "_similars": [],
+    "_stitched_via_dict": [],
+    "_track_params": [],
+    "_validate_zone_geometry": [],
+    "_via_params": [],
+    "add_keepout_zone": [],
+    "add_track": [],
+    "add_via": [],
+    "add_zone": [],
+    "delete_track": [],
+    "delete_tracks_bulk": [],
+    "delete_via": [],
+    "delete_zone": [],
+    "draw_board_outline": [],
+    "fill_zones": [],
+    "get_component_detail": [],
+    "get_footprint_neighbors": [],
+    "get_tracks": [],
+    "get_zones": [],
+    "move_footprint": [],
+    "reload_board_from_disk": [],
+    "route_board": [],
+    "save_board": [],
+    "set_footprint_ref": []
+  },
+  "frontera_saliente_ambigua": {
+    "_DELETE_TOLERANCE_MM": [],
+    "_OPPOSITE_LAYER": [],
+    "_STITCH_RADIUS_MM": [],
+    "_TRACKS_BUDGET_SAFETY": [],
+    "_TRACKS_DEFAULT_BUDGET": [],
+    "_audit_error": [
+      {
+        "descripcion": "5 anotaciones de tipo en la firma de _audit_error; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 3154,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_bbox_distance_to_point": [
+      {
+        "descripcion": "4 anotaciones de tipo en la firma de _bbox_distance_to_point; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 311,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_closest_board_edge": [
+      {
+        "descripcion": "3 anotaciones de tipo en la firma de _closest_board_edge; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 363,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_closest_point_copper_bbox": [
+      {
+        "descripcion": "3 anotaciones de tipo en la firma de _closest_point_copper_bbox; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 347,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_copper_candidate_dict": [
+      {
+        "descripcion": "2 anotaciones de tipo en la firma de _copper_candidate_dict; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 3110,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_copper_distance_mm": [
+      {
+        "descripcion": "4 anotaciones de tipo en la firma de _copper_distance_mm; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 267,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_copper_distance_to_bbox": [
+      {
+        "descripcion": "3 anotaciones de tipo en la firma de _copper_distance_to_bbox; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 324,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_copper_in_bbox": [
+      {
+        "descripcion": "3 anotaciones de tipo en la firma de _copper_in_bbox; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 418,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_copper_on_layer": [
+      {
+        "descripcion": "3 anotaciones de tipo en la firma de _copper_on_layer; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 432,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_delete_copper": [
+      {
+        "descripcion": "9 anotaciones de tipo en la firma de _delete_copper; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 1547,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_derive_post_state": [
+      {
+        "descripcion": "5 anotaciones de tipo en la firma de _derive_post_state; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 136,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_dist_point_segment": [
+      {
+        "descripcion": "7 anotaciones de tipo en la firma de _dist_point_segment; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 253,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_dist_segment_to_pad": [
+      {
+        "descripcion": "6 anotaciones de tipo en la firma de _dist_segment_to_pad; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 777,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_evaluate_stitch_candidates": [
+      {
+        "descripcion": "5 anotaciones de tipo en la firma de _evaluate_stitch_candidates; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 591,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_find_duplicate_refs": [
+      {
+        "descripcion": "2 anotaciones de tipo en la firma de _find_duplicate_refs; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 117,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_find_target": [
+      {
+        "descripcion": "3 anotaciones de tipo en la firma de _find_target; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 100,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_find_track_pad_collision": [
+      {
+        "descripcion": "10 anotaciones de tipo en la firma de _find_track_pad_collision; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 819,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_match_copper": [
+      {
+        "descripcion": "6 anotaciones de tipo en la firma de _match_copper; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 287,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_match_orphan_pad": [
+      {
+        "descripcion": "4 anotaciones de tipo en la firma de _match_orphan_pad; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 522,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_open_board_or_none": [
+      {
+        "descripcion": "2 anotaciones de tipo en la firma de _open_board_or_none; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 3096,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_opposite_layer_blocked": [
+      {
+        "descripcion": "7 anotaciones de tipo en la firma de _opposite_layer_blocked; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 546,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_orphan_pad_dict": [
+      {
+        "descripcion": "5 anotaciones de tipo en la firma de _orphan_pad_dict; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 570,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_outline_params": [
+      {
+        "descripcion": "5 anotaciones de tipo en la firma de _outline_params; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 3150,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_parse_pad_ref": [
+      {
+        "descripcion": "2 anotaciones de tipo en la firma de _parse_pad_ref; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 851,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_point_in_polygon": [
+      {
+        "descripcion": "4 anotaciones de tipo en la firma de _point_in_polygon; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 503,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_polygon_is_simple": [
+      {
+        "descripcion": "2 anotaciones de tipo en la firma de _polygon_is_simple; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 480,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_refill_enforce_and_save": [
+      {
+        "descripcion": "7 anotaciones de tipo en la firma de _refill_enforce_and_save; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 655,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_register_post_snapshot": [
+      {
+        "descripcion": "9 anotaciones de tipo en la firma de _register_post_snapshot; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 168,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_resolve_board": [
+      {
+        "descripcion": "2 anotaciones de tipo en la firma de _resolve_board; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 242,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_resolve_endpoint": [
+      {
+        "descripcion": "7 anotaciones de tipo en la firma de _resolve_endpoint; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 883,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_resolve_pad_coord": [
+      {
+        "descripcion": "4 anotaciones de tipo en la firma de _resolve_pad_coord; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 863,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_rounded_rect_sdf": [
+      {
+        "descripcion": "6 anotaciones de tipo en la firma de _rounded_rect_sdf; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 760,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_segment_intersects_bbox": [
+      {
+        "descripcion": "6 anotaciones de tipo en la firma de _segment_intersects_bbox; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 382,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_segments_intersect": [
+      {
+        "descripcion": "5 anotaciones de tipo en la firma de _segments_intersect; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 440,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_similars": [
+      {
+        "descripcion": "4 anotaciones de tipo en la firma de _similars; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 95,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_stitched_via_dict": [
+      {
+        "descripcion": "3 anotaciones de tipo en la firma de _stitched_via_dict; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 580,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_track_params": [
+      {
+        "descripcion": "8 anotaciones de tipo en la firma de _track_params; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 3128,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_validate_zone_geometry": [
+      {
+        "descripcion": "3 anotaciones de tipo en la firma de _validate_zone_geometry; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 696,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "_via_params": [
+      {
+        "descripcion": "6 anotaciones de tipo en la firma de _via_params; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 3146,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "add_keepout_zone": [
+      {
+        "descripcion": "9 anotaciones de tipo en la firma de add_keepout_zone; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 2368,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "add_track": [
+      {
+        "descripcion": "11 anotaciones de tipo en la firma de add_track; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 1159,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "add_via": [
+      {
+        "descripcion": "7 anotaciones de tipo en la firma de add_via; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 1332,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "add_zone": [
+      {
+        "descripcion": "8 anotaciones de tipo en la firma de add_zone; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 2245,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "delete_track": [
+      {
+        "descripcion": "6 anotaciones de tipo en la firma de delete_track; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 1702,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "delete_tracks_bulk": [
+      {
+        "descripcion": "7 anotaciones de tipo en la firma de delete_tracks_bulk; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 1840,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "delete_via": [
+      {
+        "descripcion": "6 anotaciones de tipo en la firma de delete_via; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 1726,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "delete_zone": [
+      {
+        "descripcion": "3 anotaciones de tipo en la firma de delete_zone; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 2619,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "draw_board_outline": [
+      {
+        "descripcion": "6 anotaciones de tipo en la firma de draw_board_outline; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 2154,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "fill_zones": [
+      {
+        "descripcion": "3 anotaciones de tipo en la firma de fill_zones; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 2525,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "get_component_detail": [
+      {
+        "descripcion": "3 anotaciones de tipo en la firma de get_component_detail; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 1975,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "get_footprint_neighbors": [
+      {
+        "descripcion": "9 anotaciones de tipo en la firma de get_footprint_neighbors; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 2004,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "get_tracks": [
+      {
+        "descripcion": "5 anotaciones de tipo en la firma de get_tracks; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 1749,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "get_zones": [
+      {
+        "descripcion": "5 anotaciones de tipo en la firma de get_zones; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 2444,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "move_footprint": [
+      {
+        "descripcion": "5 anotaciones de tipo en la firma de move_footprint; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 931,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "reload_board_from_disk": [
+      {
+        "descripcion": "1 anotaciones de tipo en la firma de reload_board_from_disk; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 1489,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "route_board": [
+      {
+        "descripcion": "4 anotaciones de tipo en la firma de route_board; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 2668,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "save_board": [
+      {
+        "descripcion": "2 anotaciones de tipo en la firma de save_board; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 1446,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ],
+    "set_footprint_ref": [
+      {
+        "descripcion": "5 anotaciones de tipo en la firma de set_footprint_ref; no evaluables est\u00e1ticamente por `from __future__ import annotations` (pcb.py:16, PEP 563). No contribuyen aristas al grafo V-interno.",
+        "linea": 1039,
+        "tipo": "ANOTACION_APLAZADA"
+      }
+    ]
+  },
+  "frontera_saliente_otras": {
+    "_DELETE_TOLERANCE_MM": [],
+    "_OPPOSITE_LAYER": [],
+    "_STITCH_RADIUS_MM": [],
+    "_TRACKS_BUDGET_SAFETY": [],
+    "_TRACKS_DEFAULT_BUDGET": [],
+    "_audit_error": [
+      "..audit.logger",
+      "..errors"
+    ],
+    "_bbox_distance_to_point": [],
+    "_closest_board_edge": [
+      "..bridge.ipc"
+    ],
+    "_closest_point_copper_bbox": [
+      "..bridge.ipc"
+    ],
+    "_copper_candidate_dict": [
+      "..bridge.ipc"
+    ],
+    "_copper_distance_mm": [
+      "..bridge.ipc"
+    ],
+    "_copper_distance_to_bbox": [
+      "..bridge.ipc"
+    ],
+    "_copper_in_bbox": [
+      "..bridge.ipc"
+    ],
+    "_copper_on_layer": [
+      "..bridge.ipc"
+    ],
+    "_delete_copper": [
+      "..audit.logger",
+      "..bridge.ipc",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "_derive_post_state": [
+      "..bridge.ipc"
+    ],
+    "_dist_point_segment": [],
+    "_dist_segment_to_pad": [
+      "..bridge.ipc"
+    ],
+    "_evaluate_stitch_candidates": [
+      "..bridge.ipc",
+      "..bridge.rules"
+    ],
+    "_find_duplicate_refs": [
+      "..bridge.ipc"
+    ],
+    "_find_target": [
+      "..bridge.ipc",
+      "..errors"
+    ],
+    "_find_track_pad_collision": [
+      "..bridge.ipc"
+    ],
+    "_match_copper": [
+      "..bridge.ipc"
+    ],
+    "_match_orphan_pad": [
+      "..bridge.ipc"
+    ],
+    "_open_board_or_none": [
+      "..bridge.ipc",
+      "..errors"
+    ],
+    "_opposite_layer_blocked": [
+      "..bridge.ipc"
+    ],
+    "_orphan_pad_dict": [
+      "..bridge.ipc"
+    ],
+    "_outline_params": [],
+    "_parse_pad_ref": [
+      "..errors"
+    ],
+    "_point_in_polygon": [],
+    "_polygon_is_simple": [],
+    "_refill_enforce_and_save": [
+      "..bridge.ipc",
+      "..errors"
+    ],
+    "_register_post_snapshot": [
+      "..bridge.ipc",
+      "..bridge.state_builder"
+    ],
+    "_resolve_board": [
+      "..bridge.ipc",
+      "..errors"
+    ],
+    "_resolve_endpoint": [
+      "..bridge.ipc",
+      "..errors"
+    ],
+    "_resolve_pad_coord": [
+      "..bridge.ipc",
+      "..errors"
+    ],
+    "_rounded_rect_sdf": [],
+    "_segment_intersects_bbox": [],
+    "_segments_intersect": [],
+    "_similars": [],
+    "_stitched_via_dict": [],
+    "_track_params": [],
+    "_validate_zone_geometry": [
+      "..errors"
+    ],
+    "_via_params": [],
+    "add_keepout_zone": [
+      "..audit.logger",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "add_track": [
+      "..audit.logger",
+      "..bridge.ipc",
+      "..bridge.rules_reader",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "..tools.world",
+      "._mutating"
+    ],
+    "add_via": [
+      "..audit.logger",
+      "..bridge.ipc",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "add_zone": [
+      "..audit.logger",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "..tools.world",
+      "._mutating"
+    ],
+    "delete_track": [
+      "..logging_config",
+      "._mutating"
+    ],
+    "delete_tracks_bulk": [
+      "..audit.logger",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "delete_via": [
+      "..logging_config",
+      "._mutating"
+    ],
+    "delete_zone": [
+      "..audit.logger",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "draw_board_outline": [
+      "..audit.logger",
+      "..bridge.ipc",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "fill_zones": [
+      "..audit.logger",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "..tools.world",
+      "._mutating"
+    ],
+    "get_component_detail": [
+      "..errors",
+      "..logging_config",
+      ".pcb_encoders"
+    ],
+    "get_footprint_neighbors": [
+      "..errors",
+      "..logging_config",
+      "..snapshots"
+    ],
+    "get_tracks": [
+      "..errors",
+      "..logging_config",
+      "..snapshots",
+      ".pcb_encoders"
+    ],
+    "get_zones": [
+      "..errors",
+      "..logging_config",
+      "..snapshots",
+      ".pcb_encoders"
+    ],
+    "move_footprint": [
+      "..audit.logger",
+      "..bridge.ipc",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "reload_board_from_disk": [
+      "..audit.logger",
+      "..bridge.state_builder",
+      "..errors",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "route_board": [
+      "..audit.logger",
+      "..bridge.autoroute",
+      "..bridge.ipc",
+      "..bridge.rules",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "..tools.world",
+      "._mutating"
+    ],
+    "save_board": [
+      "..audit.logger",
+      "..bridge.state_builder",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "..tools.world",
+      "._mutating"
+    ],
+    "set_footprint_ref": [
+      "..audit.logger",
+      "..bridge.ipc",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ]
+  },
+  "import_map": {
+    "Any": {
+      "kind": "stdlib",
+      "module": "typing",
+      "orig": "Any"
+    },
+    "BBoxMm": {
+      "kind": "external",
+      "module": "..bridge.ipc",
+      "orig": "BBoxMm"
+    },
+    "BoardHandle": {
+      "kind": "external",
+      "module": "..bridge.ipc",
+      "orig": "BoardHandle"
+    },
+    "CopperItem": {
+      "kind": "external",
+      "module": "..bridge.ipc",
+      "orig": "CopperItem"
+    },
+    "Counter": {
+      "kind": "stdlib",
+      "module": "collections",
+      "orig": "Counter"
+    },
+    "ErrorCode": {
+      "kind": "external",
+      "module": "..errors",
+      "orig": "ErrorCode"
+    },
+    "FootprintData": {
+      "kind": "external",
+      "module": "..bridge.ipc",
+      "orig": "FootprintData"
+    },
+    "IpcBridge": {
+      "kind": "external",
+      "module": "..bridge.ipc",
+      "orig": "IpcBridge"
+    },
+    "Item": {
+      "kind": "external",
+      "module": "..bridge.rules",
+      "orig": "Item"
+    },
+    "KicadMcpError": {
+      "kind": "external",
+      "module": "..errors",
+      "orig": "KicadMcpError"
+    },
+    "Mm": {
+      "kind": "external",
+      "module": "..bridge.ipc",
+      "orig": "Mm"
+    },
+    "PadGeom": {
+      "kind": "external",
+      "module": "..bridge.ipc",
+      "orig": "PadGeom"
+    },
+    "Path": {
+      "kind": "stdlib",
+      "module": "pathlib",
+      "orig": "Path"
+    },
+    "TYPE_CHECKING": {
+      "kind": "stdlib",
+      "module": "typing",
+      "orig": "TYPE_CHECKING"
+    },
+    "ZoneItem": {
+      "kind": "external",
+      "module": "..bridge.ipc",
+      "orig": "ZoneItem"
+    },
+    "_check_base_snap": {
+      "kind": "external",
+      "module": "._mutating",
+      "orig": "_check_base_snap"
+    },
+    "_encode_component_detail": {
+      "kind": "external",
+      "module": ".pcb_encoders",
+      "orig": "_encode_component_detail"
+    },
+    "_encode_tracks": {
+      "kind": "external",
+      "module": ".pcb_encoders",
+      "orig": "_encode_tracks"
+    },
+    "_encode_zones": {
+      "kind": "external",
+      "module": ".pcb_encoders",
+      "orig": "_encode_zones"
+    },
+    "_guard_live_stale": {
+      "kind": "external",
+      "module": "._mutating",
+      "orig": "_guard_live_stale"
+    },
+    "_project_root": {
+      "kind": "external",
+      "module": "._mutating",
+      "orig": "_project_root"
+    },
+    "_resolve_root_pcb": {
+      "kind": "external",
+      "module": "..tools.world",
+      "orig": "_resolve_root_pcb"
+    },
+    "_resolve_root_schematic_or_pcb": {
+      "kind": "external",
+      "module": "._mutating",
+      "orig": "_resolve_root_schematic_or_pcb"
+    },
+    "_sanitize_space_delimited": {
+      "kind": "external",
+      "module": ".pcb_encoders",
+      "orig": "_sanitize_space_delimited"
+    },
+    "_tracks_filter_desc": {
+      "kind": "external",
+      "module": ".pcb_encoders",
+      "orig": "_tracks_filter_desc"
+    },
+    "_zone_is_axis_aligned_rect": {
+      "kind": "external",
+      "module": ".pcb_encoders",
+      "orig": "_zone_is_axis_aligned_rect"
+    },
+    "_zones_filter_desc": {
+      "kind": "external",
+      "module": ".pcb_encoders",
+      "orig": "_zones_filter_desc"
+    },
+    "annotations": {
+      "kind": "external",
+      "module": "__future__",
+      "orig": "annotations"
+    },
+    "audit_record": {
+      "kind": "external",
+      "module": "..audit.logger",
+      "orig": "record"
+    },
+    "build_state_from_board": {
+      "kind": "external",
+      "module": "..bridge.state_builder",
+      "orig": "build_state_from_board"
+    },
+    "build_state_from_snapshot": {
+      "kind": "external",
+      "module": "..bridge.state_builder",
+      "orig": "build_state_from_snapshot"
+    },
+    "check_no_external_disk_edit": {
+      "kind": "external",
+      "module": "..snapshots",
+      "orig": "check_no_external_disk_edit"
+    },
+    "classify_net_routing": {
+      "kind": "external",
+      "module": "..bridge.autoroute",
+      "orig": "classify_net_routing"
+    },
+    "collect_project_mtimes": {
+      "kind": "external",
+      "module": "..snapshots",
+      "orig": "collect_project_mtimes"
+    },
+    "diff_violations": {
+      "kind": "external",
+      "module": "..bridge.rules",
+      "orig": "diff_violations"
+    },
+    "difflib": {
+      "kind": "stdlib",
+      "module": "difflib",
+      "orig": "difflib"
+    },
+    "ensure_session_backup": {
+      "kind": "external",
+      "module": "..gates.g1",
+      "orig": "ensure_session_backup"
+    },
+    "estimate_tokens": {
+      "kind": "external",
+      "module": "..logging_config",
+      "orig": "estimate_tokens"
+    },
+    "get_default_store": {
+      "kind": "external",
+      "module": "..snapshots",
+      "orig": "get_default_store"
+    },
+    "json": {
+      "kind": "stdlib",
+      "module": "json",
+      "orig": "json"
+    },
+    "load_project_rules": {
+      "kind": "external",
+      "module": "..bridge.rules_reader",
+      "orig": "load_project_rules"
+    },
+    "log_tool_call": {
+      "kind": "external",
+      "module": "..logging_config",
+      "orig": "log_tool_call"
+    },
+    "math": {
+      "kind": "stdlib",
+      "module": "math",
+      "orig": "math"
+    },
+    "mutating_tool": {
+      "kind": "external",
+      "module": "._mutating",
+      "orig": "mutating_tool"
+    },
+    "os": {
+      "kind": "stdlib",
+      "module": "os",
+      "orig": "os"
+    },
+    "run_autoroute": {
+      "kind": "external",
+      "module": "..bridge.autoroute",
+      "orig": "run_autoroute"
+    },
+    "run_drc": {
+      "kind": "external",
+      "module": "..bridge.rules",
+      "orig": "run_drc"
+    },
+    "time": {
+      "kind": "stdlib",
+      "module": "time",
+      "orig": "time"
+    },
+    "tool_call_timer": {
+      "kind": "external",
+      "module": "..logging_config",
+      "orig": "tool_call_timer"
+    }
+  },
+  "members_reaching_monkeypatch": {
+    "run_autoroute": [
+      "route_board"
+    ],
+    "run_drc": [
+      "route_board"
+    ]
+  },
+  "monkeypatch_targets": {
+    "run_autoroute": [
+      "/home/astra/Desktop/agent_proyect/kicad-mcp/tests/test_pcb_session31b_duplicate_refs.py",
+      "/home/astra/Desktop/agent_proyect/kicad-mcp/tests/test_pcb_session32b_refill_silencioso_canary.py",
+      "/home/astra/Desktop/agent_proyect/kicad-mcp/tests/test_pcb_session32d_orphan_pads_stitching_canary.py",
+      "/home/astra/Desktop/agent_proyect/kicad-mcp/tests/test_route_board.py"
+    ],
+    "run_drc": [
+      "/home/astra/Desktop/agent_proyect/kicad-mcp/tests/test_pcb_session31b_duplicate_refs.py",
+      "/home/astra/Desktop/agent_proyect/kicad-mcp/tests/test_pcb_session32b_refill_silencioso_canary.py",
+      "/home/astra/Desktop/agent_proyect/kicad-mcp/tests/test_pcb_session32d_orphan_pads_stitching_canary.py",
+      "/home/astra/Desktop/agent_proyect/kicad-mcp/tests/test_route_board.py"
+    ]
+  },
+  "pcb_py_loc_total": 3161
+}

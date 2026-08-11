@@ -81,6 +81,7 @@ contexto exacto de un bug ya cerrado.
 | `analisis/` | Análisis de estado/backlog de checkpoints intermedios (sesión 08) y la preparación inicial del repo para Claude Code |
 | `roadmaps/` | Hojas de ruta v2, v3 y v4 archivadas (v4: `docs/historico/roadmaps/hoja-de-ruta-v4.md`); la vigente es `hoja-de-ruta-v5.md` en la raíz |
 | `dogfooding/` | Logs de fricciones de las 4 rondas de dogfooding (D1–D4) + brief del proyecto de referencia (despertador ATtiny85) |
+| `piloto-multiagente/S47-S48/` | Evidencia congelada del piloto S47–S48: contratos, paquetes, revisiones, resultados y manifiestos; no es normativa ni plantilla operativa |
 | `CONTEXT-v7.md` | El handoff monolítico previo a esta reorg — post-sesión 24, fuente de la consolidación de 2026-07-24 en `docs/CONTEXT.md` + `DECISIONES`/`ROADMAP`/`BACKLOG`. (Reemplaza a `CONTEXT-v3.md`, congelado en sesión 19e, que el arquitecto retiró al entregar v7.) |
 
 Nota: `investigacion/` **no** está bajo `historico/` — vive en

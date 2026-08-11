@@ -1,0 +1,1739 @@
+diff --color -ru resultado-S48-A-20260809/00-preflight.md resultado-S48-A-20260809-R1/00-preflight.md
+--- resultado-S48-A-20260809/00-preflight.md	2026-08-09 17:28:08.295822507 -0300
++++ resultado-S48-A-20260809-R1/00-preflight.md	2026-08-09 18:12:24.584250468 -0300
+@@ -111,3 +111,89 @@
+ 
+ **Veredicto de preflight: `GO`.** Modo de ejecución: `MODO_SOLO_PAQUETES`. Se procede a
+ Fase 2 (matriz).
++
++---
++
++## 8. Preflight de la ronda de corrección R1 (§10.2 del contrato)
++
++Esta unidad (`resultado-S48-A-20260809-R1`) es la **única ronda de
++corrección material** autorizada por §10.2 del contrato, sobre 6 defectos
++puntuales señalados por la Autoridad en Q3, Q4, Q5, Q6 y Q7. No reabre el
++preflight de Fase 2 arriba (§1–§7): el universo, los paquetes S47 y sus
++hashes de manifiesto permanecen exactamente los mismos.
++
++### 8.1 Fuente adicional autorizada para esta ronda
++
++```text
++Fe de erratas ejecutiva, contrato S47 v6
++SHA-256 esperado (dado por la Autoridad):
++63fe27be8ca2fa852d2f5dfef3996549edcced710b2b67275b970c19a36dcdd4
++```
++
++Verificación:
++
++```text
++$ sha256sum custodia/S48-A-FUENTES-AUTORIZADAS/04-fe-de-erratas-ejecutiva-contrato-S47-v6.md
++63fe27be8ca2fa852d2f5dfef3996549edcced710b2b67275b970c19a36dcdd4
++```
++
++`MATCH` exacto. Nota de ruta: el archivo custodiado dentro de `S48-A-FUENTES-
++AUTORIZADAS/` lleva el prefijo `04-` que no aparece en la ruta citada por la
++Autoridad (`.../S48-A-FUENTES-AUTORIZADAS/fe-de-erratas-ejecutiva-contrato-
++S47-v6.md`); el contenido es idéntico byte a byte (mismo hash) al de la
++copia sin prefijo en `archivos_temporales_contrato/fe-de-erratas-ejecutiva-
++contrato-S47-v6.md`. No es una divergencia de contenido, solo de nombre de
++archivo dentro de custodia.
++
++Usada exclusivamente como fuente **READ-ONLY**: no se copió dentro de
++ningún paquete S48-A, no se modificó, no se referencia por ruta absoluta en
++ningún producto salvo esta nota de preflight.
++
++### 8.2 Re-verificación de integridad de la unidad original y de S47
++
++```text
++$ sha256sum -c resultado-S48-A-20260809/MANIFEST.sha256
++8/8 OK, exit 0
++
++$ sha256sum -c S47-ORIGINAL-H11/MANIFEST.sha256
++25/25 OK, exit 0
++```
++
++Ninguna de las dos unidades fue alterada por esta ronda. `resultado-S48-A-
++20260809/` permanece exactamente como cerró Codex; toda escritura de R1
++ocurre únicamente dentro de `resultado-S48-A-20260809-R1/`.
++
++### 8.3 Estado del repositorio (transparencia, no consultado como insumo)
++
++```text
++$ git -C /home/astra/Desktop/agent_proyect/kicad-mcp status --porcelain
++ M docs/BACKLOG.md
++
++$ git -C /home/astra/Desktop/agent_proyect/kicad-mcp rev-parse HEAD
++33e32efbdc8e2fc4fbb544cb569b0c5b9f0f028b
++```
++
++Sin cambios desde el preflight original (§7 arriba): el único archivo
++modificado es preexistente y ajeno a S48-A. `MODO_SOLO_PAQUETES` se
++mantiene.
++
++### 8.4 Alcance de la corrección
++
++Autorizado por la Autoridad, 6 puntos:
++
++1. Reanálisis de Q7 bajo la Regla 3 de la fe de erratas — ver
++   `01a-ontologia-y-derivaciones.md` y `04-interpretacion.md` §Q7.
++2. Actualización de `convencion_a` en la matriz y reconciliación de
++   `04-interpretacion.md`, `05-hallazgos-meta.md`, `06-cierre.md`.
++3. Corrección de la cobertura declarada en Q5 (20/21, ficha 6 excepción).
++4. Corrección de Q6: separación de señales evaluadas-sin-fallo vs. sin
++   declaración.
++5. Corrección de Q4: 7 firmas exactas vs. 5 conjuntos de señales activas;
++   eliminación de la afirmación no demostrada sobre clustering.
++6. Corrección de Q3: trío no nulo `{S1, S8_R11, R12}=1`.
++
++Ninguna ampliación adicional: no se agregan preguntas, productos ni
++recálculos de M1–M4. Ningún archivo de `S47-ORIGINAL-H11/`,
++`S47-EXT-13-21-CORREGIDO/`, el contrato ni el repositorio se modifica.
++
++**Veredicto de preflight de ronda R1: `GO`.**
+diff --color -ru resultado-S48-A-20260809/01a-ontologia-y-derivaciones.md resultado-S48-A-20260809-R1/01a-ontologia-y-derivaciones.md
+--- resultado-S48-A-20260809/01a-ontologia-y-derivaciones.md	2026-08-09 17:32:25.019860272 -0300
++++ resultado-S48-A-20260809-R1/01a-ontologia-y-derivaciones.md	2026-08-09 18:13:46.597387222 -0300
+@@ -82,3 +82,101 @@
+ mismo patrón. La matriz respeta la ausencia literal: las celdas no
+ declaradas de la ficha 6 quedan `no_evaluado_o_na`, sin inferir R12 por
+ analogía estructural. Ver `05-hallazgos-meta.md` `H-S48A-01`.
++
++**Precisión de ronda R1:** la ficha 6 sí contiene una declaración textual de
++S8 ("Opción B: inyectarlo como parámetro -> d1 pasa de 0 a 1, EMPEORA esa
++dimensión ... S8 no cumple"), inline dentro de su bloque de S1/M2, sin
++encabezado propio `## S8`. La caracterización de este mismo párrafo ("no
++cierra S2–S6 ni S8 con una palabra de estado") era imprecisa para S8
++específicamente. Esta precisión **no cambia ninguna celda de la matriz**: el
++criterio de extracción de `01-matriz-refutacion.csv` exige un encabezado o
++declaración formal por gate, y S8 en la ficha 6 es condicional a la Opción B
++(igual que en la ficha 1, donde también queda `NA` porque el estado depende
++de la ruta de diseño, no de un veredicto único). El estado
++`no_evaluado_o_na` de S8 en la fila de la ficha 6 se conserva sin
++alteración — corregir la celda excede el alcance autorizado de esta ronda
++(§10.2 del contrato, solo los 6 puntos listados en `00-preflight.md` §8.4).
++
++## Operacionalización de la Regla 3 de la fe de erratas (ronda R1, columna `convencion_a`)
++
++Fuente: fe de erratas ejecutiva, contrato S47 v6, SHA-256
++`63fe27be8ca2fa852d2f5dfef3996549edcced710b2b67275b970c19a36dcdd4`
++(verificado en `00-preflight.md` §8.1), Regla 3 (§2):
++
++> "Si el ejecutor encuentra que dos estados no admiten una comparación
++> homogénea limpia sobre un candidato concreto, el candidato se documenta
++> cualitativamente con las dimensiones que sí son comparables, se declara
++> la limitación en la ficha, y S8/R11 se evalúan según el juicio del
++> ejecutor con evidencia registrada."
++
++La Regla 3 no introduce un rótulo nuevo ("Convención A" tampoco aparece en
++la fe de erratas); describe una **conducta** de evaluación. Para clasificar
++los 21 candidatos según si esa conducta ocurrió, se define un predicado de
++tres estados sobre cada ficha, aplicado por lectura directa de su sección
++M2/S8, sin inferencia desde el código:
++
++```text
++aplicada            la ficha declara explícitamente que la comparación
++                     M2_actual vs. M2_proyectado no es homogénea/limpia bajo
++                     al menos una ruta de diseño (p. ej. "S8 no llega a
++                     evaluarse con sentido bajo Opción A"), documenta la
++                     dimensión que sí resulta comparable bajo la otra ruta
++                     (p. ej. d1 empeora bajo Opción B), y resuelve S8/R11/R12
++                     por ese juicio cualitativo con la evidencia citada.
++
++ausencia_explicita  la ficha SÍ completa una comparación homogénea de
++                     M2_actual vs. M2_proyectado (igualdad exacta, o vector
++                     proyectado completo bajo cada ruta con veredicto
++                     definitivo) y no declara ninguna limitación de
++                     comparabilidad — la vía cualitativa de la Regla 3
++                     simplemente no fue necesaria en este candidato.
++
++no_determinable      la ficha nunca computa M2_proyectado (S7 decide el
++                     veredicto primero, corrección de diseño C-EXT-03, o la
++                     ficha no llega a esa sección) — el antecedente de la
++                     Regla 3 ("dos estados [...] sobre un candidato
++                     concreto") no llega a ponerse a prueba, y no hay base
++                     textual para clasificar en ninguno de los dos estados
++                     anteriores.
++```
++
++### Clasificación resultante (21/21, evidencia citada por candidato)
++
++| # | Candidato | `convencion_a` | Anclaje textual |
++|---:|---|---|---|
++| 1 | `_delete_copper` | `aplicada` | "Bajo Opción A ... S8 no llega a evaluarse con sentido (S1 ya falló, R12 activo). Bajo Opción B ... S8 falla (d1 empeora)" |
++| 2 | `_audit_error` | `ausencia_explicita` | "cumple trivialmente por igualdad ... pero no domina" — comparación única resuelta, sin declarar no-homogeneidad ni ruta dual |
++| 3 | `get_footprint_neighbors` | `aplicada` | "S8 — falla bajo Opción B; no evaluable con sentido bajo Opción A (S1 ya falló)" |
++| 4 | `_bbox_distance_to_point` | `ausencia_explicita` | "M2_proyectado = M2_actual (extracción pura sin cambio) → S8 cumple por igualdad" |
++| 5 | `_copper_distance_mm` | `ausencia_explicita` | "M2_proyectado = M2_actual bajo diseño mínimo (1 reexport) — cumple por igualdad" |
++| 6 | `_copper_in_bbox` | `no_determinable` | Ficha declarativamente incompleta (`H-S48A-01`); sin sección M2_proyectado dual explícita — sin base para clasificar con la misma solidez que 1/3/8/9/10 |
++| 7 | `_copper_on_layer` | `ausencia_explicita` | "S8: M2_proyectado = M2_actual (igualdad)" |
++| 8 | `move_footprint` | `aplicada` | "S8 — falla bajo Opción B; no evaluable con sentido bajo Opción A" |
++| 9 | `add_track` | `aplicada` | "S8 — falla bajo Opción B; no evaluable con sentido bajo Opción A" |
++| 10 | `draw_board_outline` | `aplicada` | "S8 — falla bajo Opción B; no evaluable con sentido bajo Opción A" |
++| 11 | `_resolve_board` | `ausencia_explicita` | "S8: M2_proyectado = M2_actual bajo diseño mínimo (1 reexport preserva ...)" |
++| 12 | `_segment_intersects_bbox` | `ausencia_explicita` | "S8: M2_proyectado = M2_actual (igualdad, diseño mínimo con 1 reexport)" |
++| 13 | `_similars` | `ausencia_explicita` | "M2_proyectado = (0,0,0,1,9): igual al actual ... S8 cumple por igualdad, no por dominancia" |
++| 14 | `add_via`/`_via_params` | `ausencia_explicita` | Ambas rutas computadas y cerradas con veredicto definitivo: "S8: NO cumple en ninguna de las dos rutas", sin declarar limitación de comparabilidad |
++| 15 | `delete_track` | `no_determinable` | "S7 rechaza primero ... S8: no determinante (S7 ya falla)" — M2_proyectado nunca se computa (C-EXT-03) |
++| 16 | `delete_via` | `no_determinable` | ídem patrón C-EXT-03 |
++| 17 | `get_component_detail` | `no_determinable` | ídem patrón C-EXT-03 |
++| 18 | `get_tracks` | `ausencia_explicita` | "S8: NO cumple en ninguna ruta (peor caso de los 9)" — ambas rutas computadas y cerradas |
++| 19 | `reload_board_from_disk` | `no_determinable` | ídem patrón C-EXT-03 |
++| 20 | `save_board` | `no_determinable` | ídem patrón C-EXT-03 |
++| 21 | `set_footprint_ref` | `ausencia_explicita` | "S8 falla" bajo Ruta B con `d1` cuantificado, Ruta A resuelta por S1/R12, sin declarar no-homogeneidad |
++
++**Distribución:** `aplicada` = 5 (fichas 1, 3, 8, 9, 10 — coinciden
++exactamente con Grupo C + Grupo E de `03-firmas-y-clusters.md`);
++`ausencia_explicita` = 10 (fichas 2, 4, 5, 7, 11, 12, 13, 14, 18, 21);
++`no_determinable` = 6 (fichas 6, 15, 16, 17, 19, 20). 5+10+6=21.
++
++Nota de límite del juicio: la distinción entre `aplicada` (5) y las fichas
++de ruta dual sin declaración de no-homogeneidad (14, 18, 21) es la más fina
++del corpus — estas tres también evalúan Opción A/Ruta A y Opción B/Ruta B,
++pero a diferencia de 1/3/8/9/10 sí logran cerrar S8 con un veredicto
++cuantificado bajo cada ruta ("NO cumple en ninguna ruta", con `d1` numérico
++citado), sin declarar la comparación como no-homogénea. Esta clasificación
++es un juicio del ejecutor con evidencia registrada, tal como la Regla 3 lo
++prevé explícitamente ("Codex puede refutar el juicio; el humano decide") —
++no una medición mecánica.
+diff --color -ru resultado-S48-A-20260809/01-matriz-refutacion.csv resultado-S48-A-20260809-R1/01-matriz-refutacion.csv
+--- resultado-S48-A-20260809/01-matriz-refutacion.csv	2026-08-09 17:31:48.807843035 -0300
++++ resultado-S48-A-20260809-R1/01-matriz-refutacion.csv	2026-08-09 18:09:09.702927205 -0300
+@@ -1,463 +1,463 @@
+ candidato,origen_paquete,familia,criterio,estado_fuente,senal_fallo,fuente_ficha,fuente_seccion,fuente_cita,convencion_a,observacion
+-_delete_copper (núcleo borrado cobre),original,S,S1,no_cumple,1,01-delete-copper.md,S1,Los 4 destinos de d2 son helpers de fan-in alto compartido; ninguno se propone mover junto con K,no,
+-_delete_copper (núcleo borrado cobre),original,S,S2,cumple,0,01-delete-copper.md,S2,Reexports: 0 nuevos necesarios (d4=0),no,
+-_delete_copper (núcleo borrado cobre),original,S,S3,no_determinante,,01-delete-copper.md,S3,"S3.c = moderada, sin la mitigación de S1/S8 no hay justificación de alta evitable",no,
+-_delete_copper (núcleo borrado cobre),original,S,S4,no_determinante,,01-delete-copper.md,S4,COBERTURA_INFERIDA para _match_copper/tolerancia; REFERENCIADA/DEMOSTRADA parcial para el camino feliz,no,
+-_delete_copper (núcleo borrado cobre),original,S,S5,cumple,0,01-delete-copper.md,S5,Fuera de zonas prohibidas: cumple (F-DT.1 ya lo dejó pasar),no,
+-_delete_copper (núcleo borrado cobre),original,S,S6,no_evaluado_o_na,,01-delete-copper.md,S6,REFERENCIA_EXISTENTE (sin relación directa) con P1-2/DT3,no,
+-_delete_copper (núcleo borrado cobre),original,S,S7,cumple,0,01-delete-copper.md,S7,S7.a 149>=80 SÍ; S7.c 188>=100 SÍ (S7.b NO),no,
+-_delete_copper (núcleo borrado cobre),original,S,S8,no_determinante,,01-delete-copper.md,S8,Bajo Opción A no llega a evaluarse con sentido; bajo Opción B S8 falla (d1 empeora 1→4),no,
+-_delete_copper (núcleo borrado cobre),original,R,R1,no_activado,0,01-delete-copper.md,R activados,R1 no (bridge sí es inyectable/ya lo es en el patrón register_x existente),no,
+-_delete_copper (núcleo borrado cobre),original,R,R2,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,no,
+-_delete_copper (núcleo borrado cobre),original,R,R3,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,no,
+-_delete_copper (núcleo borrado cobre),original,R,R4,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,no,
+-_delete_copper (núcleo borrado cobre),original,R,R5,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,no,
+-_delete_copper (núcleo borrado cobre),original,R,R6,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,no,
+-_delete_copper (núcleo borrado cobre),original,R,R7,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,no,
+-_delete_copper (núcleo borrado cobre),original,R,R8,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,no,
+-_delete_copper (núcleo borrado cobre),original,R,R9,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,no,
+-_delete_copper (núcleo borrado cobre),original,R,R10,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,no,
+-_delete_copper (núcleo borrado cobre),original,R,R11,activado,1,01-delete-copper.md,R activados,"R11 aplicable bajo Opción B — S7 se satisface, M2 no domina (de hecho empeora)",no,condicionado a Opción B
+-_delete_copper (núcleo borrado cobre),original,R,R12,activado,1,01-delete-copper.md,R activados,R12 SÍ bajo Opción A — introduce ciclos de import (S1 refutada),no,condicionado a Ruta/Opción A
+-_delete_copper (núcleo borrado cobre),original,R,R13,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,no,
+-_delete_copper (núcleo borrado cobre),original,R,R14,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,no,
+-_audit_error,original,S,S1,cumple,0,02-audit-error.md,S1,d2=0: no hay ninguna arista saliente de K hacia V\K. S1(b),no,
+-_audit_error,original,S,S2,cumple,0,02-audit-error.md,S2,"Con d4=1 y 11 consumidores se necesita 1 reexport, bajo UMBRAL_R7_REEXPORTS=3",no,
+-_audit_error,original,S,S3,cumple,0,02-audit-error.md,S3,"Función pura top-level, patrón idéntico a DT1 Slice 1. S3.c = simple",no,
+-_audit_error,original,S,S4,no_determinante,,02-audit-error.md,S4,COBERTURA_INFERIDA; nunca se asertan sus campos directamente en un test dedicado,no,
+-_audit_error,original,S,S5,cumple,0,02-audit-error.md,S5,S5 cumple,no,
+-_audit_error,original,S,S6,no_evaluado_o_na,,02-audit-error.md,S6,REFERENCIA_EXISTENTE (sin relación con P1-2/DT3; formateo de auditoría),no,
+-_audit_error,original,S,S7,no_cumple,1,02-audit-error.md,S7,"S7 NO cumple ninguna cuantitativa (0<80, 0<3, 8<100)",no,
+-_audit_error,original,S,S8,cumple,0,02-audit-error.md,S8,M2 no empeora bajo diseño mínimo (cumple trivialmente por igualdad) pero no domina,no,
+-_audit_error,original,R,R1,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,no,
+-_audit_error,original,R,R2,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,no,
+-_audit_error,original,R,R3,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,no,
+-_audit_error,original,R,R4,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,no,
+-_audit_error,original,R,R5,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,no,
+-_audit_error,original,R,R6,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,no,
+-_audit_error,original,R,R7,no_activado,0,02-audit-error.md,S2,R7 no se activa,no,
+-_audit_error,original,R,R8,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,no,
+-_audit_error,original,R,R9,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,no,
+-_audit_error,original,R,R10,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,no,
+-_audit_error,original,R,R11,activado,1,02-audit-error.md,R activados,"R11 (beneficio marginal — S7 no se satisface por ninguna vía cuantitativa, S7.d no demostrable)",no,
+-_audit_error,original,R,R12,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,no,
+-_audit_error,original,R,R13,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,no,
+-_audit_error,original,R,R14,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,no,
+-get_footprint_neighbors (vecindad geométrica),original,S,S1,no_cumple,1,03-get-footprint-neighbors.md,S1,"_copper_distance_to_bbox llama a _segment_intersects_bbox, que no forma parte de K",no,
+-get_footprint_neighbors (vecindad geométrica),original,S,S2,cumple,0,03-get-footprint-neighbors.md,S2,"S2 — cumple (0 reexports nuevos, d4=0)",no,
+-get_footprint_neighbors (vecindad geométrica),original,S,S3,no_determinante,,03-get-footprint-neighbors.md,S3,"S3 — moderada (1 closure + 4 helpers, mismo patrón que ficha 1)",no,
+-get_footprint_neighbors (vecindad geométrica),original,S,S4,cumple,0,03-get-footprint-neighbors.md,S4,COBERTURA_DEMOSTRADA razonable para la superficie del tool (test_get_footprint_neighbors_closest_edge asertado),no,
+-get_footprint_neighbors (vecindad geométrica),original,S,S5,cumple,0,03-get-footprint-neighbors.md,S5,S5 — cumple,no,
+-get_footprint_neighbors (vecindad geométrica),original,S,S6,no_evaluado_o_na,,03-get-footprint-neighbors.md,S6,"REFERENCIA_EXISTENTE; DT3 acotada a geometría dentro de bridge/, este cluster vive en tools/pcb.py",no,
+-get_footprint_neighbors (vecindad geométrica),original,S,S7,cumple,0,03-get-footprint-neighbors.md,S7,S7.a 144>=80 SÍ; S7.c 207>=100 SÍ,no,
+-get_footprint_neighbors (vecindad geométrica),original,S,S8,no_determinante,,03-get-footprint-neighbors.md,S8,S8 falla bajo Opción B; no evaluable con sentido bajo Opción A (S1 ya refutada),no,
+-get_footprint_neighbors (vecindad geométrica),original,R,R1,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,no,
+-get_footprint_neighbors (vecindad geométrica),original,R,R2,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,no,
+-get_footprint_neighbors (vecindad geométrica),original,R,R3,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,no,
+-get_footprint_neighbors (vecindad geométrica),original,R,R4,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,no,
+-get_footprint_neighbors (vecindad geométrica),original,R,R5,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,no,
+-get_footprint_neighbors (vecindad geométrica),original,R,R6,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,no,
+-get_footprint_neighbors (vecindad geométrica),original,R,R7,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,no,
+-get_footprint_neighbors (vecindad geométrica),original,R,R8,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,no,
+-get_footprint_neighbors (vecindad geométrica),original,R,R9,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,no,
+-get_footprint_neighbors (vecindad geométrica),original,R,R10,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,no,
+-get_footprint_neighbors (vecindad geométrica),original,R,R11,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,no,
+-get_footprint_neighbors (vecindad geométrica),original,R,R12,activado,1,03-get-footprint-neighbors.md,R activados,R12 (Opción A) o S8 directa (Opción B),no,condicionado a Opción A
+-get_footprint_neighbors (vecindad geométrica),original,R,R13,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,no,
+-get_footprint_neighbors (vecindad geométrica),original,R,R14,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,no,
+-_bbox_distance_to_point,original,S,S1,cumple,0,04-bbox-distance-to-point.md,S1,"S1: cumple (d2=0, sin riesgo de ciclo)",no,
+-_bbox_distance_to_point,original,S,S2,cumple,0,04-bbox-distance-to-point.md,S2,"S2: cumple con 1 reexport (d4=1, bien bajo UMBRAL_R7_REEXPORTS=3)",no,
+-_bbox_distance_to_point,original,S,S3,cumple,0,04-bbox-distance-to-point.md,S3,S3: simple (función pura de 11 líneas),no,
+-_bbox_distance_to_point,original,S,S4,no_determinante,,04-bbox-distance-to-point.md,S4,Sin test focal directo; COBERTURA_INFERIDA vía los 3 consumidores,no,
+-_bbox_distance_to_point,original,S,S5,cumple,0,04-bbox-distance-to-point.md,S5,S5: cumple,no,
+-_bbox_distance_to_point,original,S,S6,no_evaluado_o_na,,04-bbox-distance-to-point.md,S6,"REFERENCIA_EXISTENTE (geometría en tools/, no en bridge/, mismo razonamiento que ficha 3)",no,
+-_bbox_distance_to_point,original,S,S7,no_cumple,1,04-bbox-distance-to-point.md,S7,"S7: NO cumple ninguna cuantitativa (0<80, 0<3, 11<100)",no,
+-_bbox_distance_to_point,original,S,S8,cumple,0,04-bbox-distance-to-point.md,S8,"M2_proyectado = M2_actual (extracción pura sin cambio) → S8 cumple por igualdad, no domina",no,
+-_bbox_distance_to_point,original,R,R1,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,no,
+-_bbox_distance_to_point,original,R,R2,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,no,
+-_bbox_distance_to_point,original,R,R3,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,no,
+-_bbox_distance_to_point,original,R,R4,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,no,
+-_bbox_distance_to_point,original,R,R5,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,no,
+-_bbox_distance_to_point,original,R,R6,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,no,
+-_bbox_distance_to_point,original,R,R7,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,no,
+-_bbox_distance_to_point,original,R,R8,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,no,
+-_bbox_distance_to_point,original,R,R9,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,no,
+-_bbox_distance_to_point,original,R,R10,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,no,
+-_bbox_distance_to_point,original,R,R11,activado,1,04-bbox-distance-to-point.md,R activado,"R11 (beneficio marginal — S7 no se satisface, extraer 11 líneas con 3 consumidores compartidos)",no,
+-_bbox_distance_to_point,original,R,R12,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,no,
+-_bbox_distance_to_point,original,R,R13,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,no,
+-_bbox_distance_to_point,original,R,R14,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,no,
+-_copper_distance_mm + _dist_point_segment,original,S,S1,cumple,0,05-copper-distance-mm.md,S1,S1: cumple (d2=0),no,
+-_copper_distance_mm + _dist_point_segment,original,S,S2,cumple,0,05-copper-distance-mm.md,S2,"S2: cumple, 1 reexport necesario",no,
+-_copper_distance_mm + _dist_point_segment,original,S,S3,cumple,0,05-copper-distance-mm.md,S3,S3: simple,no,
+-_copper_distance_mm + _dist_point_segment,original,S,S4,no_determinante,,05-copper-distance-mm.md,S4,"Sin test focal directo; COBERTURA_INFERIDA (vía _match_copper, cadena de inferencia larga)",no,
+-_copper_distance_mm + _dist_point_segment,original,S,S5,cumple,0,05-copper-distance-mm.md,S5,S5: cumple,no,
+-_copper_distance_mm + _dist_point_segment,original,S,S6,no_evaluado_o_na,,05-copper-distance-mm.md,S6,REFERENCIA_EXISTENTE; adyacencia documentada como hallazgo §14 sin escalar a exclusión,no,
+-_copper_distance_mm + _dist_point_segment,original,S,S7,no_cumple,1,05-copper-distance-mm.md,S7,"S7: NO cumple ninguna cuantitativa (0<80, 0<3, 30<100)",no,
+-_copper_distance_mm + _dist_point_segment,original,S,S8,cumple,0,05-copper-distance-mm.md,S8,"M2_proyectado = M2_actual bajo diseño mínimo — cumple por igualdad, no domina",no,
+-_copper_distance_mm + _dist_point_segment,original,R,R1,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,no,
+-_copper_distance_mm + _dist_point_segment,original,R,R2,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,no,
+-_copper_distance_mm + _dist_point_segment,original,R,R3,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,no,
+-_copper_distance_mm + _dist_point_segment,original,R,R4,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,no,
+-_copper_distance_mm + _dist_point_segment,original,R,R5,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,no,
+-_copper_distance_mm + _dist_point_segment,original,R,R6,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,no,
+-_copper_distance_mm + _dist_point_segment,original,R,R7,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,no,
+-_copper_distance_mm + _dist_point_segment,original,R,R8,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,no,
+-_copper_distance_mm + _dist_point_segment,original,R,R9,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,no,
+-_copper_distance_mm + _dist_point_segment,original,R,R10,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,no,
+-_copper_distance_mm + _dist_point_segment,original,R,R11,activado,1,05-copper-distance-mm.md,R activado,R11.,no,
+-_copper_distance_mm + _dist_point_segment,original,R,R12,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,no,
+-_copper_distance_mm + _dist_point_segment,original,R,R13,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,no,
+-_copper_distance_mm + _dist_point_segment,original,R,R14,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,S,S1,no_cumple,1,06-copper-in-bbox.md,S1,S1: NO CUMPLE. El único destino de d2 (_segment_intersects_bbox) no forma parte de K,no,
+-_copper_in_bbox,original,S,S2,no_evaluado_o_na,,06-copper-in-bbox.md,S2,ausencia declarada,no,
+-_copper_in_bbox,original,S,S3,no_evaluado_o_na,,06-copper-in-bbox.md,S3,ausencia declarada,no,
+-_copper_in_bbox,original,S,S4,no_evaluado_o_na,,06-copper-in-bbox.md,S4,ausencia declarada,no,
+-_copper_in_bbox,original,S,S5,no_evaluado_o_na,,06-copper-in-bbox.md,S5,ausencia declarada,no,
+-_copper_in_bbox,original,S,S6,no_evaluado_o_na,,06-copper-in-bbox.md,S6,ausencia declarada,no,
+-_copper_in_bbox,original,S,S7,no_cumple,1,06-copper-in-bbox.md,S7,"S7: NO cumple ninguna cuantitativa (0<80, 0<3, 12<100)",no,
+-_copper_in_bbox,original,S,S8,no_evaluado_o_na,,06-copper-in-bbox.md,S8,ausencia declarada,no,
+-_copper_in_bbox,original,R,R1,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,R,R2,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,R,R3,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,R,R4,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,R,R5,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,R,R6,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,R,R7,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,R,R8,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,R,R9,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,R,R10,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,R,R11,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,R,R12,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,R,R13,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_in_bbox,original,R,R14,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no,
+-_copper_on_layer,original,S,S1,cumple,0,07-copper-on-layer.md,S1,"S1: cumple (d2=0, sin riesgo de ciclo)",no,
+-_copper_on_layer,original,S,S2,cumple,0,07-copper-on-layer.md,S2,"S2: cumple, 1 reexport",no,
+-_copper_on_layer,original,S,S3,cumple,0,07-copper-on-layer.md,S3,"S3: simple (6 líneas, predicado puro)",no,
+-_copper_on_layer,original,S,S4,no_determinante,,07-copper-on-layer.md,S4,Sin test focal; COBERTURA_INFERIDA transitiva,no,
+-_copper_on_layer,original,S,S5,cumple,0,07-copper-on-layer.md,S5,S5: cumple,no,
+-_copper_on_layer,original,S,S6,no_evaluado_o_na,,07-copper-on-layer.md,S6,REFERENCIA_EXISTENTE — sin adyacencia siquiera temática con DT3,no,
+-_copper_on_layer,original,S,S7,no_cumple,1,07-copper-on-layer.md,S7,"S7: NO cumple ninguna cuantitativa (0<80, 0<3, 6<100) — el candidato más pequeño del universo",no,
+-_copper_on_layer,original,S,S8,cumple,0,07-copper-on-layer.md,S8,S8: M2_proyectado = M2_actual (igualdad),no,
+-_copper_on_layer,original,R,R1,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,no,
+-_copper_on_layer,original,R,R2,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,no,
+-_copper_on_layer,original,R,R3,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,no,
+-_copper_on_layer,original,R,R4,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,no,
+-_copper_on_layer,original,R,R5,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,no,
+-_copper_on_layer,original,R,R6,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,no,
+-_copper_on_layer,original,R,R7,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,no,
+-_copper_on_layer,original,R,R8,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,no,
+-_copper_on_layer,original,R,R9,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,no,
+-_copper_on_layer,original,R,R10,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,no,
+-_copper_on_layer,original,R,R11,activado,1,07-copper-on-layer.md,R activado,R11.,no,
+-_copper_on_layer,original,R,R12,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,no,
+-_copper_on_layer,original,R,R13,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,no,
+-_copper_on_layer,original,R,R14,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,no,
+-move_footprint (post-mutación),original,S,S1,no_cumple,1,08-move-footprint.md,S1,S1 — NO CUMPLE. Los 3 destinos de d2 son el trío de utilidad universal,no,
+-move_footprint (post-mutación),original,S,S2,cumple,0,08-move-footprint.md,S2,"S2 — cumple (0 reexports, d4=0)",no,
+-move_footprint (post-mutación),original,S,S3,no_determinante,,08-move-footprint.md,S3,"S3 — moderada (closure + 3 helpers propios, sin señales de complejidad alta)",no,
+-move_footprint (post-mutación),original,S,S4,cumple,0,08-move-footprint.md,S4,COBERTURA_DEMOSTRADA razonable (test_move_footprint_reports_component_not_found_with_similars asertado),no,
+-move_footprint (post-mutación),original,S,S5,cumple,0,08-move-footprint.md,S5,S5 — cumple,no,
+-move_footprint (post-mutación),original,S,S6,no_evaluado_o_na,,08-move-footprint.md,S6,"REFERENCIA_EXISTENTE (bookkeeping de snapshot pre/post, sin relación con DT3/P1-2)",no,
+-move_footprint (post-mutación),original,S,S7,cumple,0,08-move-footprint.md,S7,S7.a 99>=80 SÍ (por muy poco margen); S7.c 216>=100 SÍ,no,
+-move_footprint (post-mutación),original,S,S8,no_determinante,,08-move-footprint.md,S8,S8 falla bajo Opción B; no evaluable con sentido bajo Opción A,no,
+-move_footprint (post-mutación),original,R,R1,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,no,
+-move_footprint (post-mutación),original,R,R2,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,no,
+-move_footprint (post-mutación),original,R,R3,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,no,
+-move_footprint (post-mutación),original,R,R4,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,no,
+-move_footprint (post-mutación),original,R,R5,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,no,
+-move_footprint (post-mutación),original,R,R6,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,no,
+-move_footprint (post-mutación),original,R,R7,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,no,
+-move_footprint (post-mutación),original,R,R8,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,no,
+-move_footprint (post-mutación),original,R,R9,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,no,
+-move_footprint (post-mutación),original,R,R10,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,no,
+-move_footprint (post-mutación),original,R,R11,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,no,
+-move_footprint (post-mutación),original,R,R12,activado,1,08-move-footprint.md,R activados,R12 (Opción A) o S8 directa (Opción B),no,condicionado a Opción A
+-move_footprint (post-mutación),original,R,R13,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,no,
+-move_footprint (post-mutación),original,R,R14,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,no,
+-add_track (resolución de endpoints),original,S,S1,no_cumple,1,09-add-track.md,S1,"S1 — NO CUMPLE (mismo patrón, tercera y más grande instancia)",no,
+-add_track (resolución de endpoints),original,S,S2,cumple,0,09-add-track.md,S2,S2 — cumple (0 reexports),no,
+-add_track (resolución de endpoints),original,S,S3,no_determinante,,09-add-track.md,S3,S3 — moderada-alta: 7 helpers geométricos + 1 closure de 167 líneas,no,
+-add_track (resolución de endpoints),original,S,S4,cumple,0,09-add-track.md,S4,COBERTURA_DEMOSTRADA razonable para el camino de resolución de pad (la más fuerte de los 12),no,
+-add_track (resolución de endpoints),original,S,S5,cumple,0,09-add-track.md,S5,S5 — cumple,no,
+-add_track (resolución de endpoints),original,S,S6,no_evaluado_o_na,,09-add-track.md,S6,"REFERENCIA_EXISTENTE, con hallazgo §14 (DRIFT_AFECTA_CANDIDATO) por adyacencia temática con DT3",no,
+-add_track (resolución de endpoints),original,S,S7,cumple,0,09-add-track.md,S7,S7.a 167>=80 SÍ; S7.c 332>=100 SÍ,no,
+-add_track (resolución de endpoints),original,S,S8,no_determinante,,09-add-track.md,S8,S8 falla bajo Opción B; no evaluable con sentido bajo Opción A,no,
+-add_track (resolución de endpoints),original,R,R1,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,no,
+-add_track (resolución de endpoints),original,R,R2,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,no,
+-add_track (resolución de endpoints),original,R,R3,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,no,
+-add_track (resolución de endpoints),original,R,R4,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,no,
+-add_track (resolución de endpoints),original,R,R5,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,no,
+-add_track (resolución de endpoints),original,R,R6,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,no,
+-add_track (resolución de endpoints),original,R,R7,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,no,
+-add_track (resolución de endpoints),original,R,R8,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,no,
+-add_track (resolución de endpoints),original,R,R9,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,no,
+-add_track (resolución de endpoints),original,R,R10,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,no,
+-add_track (resolución de endpoints),original,R,R11,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,no,
+-add_track (resolución de endpoints),original,R,R12,activado,1,09-add-track.md,R activados,R12 (Opción A) o S8 directa (Opción B),no,condicionado a Opción A
+-add_track (resolución de endpoints),original,R,R13,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,no,
+-add_track (resolución de endpoints),original,R,R14,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,no,
+-draw_board_outline,original,S,S1,no_cumple,1,10-draw-board-outline.md,S1,"S1 — NO CUMPLE (mismo patrón, cuarta instancia)",no,
+-draw_board_outline,original,S,S2,cumple,0,10-draw-board-outline.md,S2,S2 — cumple,no,
+-draw_board_outline,original,S,S3,no_determinante,,10-draw-board-outline.md,S3,S3 — simple-moderada (closure de 85 líneas + 1 helper trivial de 2 líneas),no,
+-draw_board_outline,original,S,S4,cumple,0,10-draw-board-outline.md,S4,COBERTURA_DEMOSTRADA razonable (test_draw_board_outline_rejects_nonpositive_dims asertado),no,
+-draw_board_outline,original,S,S5,cumple,0,10-draw-board-outline.md,S5,S5 — cumple,no,
+-draw_board_outline,original,S,S6,no_evaluado_o_na,,10-draw-board-outline.md,S6,REFERENCIA_EXISTENTE (adyacencia geométrica con DT3 mínima comparada con fichas 3/6/9),no,
+-draw_board_outline,original,S,S7,cumple,0,10-draw-board-outline.md,S7,S7.a 85>=80 SÍ (margen mínimo); S7.b NO; S7.c 87<100 NO,no,
+-draw_board_outline,original,S,S8,no_determinante,,10-draw-board-outline.md,S8,S8 falla bajo Opción B; no evaluable con sentido bajo Opción A,no,
+-draw_board_outline,original,R,R1,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,no,
+-draw_board_outline,original,R,R2,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,no,
+-draw_board_outline,original,R,R3,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,no,
+-draw_board_outline,original,R,R4,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,no,
+-draw_board_outline,original,R,R5,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,no,
+-draw_board_outline,original,R,R6,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,no,
+-draw_board_outline,original,R,R7,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,no,
+-draw_board_outline,original,R,R8,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,no,
+-draw_board_outline,original,R,R9,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,no,
+-draw_board_outline,original,R,R10,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,no,
+-draw_board_outline,original,R,R11,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,no,
+-draw_board_outline,original,R,R12,activado,1,10-draw-board-outline.md,R activados,R12 (Opción A) o S8 directa (Opción B),no,condicionado a Opción A
+-draw_board_outline,original,R,R13,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,no,
+-draw_board_outline,original,R,R14,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,no,
+-_resolve_board,original,S,S1,cumple,0,11-resolve-board.md,S1,"S1: cumple (d2=0, dependencia solo hacia bridge/ estable)",no,
+-_resolve_board,original,S,S2,cumple,0,11-resolve-board.md,S2,"S2: cumple, 1 reexport (por debajo de UMBRAL_R7_REEXPORTS=3 pese al fan-in de 17)",no,
+-_resolve_board,original,S,S3,cumple,0,11-resolve-board.md,S3,"S3: simple (9 líneas, patrón idéntico a un helper de pcb_encoders.py)",no,
+-_resolve_board,original,S,S4,no_determinante,,11-resolve-board.md,S4,COBERTURA_INFERIDA fuerte por transitividad extrema; ningún test asigna aserción a _resolve_board en sí,no,
+-_resolve_board,original,S,S5,cumple,0,11-resolve-board.md,S5,S5: cumple,no,
+-_resolve_board,original,S,S6,no_evaluado_o_na,,11-resolve-board.md,S6,"REFERENCIA_EXISTENTE (resolución de handle IPC, sin relación con DT3/P1-2)",no,
+-_resolve_board,original,S,S7,no_cumple,1,11-resolve-board.md,S7,"S7: NO cumple ninguna cuantitativa (0<80, 0<3, 9<100)",no,
+-_resolve_board,original,S,S8,cumple,0,11-resolve-board.md,S8,"S8: M2_proyectado = M2_actual bajo diseño mínimo — cumple por igualdad, no domina",no,
+-_resolve_board,original,R,R1,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,no,
+-_resolve_board,original,R,R2,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,no,
+-_resolve_board,original,R,R3,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,no,
+-_resolve_board,original,R,R4,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,no,
+-_resolve_board,original,R,R5,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,no,
+-_resolve_board,original,R,R6,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,no,
+-_resolve_board,original,R,R7,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,no,
+-_resolve_board,original,R,R8,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,no,
+-_resolve_board,original,R,R9,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,no,
+-_resolve_board,original,R,R10,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,no,
+-_resolve_board,original,R,R11,activado,1,11-resolve-board.md,R activado,R11.,no,
+-_resolve_board,original,R,R12,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,no,
+-_resolve_board,original,R,R13,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,no,
+-_resolve_board,original,R,R14,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,no,
+-_segment_intersects_bbox,original,S,S1,cumple,0,12-segment-intersects-bbox.md,S1,S1: cumple (d2=0 — el candidato más limpio en aislamiento de los 12),no,
+-_segment_intersects_bbox,original,S,S2,cumple,0,12-segment-intersects-bbox.md,S2,"S2: cumple, 1 reexport",no,
+-_segment_intersects_bbox,original,S,S3,cumple,0,12-segment-intersects-bbox.md,S3,"S3: simple (34 líneas, función pura autocontenida)",no,
+-_segment_intersects_bbox,original,S,S4,no_determinante,,12-segment-intersects-bbox.md,S4,Sin test focal directo; COBERTURA_INFERIDA vía sus 2 consumidores (cadena más larga sin aserción directa),no,
+-_segment_intersects_bbox,original,S,S5,cumple,0,12-segment-intersects-bbox.md,S5,S5: cumple,no,
+-_segment_intersects_bbox,original,S,S6,no_evaluado_o_na,,12-segment-intersects-bbox.md,S6,"REFERENCIA_EXISTENTE, misma nota de adyacencia temática con DT3 que fichas 3/4/5/9",no,
+-_segment_intersects_bbox,original,S,S7,no_cumple,1,12-segment-intersects-bbox.md,S7,"S7: NO cumple ninguna cuantitativa (0<80, 0<3, 34<100)",no,
+-_segment_intersects_bbox,original,S,S8,cumple,0,12-segment-intersects-bbox.md,S8,"S8: M2_proyectado = M2_actual (igualdad, diseño mínimo con 1 reexport)",no,
+-_segment_intersects_bbox,original,R,R1,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,no,
+-_segment_intersects_bbox,original,R,R2,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,no,
+-_segment_intersects_bbox,original,R,R3,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,no,
+-_segment_intersects_bbox,original,R,R4,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,no,
+-_segment_intersects_bbox,original,R,R5,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,no,
+-_segment_intersects_bbox,original,R,R6,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,no,
+-_segment_intersects_bbox,original,R,R7,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,no,
+-_segment_intersects_bbox,original,R,R8,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,no,
+-_segment_intersects_bbox,original,R,R9,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,no,
+-_segment_intersects_bbox,original,R,R10,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,no,
+-_segment_intersects_bbox,original,R,R11,activado,1,12-segment-intersects-bbox.md,R activado,R11.,no,
+-_segment_intersects_bbox,original,R,R12,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,no,
+-_segment_intersects_bbox,original,R,R13,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,no,
+-_segment_intersects_bbox,original,R,R14,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,no,
+-_similars,extension,S,S1,cumple,0,13-similars.md,S1,"S1: cumple (d2=0, sin dependencias hacia pcb.py ni módulos inestables)",no,
+-_similars,extension,S,S2,cumple,0,13-similars.md,S2,"S2: cumple, 1 reexport (< UMBRAL_R7_REEXPORTS=3)",no,
+-_similars,extension,S,S3,cumple,0,13-similars.md,S3,"S3: simple (3 líneas, función pura sin estado)",no,
+-_similars,extension,S,S4,no_determinante,,13-similars.md,S4,"Sin COBERTURA_DEMOSTRADA directa; COBERTURA_INFERIDA fuerte, sin delta de test propuesto",no,
+-_similars,extension,S,S5,cumple,0,13-similars.md,S5,S5: cumple,no,
+-_similars,extension,S,S6,no_evaluado_o_na,,13-similars.md,S6,"REFERENCIA_EXISTENTE (utilidad de UX de error, sin relación con DT3/P1-2)",no,
+-_similars,extension,S,S7,no_cumple,1,13-similars.md,S7,S7: NO cumple ninguna cuantitativa (LOC=3<<80; 1 closure eliminada<3; reducción pcb.py=3<<100),no,
+-_similars,extension,S,S8,cumple,0,13-similars.md,S8,S8: M2_proyectado = M2_actual (cumple por igualdad),no,
+-_similars,extension,R,R1,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,no,
+-_similars,extension,R,R2,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,no,
+-_similars,extension,R,R3,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,no,
+-_similars,extension,R,R4,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,no,
+-_similars,extension,R,R5,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,no,
+-_similars,extension,R,R6,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,no,
+-_similars,extension,R,R7,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,no,
+-_similars,extension,R,R8,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,no,
+-_similars,extension,R,R9,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,no,
+-_similars,extension,R,R10,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,no,
+-_similars,extension,R,R11,activado,1,13-similars.md,R activado,R11 (beneficio marginal — S7 no se satisface y no hay base para E1),no,
+-_similars,extension,R,R12,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,no,
+-_similars,extension,R,R13,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,no,
+-_similars,extension,R,R14,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,no,
+-"{_via_params, add_via}",extension,S,S1,no_determinante,,14-via-params-add-via.md,S1,NO cumple (Ruta A) / cumple con degradación S8 (Ruta B) — ver M2,no,no comprometido a una sola ruta en la ficha
+-"{_via_params, add_via}",extension,S,S2,cumple,0,14-via-params-add-via.md,S2,S2: cumple (firma @mcp.tool preservada),no,
+-"{_via_params, add_via}",extension,S,S3,cumple,0,14-via-params-add-via.md,S3,S3: simple (mover 2 símbolos + wrapper delgado),no,
+-"{_via_params, add_via}",extension,S,S4,cumple,0,14-via-params-add-via.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA",no,
+-"{_via_params, add_via}",extension,S,S5,cumple,0,14-via-params-add-via.md,S5,S5: cumple (no toca zonas/route_board/stitching),no,
+-"{_via_params, add_via}",extension,S,S6,no_evaluado_o_na,,14-via-params-add-via.md,S6,"REFERENCIA_EXISTENTE (mutación de cobre puntual, sin relación con DT3/P1-2)",no,
+-"{_via_params, add_via}",extension,S,S7,cumple,0,14-via-params-add-via.md,S7,S7: cumple por S7.a (110 >= UMBRAL_S7_LOC=80),no,
+-"{_via_params, add_via}",extension,S,S8,no_cumple,1,14-via-params-add-via.md,S8,S8: NO cumple en ninguna de las dos rutas (ver M2),no,
+-"{_via_params, add_via}",extension,R,R1,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,no,
+-"{_via_params, add_via}",extension,R,R2,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,no,
+-"{_via_params, add_via}",extension,R,R3,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,no,
+-"{_via_params, add_via}",extension,R,R4,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,no,
+-"{_via_params, add_via}",extension,R,R5,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,no,
+-"{_via_params, add_via}",extension,R,R6,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,no,
+-"{_via_params, add_via}",extension,R,R7,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,no,
+-"{_via_params, add_via}",extension,R,R8,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,no,
+-"{_via_params, add_via}",extension,R,R9,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,no,
+-"{_via_params, add_via}",extension,R,R10,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,no,
+-"{_via_params, add_via}",extension,R,R11,activado,1,14-via-params-add-via.md,R activado,"R11 (Ruta B, beneficio marginal sin dominancia M2)",no,condicionado a Ruta B
+-"{_via_params, add_via}",extension,R,R12,activado,1,14-via-params-add-via.md,R activado,"R12 (Ruta A, ciclo de import)",no,condicionado a Ruta A
+-"{_via_params, add_via}",extension,R,R13,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,no,
+-"{_via_params, add_via}",extension,R,R14,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,no,
+-delete_track,extension,S,S1,no_determinante,,15-delete-track.md,S1,"no determinante — el estado actual cumple, pero el gate se evalúa sobre la extracción proyectada, no evaluada completamente",no,
+-delete_track,extension,S,S2,cumple,0,15-delete-track.md,S2,S2: cumple,no,
+-delete_track,extension,S,S3,cumple,0,15-delete-track.md,S3,S3: simple (wrapper de una función),no,
+-delete_track,extension,S,S4,cumple,0,15-delete-track.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA amplia",no,
+-delete_track,extension,S,S5,cumple,0,15-delete-track.md,S5,S5: cumple,no,
+-delete_track,extension,S,S6,no_evaluado_o_na,,15-delete-track.md,S6,REFERENCIA_EXISTENTE,no,
+-delete_track,extension,S,S7,no_cumple,1,15-delete-track.md,S7,S7: NO cumple ninguna cuantitativa (18<80; 1 closure<3; 18<100),no,
+-delete_track,extension,S,S8,no_determinante,,15-delete-track.md,S8,no determinante (S7 ya falla),no,
+-delete_track,extension,R,R1,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no,
+-delete_track,extension,R,R2,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no,
+-delete_track,extension,R,R3,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no,
+-delete_track,extension,R,R4,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no,
+-delete_track,extension,R,R5,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no,
+-delete_track,extension,R,R6,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no,
+-delete_track,extension,R,R7,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no,
+-delete_track,extension,R,R8,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no,
+-delete_track,extension,R,R9,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no,
+-delete_track,extension,R,R10,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no,
+-delete_track,extension,R,R11,activado,1,15-delete-track.md,R activado,"R11 (beneficio marginal — S7 no se satisface, sin base para E1)",no,
+-delete_track,extension,R,R12,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no,
+-delete_track,extension,R,R13,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no,
+-delete_track,extension,R,R14,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no,
+-delete_via,extension,S,S1,no_determinante,,16-delete-via.md,S1,"no determinante — el estado actual cumple, pero el gate se evalúa sobre la extracción proyectada, no evaluada completamente",no,
+-delete_via,extension,S,S2,cumple,0,16-delete-via.md,S2,S2: cumple,no,
+-delete_via,extension,S,S3,cumple,0,16-delete-via.md,S3,S3: simple,no,
+-delete_via,extension,S,S4,cumple,0,16-delete-via.md,S4,S4: cumple con reserva — COBERTURA_DEMOSTRADA mínima (1 test propio),no,
+-delete_via,extension,S,S5,cumple,0,16-delete-via.md,S5,S5: cumple,no,
+-delete_via,extension,S,S6,no_evaluado_o_na,,16-delete-via.md,S6,REFERENCIA_EXISTENTE,no,
+-delete_via,extension,S,S7,no_cumple,1,16-delete-via.md,S7,S7: NO cumple ninguna cuantitativa (18<80; 1 closure<3; 18<100),no,
+-delete_via,extension,S,S8,no_determinante,,16-delete-via.md,S8,no determinante (S7 ya falla),no,
+-delete_via,extension,R,R1,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no,
+-delete_via,extension,R,R2,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no,
+-delete_via,extension,R,R3,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no,
+-delete_via,extension,R,R4,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no,
+-delete_via,extension,R,R5,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no,
+-delete_via,extension,R,R6,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no,
+-delete_via,extension,R,R7,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no,
+-delete_via,extension,R,R8,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no,
+-delete_via,extension,R,R9,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no,
+-delete_via,extension,R,R10,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no,
+-delete_via,extension,R,R11,activado,1,16-delete-via.md,R activado,"R11 (beneficio marginal, S7 no se satisface)",no,
+-delete_via,extension,R,R12,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no,
+-delete_via,extension,R,R13,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no,
+-delete_via,extension,R,R14,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no,
+-get_component_detail,extension,S,S1,no_determinante,,17-get-component-detail.md,S1,"no determinante — el estado actual cumple, pero el gate se evalúa sobre la extracción proyectada, no evaluada completamente",no,
+-get_component_detail,extension,S,S2,cumple,0,17-get-component-detail.md,S2,S2: cumple,no,
+-get_component_detail,extension,S,S3,cumple,0,17-get-component-detail.md,S3,S3: simple,no,
+-get_component_detail,extension,S,S4,cumple,0,17-get-component-detail.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA",no,
+-get_component_detail,extension,S,S5,cumple,0,17-get-component-detail.md,S5,S5: cumple,no,
+-get_component_detail,extension,S,S6,no_evaluado_o_na,,17-get-component-detail.md,S6,"REFERENCIA_EXISTENTE — consumidor incidental en tests GUI de zonas, no CAMBIO_INCIDENTAL ni PRERREQUISITO de DT3",no,
+-get_component_detail,extension,S,S7,no_cumple,1,17-get-component-detail.md,S7,S7: NO cumple ninguna cuantitativa (21<80; 1 closure<3; 21<100),no,
+-get_component_detail,extension,S,S8,no_determinante,,17-get-component-detail.md,S8,no determinante (S7 ya falla),no,
+-get_component_detail,extension,R,R1,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no,
+-get_component_detail,extension,R,R2,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no,
+-get_component_detail,extension,R,R3,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no,
+-get_component_detail,extension,R,R4,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no,
+-get_component_detail,extension,R,R5,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no,
+-get_component_detail,extension,R,R6,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no,
+-get_component_detail,extension,R,R7,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no,
+-get_component_detail,extension,R,R8,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no,
+-get_component_detail,extension,R,R9,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no,
+-get_component_detail,extension,R,R10,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no,
+-get_component_detail,extension,R,R11,activado,1,17-get-component-detail.md,R activado,"R11 (beneficio marginal, S7 no se satisface)",no,
+-get_component_detail,extension,R,R12,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no,
+-get_component_detail,extension,R,R13,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no,
+-get_component_detail,extension,R,R14,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no,
+-get_tracks,extension,S,S1,no_determinante,,18-get-tracks.md,S1,NO cumple (Ruta A) / cumple con degradación S8 (Ruta B),no,no comprometido a una sola ruta en la ficha
+-get_tracks,extension,S,S2,cumple,0,18-get-tracks.md,S2,S2: cumple,no,
+-get_tracks,extension,S,S3,cumple,0,18-get-tracks.md,S3,"S3: simple (mover 1 función, wrapper delgado)",no,
+-get_tracks,extension,S,S4,cumple,0,18-get-tracks.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA",no,
+-get_tracks,extension,S,S5,cumple,0,18-get-tracks.md,S5,"S5: cumple (lectura de cobre, no toca zonas ni route_board)",no,
+-get_tracks,extension,S,S6,no_evaluado_o_na,,18-get-tracks.md,S6,"REFERENCIA_EXISTENTE (lectura de tracks/vías, sin relación con DT3/P1-2)",no,
+-get_tracks,extension,S,S7,cumple,0,18-get-tracks.md,S7,S7: cumple por S7.a (86 >= 80),no,
+-get_tracks,extension,S,S8,no_cumple,1,18-get-tracks.md,S8,S8: NO cumple en ninguna ruta (peor caso de los 9: d2=6 / Δd1=+6),no,
+-get_tracks,extension,R,R1,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,no,
+-get_tracks,extension,R,R2,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,no,
+-get_tracks,extension,R,R3,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,no,
+-get_tracks,extension,R,R4,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,no,
+-get_tracks,extension,R,R5,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,no,
+-get_tracks,extension,R,R6,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,no,
+-get_tracks,extension,R,R7,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,no,
+-get_tracks,extension,R,R8,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,no,
+-get_tracks,extension,R,R9,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,no,
+-get_tracks,extension,R,R10,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,no,
+-get_tracks,extension,R,R11,activado,1,18-get-tracks.md,R activado,"R11 (Ruta B, el deterioro de M2 más grande de los 9 candidatos)",no,condicionado a Ruta B
+-get_tracks,extension,R,R12,activado,1,18-get-tracks.md,R activado,R12 (Ruta A) — S1 falla con el margen más amplio de los 9 candidatos,no,condicionado a Ruta A
+-get_tracks,extension,R,R13,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,no,
+-get_tracks,extension,R,R14,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,no,
+-reload_board_from_disk,extension,S,S1,no_determinante,,19-reload-board-from-disk.md,S1,"no determinante — el estado actual cumple, pero el gate se evalúa sobre la extracción proyectada, no evaluada completamente",no,
+-reload_board_from_disk,extension,S,S2,cumple,0,19-reload-board-from-disk.md,S2,"S2: cumple, incluido el remapeo de error documentado",no,
+-reload_board_from_disk,extension,S,S3,cumple,0,19-reload-board-from-disk.md,S3,S3: simple,no,
+-reload_board_from_disk,extension,S,S4,cumple,0,19-reload-board-from-disk.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA",no,
+-reload_board_from_disk,extension,S,S5,cumple,0,19-reload-board-from-disk.md,S5,S5: cumple,no,
+-reload_board_from_disk,extension,S,S6,no_evaluado_o_na,,19-reload-board-from-disk.md,S6,"REFERENCIA_EXISTENTE (mecanismo de sincronización disco-vivo, sin relación con DT3/P1-2)",no,
+-reload_board_from_disk,extension,S,S7,no_cumple,1,19-reload-board-from-disk.md,S7,S7: NO cumple ninguna cuantitativa (57<80; 1 closure<3; 57<100),no,
+-reload_board_from_disk,extension,S,S8,no_determinante,,19-reload-board-from-disk.md,S8,no determinante (S7 ya falla),no,
+-reload_board_from_disk,extension,R,R1,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no,
+-reload_board_from_disk,extension,R,R2,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no,
+-reload_board_from_disk,extension,R,R3,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no,
+-reload_board_from_disk,extension,R,R4,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no,
+-reload_board_from_disk,extension,R,R5,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no,
+-reload_board_from_disk,extension,R,R6,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no,
+-reload_board_from_disk,extension,R,R7,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no,
+-reload_board_from_disk,extension,R,R8,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no,
+-reload_board_from_disk,extension,R,R9,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no,
+-reload_board_from_disk,extension,R,R10,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no,
+-reload_board_from_disk,extension,R,R11,activado,1,19-reload-board-from-disk.md,R activado,"R11 (beneficio marginal, S7 no se satisface)",no,
+-reload_board_from_disk,extension,R,R12,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no,
+-reload_board_from_disk,extension,R,R13,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no,
+-reload_board_from_disk,extension,R,R14,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no,
+-save_board,extension,S,S1,no_determinante,,20-save-board.md,S1,"no determinante — el estado actual cumple, pero el gate se evalúa sobre la extracción proyectada, no evaluada completamente",no,
+-save_board,extension,S,S2,cumple,0,20-save-board.md,S2,S2: cumple,no,
+-save_board,extension,S,S3,cumple,0,20-save-board.md,S3,S3: simple,no,
+-save_board,extension,S,S4,cumple,0,20-save-board.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA amplia, incluida cobertura cruzada con route_board",no,
+-save_board,extension,S,S5,cumple,0,20-save-board.md,S5,S5: cumple (no implementa refill/zonas),no,
+-save_board,extension,S,S6,no_evaluado_o_na,,20-save-board.md,S6,REFERENCIA_EXISTENTE — no es CAMBIO_INCIDENTAL ni PRERREQUISITO de DT3,no,
+-save_board,extension,S,S7,no_cumple,1,20-save-board.md,S7,S7: NO cumple ninguna cuantitativa (35<80; 1 closure<3; 35<100),no,
+-save_board,extension,S,S8,no_determinante,,20-save-board.md,S8,no determinante (S7 ya falla),no,
+-save_board,extension,R,R1,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no,
+-save_board,extension,R,R2,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no,
+-save_board,extension,R,R3,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no,
+-save_board,extension,R,R4,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no,
+-save_board,extension,R,R5,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no,
+-save_board,extension,R,R6,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no,
+-save_board,extension,R,R7,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no,
+-save_board,extension,R,R8,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no,
+-save_board,extension,R,R9,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no,
+-save_board,extension,R,R10,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no,
+-save_board,extension,R,R11,activado,1,20-save-board.md,R activado,"R11 (beneficio marginal, S7 no se satisface)",no,
+-save_board,extension,R,R12,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no,
+-save_board,extension,R,R13,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no,
+-save_board,extension,R,R14,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no,
+-set_footprint_ref,extension,S,S1,no_determinante,,21-set-footprint-ref.md,S1,NO cumple (Ruta A) / cumple con degradación S8 (Ruta B),no,no comprometido a una sola ruta en la ficha
+-set_footprint_ref,extension,S,S2,cumple,0,21-set-footprint-ref.md,S2,S2: cumple,no,
+-set_footprint_ref,extension,S,S3,cumple,0,21-set-footprint-ref.md,S3,"S3: simple (mover 1 función, wrapper delgado)",no,
+-set_footprint_ref,extension,S,S4,cumple,0,21-set-footprint-ref.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA (offline)",no,
+-set_footprint_ref,extension,S,S5,cumple,0,21-set-footprint-ref.md,S5,"S5: cumple (renombra ref, no toca zonas/route_board)",no,
+-set_footprint_ref,extension,S,S6,no_evaluado_o_na,,21-set-footprint-ref.md,S6,"REFERENCIA_EXISTENTE (resolución de refs duplicados, sin relación con DT3/P1-2)",no,
+-set_footprint_ref,extension,S,S7,cumple,0,21-set-footprint-ref.md,S7,S7: cumple por S7.a (114>=80) y S7.c (114>=100),no,
+-set_footprint_ref,extension,S,S8,no_cumple,1,21-set-footprint-ref.md,S8,S8: NO cumple en ninguna ruta — idéntico patrón a add_via (ficha 14),no,
+-set_footprint_ref,extension,R,R1,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,no,
+-set_footprint_ref,extension,R,R2,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,no,
+-set_footprint_ref,extension,R,R3,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,no,
+-set_footprint_ref,extension,R,R4,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,no,
+-set_footprint_ref,extension,R,R5,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,no,
+-set_footprint_ref,extension,R,R6,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,no,
+-set_footprint_ref,extension,R,R7,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,no,
+-set_footprint_ref,extension,R,R8,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,no,
+-set_footprint_ref,extension,R,R9,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,no,
+-set_footprint_ref,extension,R,R10,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,no,
+-set_footprint_ref,extension,R,R11,activado,1,21-set-footprint-ref.md,R activado,R11 (Ruta B),no,condicionado a Ruta B
+-set_footprint_ref,extension,R,R12,activado,1,21-set-footprint-ref.md,R activado,R12 (Ruta A),no,condicionado a Ruta A
+-set_footprint_ref,extension,R,R13,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,no,
+-set_footprint_ref,extension,R,R14,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,no,
++_delete_copper (núcleo borrado cobre),original,S,S1,no_cumple,1,01-delete-copper.md,S1,Los 4 destinos de d2 son helpers de fan-in alto compartido; ninguno se propone mover junto con K,aplicada,
++_delete_copper (núcleo borrado cobre),original,S,S2,cumple,0,01-delete-copper.md,S2,Reexports: 0 nuevos necesarios (d4=0),aplicada,
++_delete_copper (núcleo borrado cobre),original,S,S3,no_determinante,,01-delete-copper.md,S3,"S3.c = moderada, sin la mitigación de S1/S8 no hay justificación de alta evitable",aplicada,
++_delete_copper (núcleo borrado cobre),original,S,S4,no_determinante,,01-delete-copper.md,S4,COBERTURA_INFERIDA para _match_copper/tolerancia; REFERENCIADA/DEMOSTRADA parcial para el camino feliz,aplicada,
++_delete_copper (núcleo borrado cobre),original,S,S5,cumple,0,01-delete-copper.md,S5,Fuera de zonas prohibidas: cumple (F-DT.1 ya lo dejó pasar),aplicada,
++_delete_copper (núcleo borrado cobre),original,S,S6,no_evaluado_o_na,,01-delete-copper.md,S6,REFERENCIA_EXISTENTE (sin relación directa) con P1-2/DT3,aplicada,
++_delete_copper (núcleo borrado cobre),original,S,S7,cumple,0,01-delete-copper.md,S7,S7.a 149>=80 SÍ; S7.c 188>=100 SÍ (S7.b NO),aplicada,
++_delete_copper (núcleo borrado cobre),original,S,S8,no_determinante,,01-delete-copper.md,S8,Bajo Opción A no llega a evaluarse con sentido; bajo Opción B S8 falla (d1 empeora 1→4),aplicada,
++_delete_copper (núcleo borrado cobre),original,R,R1,no_activado,0,01-delete-copper.md,R activados,R1 no (bridge sí es inyectable/ya lo es en el patrón register_x existente),aplicada,
++_delete_copper (núcleo borrado cobre),original,R,R2,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,aplicada,
++_delete_copper (núcleo borrado cobre),original,R,R3,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,aplicada,
++_delete_copper (núcleo borrado cobre),original,R,R4,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,aplicada,
++_delete_copper (núcleo borrado cobre),original,R,R5,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,aplicada,
++_delete_copper (núcleo borrado cobre),original,R,R6,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,aplicada,
++_delete_copper (núcleo borrado cobre),original,R,R7,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,aplicada,
++_delete_copper (núcleo borrado cobre),original,R,R8,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,aplicada,
++_delete_copper (núcleo borrado cobre),original,R,R9,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,aplicada,
++_delete_copper (núcleo borrado cobre),original,R,R10,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,aplicada,
++_delete_copper (núcleo borrado cobre),original,R,R11,activado,1,01-delete-copper.md,R activados,"R11 aplicable bajo Opción B — S7 se satisface, M2 no domina (de hecho empeora)",aplicada,condicionado a Opción B
++_delete_copper (núcleo borrado cobre),original,R,R12,activado,1,01-delete-copper.md,R activados,R12 SÍ bajo Opción A — introduce ciclos de import (S1 refutada),aplicada,condicionado a Ruta/Opción A
++_delete_copper (núcleo borrado cobre),original,R,R13,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,aplicada,
++_delete_copper (núcleo borrado cobre),original,R,R14,no_evaluado_o_na,,01-delete-copper.md,(ninguna),ausencia declarada,aplicada,
++_audit_error,original,S,S1,cumple,0,02-audit-error.md,S1,d2=0: no hay ninguna arista saliente de K hacia V\K. S1(b),ausencia_explicita,
++_audit_error,original,S,S2,cumple,0,02-audit-error.md,S2,"Con d4=1 y 11 consumidores se necesita 1 reexport, bajo UMBRAL_R7_REEXPORTS=3",ausencia_explicita,
++_audit_error,original,S,S3,cumple,0,02-audit-error.md,S3,"Función pura top-level, patrón idéntico a DT1 Slice 1. S3.c = simple",ausencia_explicita,
++_audit_error,original,S,S4,no_determinante,,02-audit-error.md,S4,COBERTURA_INFERIDA; nunca se asertan sus campos directamente en un test dedicado,ausencia_explicita,
++_audit_error,original,S,S5,cumple,0,02-audit-error.md,S5,S5 cumple,ausencia_explicita,
++_audit_error,original,S,S6,no_evaluado_o_na,,02-audit-error.md,S6,REFERENCIA_EXISTENTE (sin relación con P1-2/DT3; formateo de auditoría),ausencia_explicita,
++_audit_error,original,S,S7,no_cumple,1,02-audit-error.md,S7,"S7 NO cumple ninguna cuantitativa (0<80, 0<3, 8<100)",ausencia_explicita,
++_audit_error,original,S,S8,cumple,0,02-audit-error.md,S8,M2 no empeora bajo diseño mínimo (cumple trivialmente por igualdad) pero no domina,ausencia_explicita,
++_audit_error,original,R,R1,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,ausencia_explicita,
++_audit_error,original,R,R2,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,ausencia_explicita,
++_audit_error,original,R,R3,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,ausencia_explicita,
++_audit_error,original,R,R4,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,ausencia_explicita,
++_audit_error,original,R,R5,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,ausencia_explicita,
++_audit_error,original,R,R6,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,ausencia_explicita,
++_audit_error,original,R,R7,no_activado,0,02-audit-error.md,S2,R7 no se activa,ausencia_explicita,
++_audit_error,original,R,R8,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,ausencia_explicita,
++_audit_error,original,R,R9,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,ausencia_explicita,
++_audit_error,original,R,R10,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,ausencia_explicita,
++_audit_error,original,R,R11,activado,1,02-audit-error.md,R activados,"R11 (beneficio marginal — S7 no se satisface por ninguna vía cuantitativa, S7.d no demostrable)",ausencia_explicita,
++_audit_error,original,R,R12,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,ausencia_explicita,
++_audit_error,original,R,R13,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,ausencia_explicita,
++_audit_error,original,R,R14,no_evaluado_o_na,,02-audit-error.md,(ninguna),ausencia declarada,ausencia_explicita,
++get_footprint_neighbors (vecindad geométrica),original,S,S1,no_cumple,1,03-get-footprint-neighbors.md,S1,"_copper_distance_to_bbox llama a _segment_intersects_bbox, que no forma parte de K",aplicada,
++get_footprint_neighbors (vecindad geométrica),original,S,S2,cumple,0,03-get-footprint-neighbors.md,S2,"S2 — cumple (0 reexports nuevos, d4=0)",aplicada,
++get_footprint_neighbors (vecindad geométrica),original,S,S3,no_determinante,,03-get-footprint-neighbors.md,S3,"S3 — moderada (1 closure + 4 helpers, mismo patrón que ficha 1)",aplicada,
++get_footprint_neighbors (vecindad geométrica),original,S,S4,cumple,0,03-get-footprint-neighbors.md,S4,COBERTURA_DEMOSTRADA razonable para la superficie del tool (test_get_footprint_neighbors_closest_edge asertado),aplicada,
++get_footprint_neighbors (vecindad geométrica),original,S,S5,cumple,0,03-get-footprint-neighbors.md,S5,S5 — cumple,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,S,S6,no_evaluado_o_na,,03-get-footprint-neighbors.md,S6,"REFERENCIA_EXISTENTE; DT3 acotada a geometría dentro de bridge/, este cluster vive en tools/pcb.py",aplicada,
++get_footprint_neighbors (vecindad geométrica),original,S,S7,cumple,0,03-get-footprint-neighbors.md,S7,S7.a 144>=80 SÍ; S7.c 207>=100 SÍ,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,S,S8,no_determinante,,03-get-footprint-neighbors.md,S8,S8 falla bajo Opción B; no evaluable con sentido bajo Opción A (S1 ya refutada),aplicada,
++get_footprint_neighbors (vecindad geométrica),original,R,R1,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,R,R2,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,R,R3,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,R,R4,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,R,R5,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,R,R6,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,R,R7,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,R,R8,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,R,R9,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,R,R10,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,R,R11,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,R,R12,activado,1,03-get-footprint-neighbors.md,R activados,R12 (Opción A) o S8 directa (Opción B),aplicada,condicionado a Opción A
++get_footprint_neighbors (vecindad geométrica),original,R,R13,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,aplicada,
++get_footprint_neighbors (vecindad geométrica),original,R,R14,no_evaluado_o_na,,03-get-footprint-neighbors.md,(ninguna),ausencia declarada,aplicada,
++_bbox_distance_to_point,original,S,S1,cumple,0,04-bbox-distance-to-point.md,S1,"S1: cumple (d2=0, sin riesgo de ciclo)",ausencia_explicita,
++_bbox_distance_to_point,original,S,S2,cumple,0,04-bbox-distance-to-point.md,S2,"S2: cumple con 1 reexport (d4=1, bien bajo UMBRAL_R7_REEXPORTS=3)",ausencia_explicita,
++_bbox_distance_to_point,original,S,S3,cumple,0,04-bbox-distance-to-point.md,S3,S3: simple (función pura de 11 líneas),ausencia_explicita,
++_bbox_distance_to_point,original,S,S4,no_determinante,,04-bbox-distance-to-point.md,S4,Sin test focal directo; COBERTURA_INFERIDA vía los 3 consumidores,ausencia_explicita,
++_bbox_distance_to_point,original,S,S5,cumple,0,04-bbox-distance-to-point.md,S5,S5: cumple,ausencia_explicita,
++_bbox_distance_to_point,original,S,S6,no_evaluado_o_na,,04-bbox-distance-to-point.md,S6,"REFERENCIA_EXISTENTE (geometría en tools/, no en bridge/, mismo razonamiento que ficha 3)",ausencia_explicita,
++_bbox_distance_to_point,original,S,S7,no_cumple,1,04-bbox-distance-to-point.md,S7,"S7: NO cumple ninguna cuantitativa (0<80, 0<3, 11<100)",ausencia_explicita,
++_bbox_distance_to_point,original,S,S8,cumple,0,04-bbox-distance-to-point.md,S8,"M2_proyectado = M2_actual (extracción pura sin cambio) → S8 cumple por igualdad, no domina",ausencia_explicita,
++_bbox_distance_to_point,original,R,R1,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,ausencia_explicita,
++_bbox_distance_to_point,original,R,R2,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,ausencia_explicita,
++_bbox_distance_to_point,original,R,R3,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,ausencia_explicita,
++_bbox_distance_to_point,original,R,R4,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,ausencia_explicita,
++_bbox_distance_to_point,original,R,R5,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,ausencia_explicita,
++_bbox_distance_to_point,original,R,R6,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,ausencia_explicita,
++_bbox_distance_to_point,original,R,R7,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,ausencia_explicita,
++_bbox_distance_to_point,original,R,R8,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,ausencia_explicita,
++_bbox_distance_to_point,original,R,R9,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,ausencia_explicita,
++_bbox_distance_to_point,original,R,R10,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,ausencia_explicita,
++_bbox_distance_to_point,original,R,R11,activado,1,04-bbox-distance-to-point.md,R activado,"R11 (beneficio marginal — S7 no se satisface, extraer 11 líneas con 3 consumidores compartidos)",ausencia_explicita,
++_bbox_distance_to_point,original,R,R12,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,ausencia_explicita,
++_bbox_distance_to_point,original,R,R13,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,ausencia_explicita,
++_bbox_distance_to_point,original,R,R14,no_evaluado_o_na,,04-bbox-distance-to-point.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,S,S1,cumple,0,05-copper-distance-mm.md,S1,S1: cumple (d2=0),ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,S,S2,cumple,0,05-copper-distance-mm.md,S2,"S2: cumple, 1 reexport necesario",ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,S,S3,cumple,0,05-copper-distance-mm.md,S3,S3: simple,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,S,S4,no_determinante,,05-copper-distance-mm.md,S4,"Sin test focal directo; COBERTURA_INFERIDA (vía _match_copper, cadena de inferencia larga)",ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,S,S5,cumple,0,05-copper-distance-mm.md,S5,S5: cumple,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,S,S6,no_evaluado_o_na,,05-copper-distance-mm.md,S6,REFERENCIA_EXISTENTE; adyacencia documentada como hallazgo §14 sin escalar a exclusión,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,S,S7,no_cumple,1,05-copper-distance-mm.md,S7,"S7: NO cumple ninguna cuantitativa (0<80, 0<3, 30<100)",ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,S,S8,cumple,0,05-copper-distance-mm.md,S8,"M2_proyectado = M2_actual bajo diseño mínimo — cumple por igualdad, no domina",ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R1,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R2,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R3,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R4,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R5,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R6,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R7,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R8,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R9,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R10,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R11,activado,1,05-copper-distance-mm.md,R activado,R11.,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R12,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R13,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_distance_mm + _dist_point_segment,original,R,R14,no_evaluado_o_na,,05-copper-distance-mm.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_in_bbox,original,S,S1,no_cumple,1,06-copper-in-bbox.md,S1,S1: NO CUMPLE. El único destino de d2 (_segment_intersects_bbox) no forma parte de K,no_determinable,
++_copper_in_bbox,original,S,S2,no_evaluado_o_na,,06-copper-in-bbox.md,S2,ausencia declarada,no_determinable,
++_copper_in_bbox,original,S,S3,no_evaluado_o_na,,06-copper-in-bbox.md,S3,ausencia declarada,no_determinable,
++_copper_in_bbox,original,S,S4,no_evaluado_o_na,,06-copper-in-bbox.md,S4,ausencia declarada,no_determinable,
++_copper_in_bbox,original,S,S5,no_evaluado_o_na,,06-copper-in-bbox.md,S5,ausencia declarada,no_determinable,
++_copper_in_bbox,original,S,S6,no_evaluado_o_na,,06-copper-in-bbox.md,S6,ausencia declarada,no_determinable,
++_copper_in_bbox,original,S,S7,no_cumple,1,06-copper-in-bbox.md,S7,"S7: NO cumple ninguna cuantitativa (0<80, 0<3, 12<100)",no_determinable,
++_copper_in_bbox,original,S,S8,no_evaluado_o_na,,06-copper-in-bbox.md,S8,ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R1,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R2,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R3,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R4,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R5,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R6,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R7,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R8,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R9,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R10,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R11,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R12,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R13,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_in_bbox,original,R,R14,no_evaluado_o_na,,06-copper-in-bbox.md,(ninguna),ausencia declarada,no_determinable,
++_copper_on_layer,original,S,S1,cumple,0,07-copper-on-layer.md,S1,"S1: cumple (d2=0, sin riesgo de ciclo)",ausencia_explicita,
++_copper_on_layer,original,S,S2,cumple,0,07-copper-on-layer.md,S2,"S2: cumple, 1 reexport",ausencia_explicita,
++_copper_on_layer,original,S,S3,cumple,0,07-copper-on-layer.md,S3,"S3: simple (6 líneas, predicado puro)",ausencia_explicita,
++_copper_on_layer,original,S,S4,no_determinante,,07-copper-on-layer.md,S4,Sin test focal; COBERTURA_INFERIDA transitiva,ausencia_explicita,
++_copper_on_layer,original,S,S5,cumple,0,07-copper-on-layer.md,S5,S5: cumple,ausencia_explicita,
++_copper_on_layer,original,S,S6,no_evaluado_o_na,,07-copper-on-layer.md,S6,REFERENCIA_EXISTENTE — sin adyacencia siquiera temática con DT3,ausencia_explicita,
++_copper_on_layer,original,S,S7,no_cumple,1,07-copper-on-layer.md,S7,"S7: NO cumple ninguna cuantitativa (0<80, 0<3, 6<100) — el candidato más pequeño del universo",ausencia_explicita,
++_copper_on_layer,original,S,S8,cumple,0,07-copper-on-layer.md,S8,S8: M2_proyectado = M2_actual (igualdad),ausencia_explicita,
++_copper_on_layer,original,R,R1,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_on_layer,original,R,R2,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_on_layer,original,R,R3,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_on_layer,original,R,R4,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_on_layer,original,R,R5,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_on_layer,original,R,R6,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_on_layer,original,R,R7,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_on_layer,original,R,R8,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_on_layer,original,R,R9,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_on_layer,original,R,R10,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_on_layer,original,R,R11,activado,1,07-copper-on-layer.md,R activado,R11.,ausencia_explicita,
++_copper_on_layer,original,R,R12,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_on_layer,original,R,R13,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,ausencia_explicita,
++_copper_on_layer,original,R,R14,no_evaluado_o_na,,07-copper-on-layer.md,(ninguna),ausencia declarada,ausencia_explicita,
++move_footprint (post-mutación),original,S,S1,no_cumple,1,08-move-footprint.md,S1,S1 — NO CUMPLE. Los 3 destinos de d2 son el trío de utilidad universal,aplicada,
++move_footprint (post-mutación),original,S,S2,cumple,0,08-move-footprint.md,S2,"S2 — cumple (0 reexports, d4=0)",aplicada,
++move_footprint (post-mutación),original,S,S3,no_determinante,,08-move-footprint.md,S3,"S3 — moderada (closure + 3 helpers propios, sin señales de complejidad alta)",aplicada,
++move_footprint (post-mutación),original,S,S4,cumple,0,08-move-footprint.md,S4,COBERTURA_DEMOSTRADA razonable (test_move_footprint_reports_component_not_found_with_similars asertado),aplicada,
++move_footprint (post-mutación),original,S,S5,cumple,0,08-move-footprint.md,S5,S5 — cumple,aplicada,
++move_footprint (post-mutación),original,S,S6,no_evaluado_o_na,,08-move-footprint.md,S6,"REFERENCIA_EXISTENTE (bookkeeping de snapshot pre/post, sin relación con DT3/P1-2)",aplicada,
++move_footprint (post-mutación),original,S,S7,cumple,0,08-move-footprint.md,S7,S7.a 99>=80 SÍ (por muy poco margen); S7.c 216>=100 SÍ,aplicada,
++move_footprint (post-mutación),original,S,S8,no_determinante,,08-move-footprint.md,S8,S8 falla bajo Opción B; no evaluable con sentido bajo Opción A,aplicada,
++move_footprint (post-mutación),original,R,R1,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,aplicada,
++move_footprint (post-mutación),original,R,R2,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,aplicada,
++move_footprint (post-mutación),original,R,R3,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,aplicada,
++move_footprint (post-mutación),original,R,R4,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,aplicada,
++move_footprint (post-mutación),original,R,R5,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,aplicada,
++move_footprint (post-mutación),original,R,R6,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,aplicada,
++move_footprint (post-mutación),original,R,R7,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,aplicada,
++move_footprint (post-mutación),original,R,R8,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,aplicada,
++move_footprint (post-mutación),original,R,R9,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,aplicada,
++move_footprint (post-mutación),original,R,R10,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,aplicada,
++move_footprint (post-mutación),original,R,R11,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,aplicada,
++move_footprint (post-mutación),original,R,R12,activado,1,08-move-footprint.md,R activados,R12 (Opción A) o S8 directa (Opción B),aplicada,condicionado a Opción A
++move_footprint (post-mutación),original,R,R13,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,aplicada,
++move_footprint (post-mutación),original,R,R14,no_evaluado_o_na,,08-move-footprint.md,(ninguna),ausencia declarada,aplicada,
++add_track (resolución de endpoints),original,S,S1,no_cumple,1,09-add-track.md,S1,"S1 — NO CUMPLE (mismo patrón, tercera y más grande instancia)",aplicada,
++add_track (resolución de endpoints),original,S,S2,cumple,0,09-add-track.md,S2,S2 — cumple (0 reexports),aplicada,
++add_track (resolución de endpoints),original,S,S3,no_determinante,,09-add-track.md,S3,S3 — moderada-alta: 7 helpers geométricos + 1 closure de 167 líneas,aplicada,
++add_track (resolución de endpoints),original,S,S4,cumple,0,09-add-track.md,S4,COBERTURA_DEMOSTRADA razonable para el camino de resolución de pad (la más fuerte de los 12),aplicada,
++add_track (resolución de endpoints),original,S,S5,cumple,0,09-add-track.md,S5,S5 — cumple,aplicada,
++add_track (resolución de endpoints),original,S,S6,no_evaluado_o_na,,09-add-track.md,S6,"REFERENCIA_EXISTENTE, con hallazgo §14 (DRIFT_AFECTA_CANDIDATO) por adyacencia temática con DT3",aplicada,
++add_track (resolución de endpoints),original,S,S7,cumple,0,09-add-track.md,S7,S7.a 167>=80 SÍ; S7.c 332>=100 SÍ,aplicada,
++add_track (resolución de endpoints),original,S,S8,no_determinante,,09-add-track.md,S8,S8 falla bajo Opción B; no evaluable con sentido bajo Opción A,aplicada,
++add_track (resolución de endpoints),original,R,R1,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,aplicada,
++add_track (resolución de endpoints),original,R,R2,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,aplicada,
++add_track (resolución de endpoints),original,R,R3,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,aplicada,
++add_track (resolución de endpoints),original,R,R4,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,aplicada,
++add_track (resolución de endpoints),original,R,R5,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,aplicada,
++add_track (resolución de endpoints),original,R,R6,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,aplicada,
++add_track (resolución de endpoints),original,R,R7,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,aplicada,
++add_track (resolución de endpoints),original,R,R8,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,aplicada,
++add_track (resolución de endpoints),original,R,R9,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,aplicada,
++add_track (resolución de endpoints),original,R,R10,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,aplicada,
++add_track (resolución de endpoints),original,R,R11,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,aplicada,
++add_track (resolución de endpoints),original,R,R12,activado,1,09-add-track.md,R activados,R12 (Opción A) o S8 directa (Opción B),aplicada,condicionado a Opción A
++add_track (resolución de endpoints),original,R,R13,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,aplicada,
++add_track (resolución de endpoints),original,R,R14,no_evaluado_o_na,,09-add-track.md,(ninguna),ausencia declarada,aplicada,
++draw_board_outline,original,S,S1,no_cumple,1,10-draw-board-outline.md,S1,"S1 — NO CUMPLE (mismo patrón, cuarta instancia)",aplicada,
++draw_board_outline,original,S,S2,cumple,0,10-draw-board-outline.md,S2,S2 — cumple,aplicada,
++draw_board_outline,original,S,S3,no_determinante,,10-draw-board-outline.md,S3,S3 — simple-moderada (closure de 85 líneas + 1 helper trivial de 2 líneas),aplicada,
++draw_board_outline,original,S,S4,cumple,0,10-draw-board-outline.md,S4,COBERTURA_DEMOSTRADA razonable (test_draw_board_outline_rejects_nonpositive_dims asertado),aplicada,
++draw_board_outline,original,S,S5,cumple,0,10-draw-board-outline.md,S5,S5 — cumple,aplicada,
++draw_board_outline,original,S,S6,no_evaluado_o_na,,10-draw-board-outline.md,S6,REFERENCIA_EXISTENTE (adyacencia geométrica con DT3 mínima comparada con fichas 3/6/9),aplicada,
++draw_board_outline,original,S,S7,cumple,0,10-draw-board-outline.md,S7,S7.a 85>=80 SÍ (margen mínimo); S7.b NO; S7.c 87<100 NO,aplicada,
++draw_board_outline,original,S,S8,no_determinante,,10-draw-board-outline.md,S8,S8 falla bajo Opción B; no evaluable con sentido bajo Opción A,aplicada,
++draw_board_outline,original,R,R1,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,aplicada,
++draw_board_outline,original,R,R2,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,aplicada,
++draw_board_outline,original,R,R3,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,aplicada,
++draw_board_outline,original,R,R4,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,aplicada,
++draw_board_outline,original,R,R5,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,aplicada,
++draw_board_outline,original,R,R6,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,aplicada,
++draw_board_outline,original,R,R7,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,aplicada,
++draw_board_outline,original,R,R8,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,aplicada,
++draw_board_outline,original,R,R9,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,aplicada,
++draw_board_outline,original,R,R10,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,aplicada,
++draw_board_outline,original,R,R11,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,aplicada,
++draw_board_outline,original,R,R12,activado,1,10-draw-board-outline.md,R activados,R12 (Opción A) o S8 directa (Opción B),aplicada,condicionado a Opción A
++draw_board_outline,original,R,R13,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,aplicada,
++draw_board_outline,original,R,R14,no_evaluado_o_na,,10-draw-board-outline.md,(ninguna),ausencia declarada,aplicada,
++_resolve_board,original,S,S1,cumple,0,11-resolve-board.md,S1,"S1: cumple (d2=0, dependencia solo hacia bridge/ estable)",ausencia_explicita,
++_resolve_board,original,S,S2,cumple,0,11-resolve-board.md,S2,"S2: cumple, 1 reexport (por debajo de UMBRAL_R7_REEXPORTS=3 pese al fan-in de 17)",ausencia_explicita,
++_resolve_board,original,S,S3,cumple,0,11-resolve-board.md,S3,"S3: simple (9 líneas, patrón idéntico a un helper de pcb_encoders.py)",ausencia_explicita,
++_resolve_board,original,S,S4,no_determinante,,11-resolve-board.md,S4,COBERTURA_INFERIDA fuerte por transitividad extrema; ningún test asigna aserción a _resolve_board en sí,ausencia_explicita,
++_resolve_board,original,S,S5,cumple,0,11-resolve-board.md,S5,S5: cumple,ausencia_explicita,
++_resolve_board,original,S,S6,no_evaluado_o_na,,11-resolve-board.md,S6,"REFERENCIA_EXISTENTE (resolución de handle IPC, sin relación con DT3/P1-2)",ausencia_explicita,
++_resolve_board,original,S,S7,no_cumple,1,11-resolve-board.md,S7,"S7: NO cumple ninguna cuantitativa (0<80, 0<3, 9<100)",ausencia_explicita,
++_resolve_board,original,S,S8,cumple,0,11-resolve-board.md,S8,"S8: M2_proyectado = M2_actual bajo diseño mínimo — cumple por igualdad, no domina",ausencia_explicita,
++_resolve_board,original,R,R1,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,ausencia_explicita,
++_resolve_board,original,R,R2,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,ausencia_explicita,
++_resolve_board,original,R,R3,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,ausencia_explicita,
++_resolve_board,original,R,R4,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,ausencia_explicita,
++_resolve_board,original,R,R5,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,ausencia_explicita,
++_resolve_board,original,R,R6,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,ausencia_explicita,
++_resolve_board,original,R,R7,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,ausencia_explicita,
++_resolve_board,original,R,R8,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,ausencia_explicita,
++_resolve_board,original,R,R9,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,ausencia_explicita,
++_resolve_board,original,R,R10,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,ausencia_explicita,
++_resolve_board,original,R,R11,activado,1,11-resolve-board.md,R activado,R11.,ausencia_explicita,
++_resolve_board,original,R,R12,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,ausencia_explicita,
++_resolve_board,original,R,R13,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,ausencia_explicita,
++_resolve_board,original,R,R14,no_evaluado_o_na,,11-resolve-board.md,(ninguna),ausencia declarada,ausencia_explicita,
++_segment_intersects_bbox,original,S,S1,cumple,0,12-segment-intersects-bbox.md,S1,S1: cumple (d2=0 — el candidato más limpio en aislamiento de los 12),ausencia_explicita,
++_segment_intersects_bbox,original,S,S2,cumple,0,12-segment-intersects-bbox.md,S2,"S2: cumple, 1 reexport",ausencia_explicita,
++_segment_intersects_bbox,original,S,S3,cumple,0,12-segment-intersects-bbox.md,S3,"S3: simple (34 líneas, función pura autocontenida)",ausencia_explicita,
++_segment_intersects_bbox,original,S,S4,no_determinante,,12-segment-intersects-bbox.md,S4,Sin test focal directo; COBERTURA_INFERIDA vía sus 2 consumidores (cadena más larga sin aserción directa),ausencia_explicita,
++_segment_intersects_bbox,original,S,S5,cumple,0,12-segment-intersects-bbox.md,S5,S5: cumple,ausencia_explicita,
++_segment_intersects_bbox,original,S,S6,no_evaluado_o_na,,12-segment-intersects-bbox.md,S6,"REFERENCIA_EXISTENTE, misma nota de adyacencia temática con DT3 que fichas 3/4/5/9",ausencia_explicita,
++_segment_intersects_bbox,original,S,S7,no_cumple,1,12-segment-intersects-bbox.md,S7,"S7: NO cumple ninguna cuantitativa (0<80, 0<3, 34<100)",ausencia_explicita,
++_segment_intersects_bbox,original,S,S8,cumple,0,12-segment-intersects-bbox.md,S8,"S8: M2_proyectado = M2_actual (igualdad, diseño mínimo con 1 reexport)",ausencia_explicita,
++_segment_intersects_bbox,original,R,R1,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,ausencia_explicita,
++_segment_intersects_bbox,original,R,R2,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,ausencia_explicita,
++_segment_intersects_bbox,original,R,R3,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,ausencia_explicita,
++_segment_intersects_bbox,original,R,R4,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,ausencia_explicita,
++_segment_intersects_bbox,original,R,R5,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,ausencia_explicita,
++_segment_intersects_bbox,original,R,R6,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,ausencia_explicita,
++_segment_intersects_bbox,original,R,R7,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,ausencia_explicita,
++_segment_intersects_bbox,original,R,R8,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,ausencia_explicita,
++_segment_intersects_bbox,original,R,R9,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,ausencia_explicita,
++_segment_intersects_bbox,original,R,R10,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,ausencia_explicita,
++_segment_intersects_bbox,original,R,R11,activado,1,12-segment-intersects-bbox.md,R activado,R11.,ausencia_explicita,
++_segment_intersects_bbox,original,R,R12,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,ausencia_explicita,
++_segment_intersects_bbox,original,R,R13,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,ausencia_explicita,
++_segment_intersects_bbox,original,R,R14,no_evaluado_o_na,,12-segment-intersects-bbox.md,(ninguna),ausencia declarada,ausencia_explicita,
++_similars,extension,S,S1,cumple,0,13-similars.md,S1,"S1: cumple (d2=0, sin dependencias hacia pcb.py ni módulos inestables)",ausencia_explicita,
++_similars,extension,S,S2,cumple,0,13-similars.md,S2,"S2: cumple, 1 reexport (< UMBRAL_R7_REEXPORTS=3)",ausencia_explicita,
++_similars,extension,S,S3,cumple,0,13-similars.md,S3,"S3: simple (3 líneas, función pura sin estado)",ausencia_explicita,
++_similars,extension,S,S4,no_determinante,,13-similars.md,S4,"Sin COBERTURA_DEMOSTRADA directa; COBERTURA_INFERIDA fuerte, sin delta de test propuesto",ausencia_explicita,
++_similars,extension,S,S5,cumple,0,13-similars.md,S5,S5: cumple,ausencia_explicita,
++_similars,extension,S,S6,no_evaluado_o_na,,13-similars.md,S6,"REFERENCIA_EXISTENTE (utilidad de UX de error, sin relación con DT3/P1-2)",ausencia_explicita,
++_similars,extension,S,S7,no_cumple,1,13-similars.md,S7,S7: NO cumple ninguna cuantitativa (LOC=3<<80; 1 closure eliminada<3; reducción pcb.py=3<<100),ausencia_explicita,
++_similars,extension,S,S8,cumple,0,13-similars.md,S8,S8: M2_proyectado = M2_actual (cumple por igualdad),ausencia_explicita,
++_similars,extension,R,R1,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,ausencia_explicita,
++_similars,extension,R,R2,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,ausencia_explicita,
++_similars,extension,R,R3,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,ausencia_explicita,
++_similars,extension,R,R4,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,ausencia_explicita,
++_similars,extension,R,R5,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,ausencia_explicita,
++_similars,extension,R,R6,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,ausencia_explicita,
++_similars,extension,R,R7,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,ausencia_explicita,
++_similars,extension,R,R8,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,ausencia_explicita,
++_similars,extension,R,R9,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,ausencia_explicita,
++_similars,extension,R,R10,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,ausencia_explicita,
++_similars,extension,R,R11,activado,1,13-similars.md,R activado,R11 (beneficio marginal — S7 no se satisface y no hay base para E1),ausencia_explicita,
++_similars,extension,R,R12,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,ausencia_explicita,
++_similars,extension,R,R13,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,ausencia_explicita,
++_similars,extension,R,R14,no_evaluado_o_na,,13-similars.md,(ninguna),ausencia declarada,ausencia_explicita,
++"{_via_params, add_via}",extension,S,S1,no_determinante,,14-via-params-add-via.md,S1,NO cumple (Ruta A) / cumple con degradación S8 (Ruta B) — ver M2,ausencia_explicita,no comprometido a una sola ruta en la ficha
++"{_via_params, add_via}",extension,S,S2,cumple,0,14-via-params-add-via.md,S2,S2: cumple (firma @mcp.tool preservada),ausencia_explicita,
++"{_via_params, add_via}",extension,S,S3,cumple,0,14-via-params-add-via.md,S3,S3: simple (mover 2 símbolos + wrapper delgado),ausencia_explicita,
++"{_via_params, add_via}",extension,S,S4,cumple,0,14-via-params-add-via.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA",ausencia_explicita,
++"{_via_params, add_via}",extension,S,S5,cumple,0,14-via-params-add-via.md,S5,S5: cumple (no toca zonas/route_board/stitching),ausencia_explicita,
++"{_via_params, add_via}",extension,S,S6,no_evaluado_o_na,,14-via-params-add-via.md,S6,"REFERENCIA_EXISTENTE (mutación de cobre puntual, sin relación con DT3/P1-2)",ausencia_explicita,
++"{_via_params, add_via}",extension,S,S7,cumple,0,14-via-params-add-via.md,S7,S7: cumple por S7.a (110 >= UMBRAL_S7_LOC=80),ausencia_explicita,
++"{_via_params, add_via}",extension,S,S8,no_cumple,1,14-via-params-add-via.md,S8,S8: NO cumple en ninguna de las dos rutas (ver M2),ausencia_explicita,
++"{_via_params, add_via}",extension,R,R1,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,ausencia_explicita,
++"{_via_params, add_via}",extension,R,R2,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,ausencia_explicita,
++"{_via_params, add_via}",extension,R,R3,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,ausencia_explicita,
++"{_via_params, add_via}",extension,R,R4,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,ausencia_explicita,
++"{_via_params, add_via}",extension,R,R5,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,ausencia_explicita,
++"{_via_params, add_via}",extension,R,R6,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,ausencia_explicita,
++"{_via_params, add_via}",extension,R,R7,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,ausencia_explicita,
++"{_via_params, add_via}",extension,R,R8,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,ausencia_explicita,
++"{_via_params, add_via}",extension,R,R9,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,ausencia_explicita,
++"{_via_params, add_via}",extension,R,R10,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,ausencia_explicita,
++"{_via_params, add_via}",extension,R,R11,activado,1,14-via-params-add-via.md,R activado,"R11 (Ruta B, beneficio marginal sin dominancia M2)",ausencia_explicita,condicionado a Ruta B
++"{_via_params, add_via}",extension,R,R12,activado,1,14-via-params-add-via.md,R activado,"R12 (Ruta A, ciclo de import)",ausencia_explicita,condicionado a Ruta A
++"{_via_params, add_via}",extension,R,R13,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,ausencia_explicita,
++"{_via_params, add_via}",extension,R,R14,no_evaluado_o_na,,14-via-params-add-via.md,(ninguna),ausencia declarada,ausencia_explicita,
++delete_track,extension,S,S1,no_determinante,,15-delete-track.md,S1,"no determinante — el estado actual cumple, pero el gate se evalúa sobre la extracción proyectada, no evaluada completamente",no_determinable,
++delete_track,extension,S,S2,cumple,0,15-delete-track.md,S2,S2: cumple,no_determinable,
++delete_track,extension,S,S3,cumple,0,15-delete-track.md,S3,S3: simple (wrapper de una función),no_determinable,
++delete_track,extension,S,S4,cumple,0,15-delete-track.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA amplia",no_determinable,
++delete_track,extension,S,S5,cumple,0,15-delete-track.md,S5,S5: cumple,no_determinable,
++delete_track,extension,S,S6,no_evaluado_o_na,,15-delete-track.md,S6,REFERENCIA_EXISTENTE,no_determinable,
++delete_track,extension,S,S7,no_cumple,1,15-delete-track.md,S7,S7: NO cumple ninguna cuantitativa (18<80; 1 closure<3; 18<100),no_determinable,
++delete_track,extension,S,S8,no_determinante,,15-delete-track.md,S8,no determinante (S7 ya falla),no_determinable,
++delete_track,extension,R,R1,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no_determinable,
++delete_track,extension,R,R2,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no_determinable,
++delete_track,extension,R,R3,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no_determinable,
++delete_track,extension,R,R4,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no_determinable,
++delete_track,extension,R,R5,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no_determinable,
++delete_track,extension,R,R6,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no_determinable,
++delete_track,extension,R,R7,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no_determinable,
++delete_track,extension,R,R8,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no_determinable,
++delete_track,extension,R,R9,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no_determinable,
++delete_track,extension,R,R10,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no_determinable,
++delete_track,extension,R,R11,activado,1,15-delete-track.md,R activado,"R11 (beneficio marginal — S7 no se satisface, sin base para E1)",no_determinable,
++delete_track,extension,R,R12,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no_determinable,
++delete_track,extension,R,R13,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no_determinable,
++delete_track,extension,R,R14,no_evaluado_o_na,,15-delete-track.md,(ninguna),ausencia declarada,no_determinable,
++delete_via,extension,S,S1,no_determinante,,16-delete-via.md,S1,"no determinante — el estado actual cumple, pero el gate se evalúa sobre la extracción proyectada, no evaluada completamente",no_determinable,
++delete_via,extension,S,S2,cumple,0,16-delete-via.md,S2,S2: cumple,no_determinable,
++delete_via,extension,S,S3,cumple,0,16-delete-via.md,S3,S3: simple,no_determinable,
++delete_via,extension,S,S4,cumple,0,16-delete-via.md,S4,S4: cumple con reserva — COBERTURA_DEMOSTRADA mínima (1 test propio),no_determinable,
++delete_via,extension,S,S5,cumple,0,16-delete-via.md,S5,S5: cumple,no_determinable,
++delete_via,extension,S,S6,no_evaluado_o_na,,16-delete-via.md,S6,REFERENCIA_EXISTENTE,no_determinable,
++delete_via,extension,S,S7,no_cumple,1,16-delete-via.md,S7,S7: NO cumple ninguna cuantitativa (18<80; 1 closure<3; 18<100),no_determinable,
++delete_via,extension,S,S8,no_determinante,,16-delete-via.md,S8,no determinante (S7 ya falla),no_determinable,
++delete_via,extension,R,R1,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no_determinable,
++delete_via,extension,R,R2,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no_determinable,
++delete_via,extension,R,R3,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no_determinable,
++delete_via,extension,R,R4,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no_determinable,
++delete_via,extension,R,R5,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no_determinable,
++delete_via,extension,R,R6,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no_determinable,
++delete_via,extension,R,R7,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no_determinable,
++delete_via,extension,R,R8,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no_determinable,
++delete_via,extension,R,R9,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no_determinable,
++delete_via,extension,R,R10,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no_determinable,
++delete_via,extension,R,R11,activado,1,16-delete-via.md,R activado,"R11 (beneficio marginal, S7 no se satisface)",no_determinable,
++delete_via,extension,R,R12,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no_determinable,
++delete_via,extension,R,R13,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no_determinable,
++delete_via,extension,R,R14,no_evaluado_o_na,,16-delete-via.md,(ninguna),ausencia declarada,no_determinable,
++get_component_detail,extension,S,S1,no_determinante,,17-get-component-detail.md,S1,"no determinante — el estado actual cumple, pero el gate se evalúa sobre la extracción proyectada, no evaluada completamente",no_determinable,
++get_component_detail,extension,S,S2,cumple,0,17-get-component-detail.md,S2,S2: cumple,no_determinable,
++get_component_detail,extension,S,S3,cumple,0,17-get-component-detail.md,S3,S3: simple,no_determinable,
++get_component_detail,extension,S,S4,cumple,0,17-get-component-detail.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA",no_determinable,
++get_component_detail,extension,S,S5,cumple,0,17-get-component-detail.md,S5,S5: cumple,no_determinable,
++get_component_detail,extension,S,S6,no_evaluado_o_na,,17-get-component-detail.md,S6,"REFERENCIA_EXISTENTE — consumidor incidental en tests GUI de zonas, no CAMBIO_INCIDENTAL ni PRERREQUISITO de DT3",no_determinable,
++get_component_detail,extension,S,S7,no_cumple,1,17-get-component-detail.md,S7,S7: NO cumple ninguna cuantitativa (21<80; 1 closure<3; 21<100),no_determinable,
++get_component_detail,extension,S,S8,no_determinante,,17-get-component-detail.md,S8,no determinante (S7 ya falla),no_determinable,
++get_component_detail,extension,R,R1,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no_determinable,
++get_component_detail,extension,R,R2,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no_determinable,
++get_component_detail,extension,R,R3,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no_determinable,
++get_component_detail,extension,R,R4,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no_determinable,
++get_component_detail,extension,R,R5,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no_determinable,
++get_component_detail,extension,R,R6,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no_determinable,
++get_component_detail,extension,R,R7,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no_determinable,
++get_component_detail,extension,R,R8,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no_determinable,
++get_component_detail,extension,R,R9,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no_determinable,
++get_component_detail,extension,R,R10,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no_determinable,
++get_component_detail,extension,R,R11,activado,1,17-get-component-detail.md,R activado,"R11 (beneficio marginal, S7 no se satisface)",no_determinable,
++get_component_detail,extension,R,R12,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no_determinable,
++get_component_detail,extension,R,R13,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no_determinable,
++get_component_detail,extension,R,R14,no_evaluado_o_na,,17-get-component-detail.md,(ninguna),ausencia declarada,no_determinable,
++get_tracks,extension,S,S1,no_determinante,,18-get-tracks.md,S1,NO cumple (Ruta A) / cumple con degradación S8 (Ruta B),ausencia_explicita,no comprometido a una sola ruta en la ficha
++get_tracks,extension,S,S2,cumple,0,18-get-tracks.md,S2,S2: cumple,ausencia_explicita,
++get_tracks,extension,S,S3,cumple,0,18-get-tracks.md,S3,"S3: simple (mover 1 función, wrapper delgado)",ausencia_explicita,
++get_tracks,extension,S,S4,cumple,0,18-get-tracks.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA",ausencia_explicita,
++get_tracks,extension,S,S5,cumple,0,18-get-tracks.md,S5,"S5: cumple (lectura de cobre, no toca zonas ni route_board)",ausencia_explicita,
++get_tracks,extension,S,S6,no_evaluado_o_na,,18-get-tracks.md,S6,"REFERENCIA_EXISTENTE (lectura de tracks/vías, sin relación con DT3/P1-2)",ausencia_explicita,
++get_tracks,extension,S,S7,cumple,0,18-get-tracks.md,S7,S7: cumple por S7.a (86 >= 80),ausencia_explicita,
++get_tracks,extension,S,S8,no_cumple,1,18-get-tracks.md,S8,S8: NO cumple en ninguna ruta (peor caso de los 9: d2=6 / Δd1=+6),ausencia_explicita,
++get_tracks,extension,R,R1,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,ausencia_explicita,
++get_tracks,extension,R,R2,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,ausencia_explicita,
++get_tracks,extension,R,R3,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,ausencia_explicita,
++get_tracks,extension,R,R4,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,ausencia_explicita,
++get_tracks,extension,R,R5,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,ausencia_explicita,
++get_tracks,extension,R,R6,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,ausencia_explicita,
++get_tracks,extension,R,R7,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,ausencia_explicita,
++get_tracks,extension,R,R8,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,ausencia_explicita,
++get_tracks,extension,R,R9,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,ausencia_explicita,
++get_tracks,extension,R,R10,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,ausencia_explicita,
++get_tracks,extension,R,R11,activado,1,18-get-tracks.md,R activado,"R11 (Ruta B, el deterioro de M2 más grande de los 9 candidatos)",ausencia_explicita,condicionado a Ruta B
++get_tracks,extension,R,R12,activado,1,18-get-tracks.md,R activado,R12 (Ruta A) — S1 falla con el margen más amplio de los 9 candidatos,ausencia_explicita,condicionado a Ruta A
++get_tracks,extension,R,R13,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,ausencia_explicita,
++get_tracks,extension,R,R14,no_evaluado_o_na,,18-get-tracks.md,(ninguna),ausencia declarada,ausencia_explicita,
++reload_board_from_disk,extension,S,S1,no_determinante,,19-reload-board-from-disk.md,S1,"no determinante — el estado actual cumple, pero el gate se evalúa sobre la extracción proyectada, no evaluada completamente",no_determinable,
++reload_board_from_disk,extension,S,S2,cumple,0,19-reload-board-from-disk.md,S2,"S2: cumple, incluido el remapeo de error documentado",no_determinable,
++reload_board_from_disk,extension,S,S3,cumple,0,19-reload-board-from-disk.md,S3,S3: simple,no_determinable,
++reload_board_from_disk,extension,S,S4,cumple,0,19-reload-board-from-disk.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA",no_determinable,
++reload_board_from_disk,extension,S,S5,cumple,0,19-reload-board-from-disk.md,S5,S5: cumple,no_determinable,
++reload_board_from_disk,extension,S,S6,no_evaluado_o_na,,19-reload-board-from-disk.md,S6,"REFERENCIA_EXISTENTE (mecanismo de sincronización disco-vivo, sin relación con DT3/P1-2)",no_determinable,
++reload_board_from_disk,extension,S,S7,no_cumple,1,19-reload-board-from-disk.md,S7,S7: NO cumple ninguna cuantitativa (57<80; 1 closure<3; 57<100),no_determinable,
++reload_board_from_disk,extension,S,S8,no_determinante,,19-reload-board-from-disk.md,S8,no determinante (S7 ya falla),no_determinable,
++reload_board_from_disk,extension,R,R1,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no_determinable,
++reload_board_from_disk,extension,R,R2,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no_determinable,
++reload_board_from_disk,extension,R,R3,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no_determinable,
++reload_board_from_disk,extension,R,R4,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no_determinable,
++reload_board_from_disk,extension,R,R5,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no_determinable,
++reload_board_from_disk,extension,R,R6,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no_determinable,
++reload_board_from_disk,extension,R,R7,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no_determinable,
++reload_board_from_disk,extension,R,R8,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no_determinable,
++reload_board_from_disk,extension,R,R9,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no_determinable,
++reload_board_from_disk,extension,R,R10,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no_determinable,
++reload_board_from_disk,extension,R,R11,activado,1,19-reload-board-from-disk.md,R activado,"R11 (beneficio marginal, S7 no se satisface)",no_determinable,
++reload_board_from_disk,extension,R,R12,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no_determinable,
++reload_board_from_disk,extension,R,R13,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no_determinable,
++reload_board_from_disk,extension,R,R14,no_evaluado_o_na,,19-reload-board-from-disk.md,(ninguna),ausencia declarada,no_determinable,
++save_board,extension,S,S1,no_determinante,,20-save-board.md,S1,"no determinante — el estado actual cumple, pero el gate se evalúa sobre la extracción proyectada, no evaluada completamente",no_determinable,
++save_board,extension,S,S2,cumple,0,20-save-board.md,S2,S2: cumple,no_determinable,
++save_board,extension,S,S3,cumple,0,20-save-board.md,S3,S3: simple,no_determinable,
++save_board,extension,S,S4,cumple,0,20-save-board.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA amplia, incluida cobertura cruzada con route_board",no_determinable,
++save_board,extension,S,S5,cumple,0,20-save-board.md,S5,S5: cumple (no implementa refill/zonas),no_determinable,
++save_board,extension,S,S6,no_evaluado_o_na,,20-save-board.md,S6,REFERENCIA_EXISTENTE — no es CAMBIO_INCIDENTAL ni PRERREQUISITO de DT3,no_determinable,
++save_board,extension,S,S7,no_cumple,1,20-save-board.md,S7,S7: NO cumple ninguna cuantitativa (35<80; 1 closure<3; 35<100),no_determinable,
++save_board,extension,S,S8,no_determinante,,20-save-board.md,S8,no determinante (S7 ya falla),no_determinable,
++save_board,extension,R,R1,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no_determinable,
++save_board,extension,R,R2,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no_determinable,
++save_board,extension,R,R3,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no_determinable,
++save_board,extension,R,R4,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no_determinable,
++save_board,extension,R,R5,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no_determinable,
++save_board,extension,R,R6,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no_determinable,
++save_board,extension,R,R7,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no_determinable,
++save_board,extension,R,R8,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no_determinable,
++save_board,extension,R,R9,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no_determinable,
++save_board,extension,R,R10,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no_determinable,
++save_board,extension,R,R11,activado,1,20-save-board.md,R activado,"R11 (beneficio marginal, S7 no se satisface)",no_determinable,
++save_board,extension,R,R12,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no_determinable,
++save_board,extension,R,R13,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no_determinable,
++save_board,extension,R,R14,no_evaluado_o_na,,20-save-board.md,(ninguna),ausencia declarada,no_determinable,
++set_footprint_ref,extension,S,S1,no_determinante,,21-set-footprint-ref.md,S1,NO cumple (Ruta A) / cumple con degradación S8 (Ruta B),ausencia_explicita,no comprometido a una sola ruta en la ficha
++set_footprint_ref,extension,S,S2,cumple,0,21-set-footprint-ref.md,S2,S2: cumple,ausencia_explicita,
++set_footprint_ref,extension,S,S3,cumple,0,21-set-footprint-ref.md,S3,"S3: simple (mover 1 función, wrapper delgado)",ausencia_explicita,
++set_footprint_ref,extension,S,S4,cumple,0,21-set-footprint-ref.md,S4,"S4: cumple, COBERTURA_DEMOSTRADA (offline)",ausencia_explicita,
++set_footprint_ref,extension,S,S5,cumple,0,21-set-footprint-ref.md,S5,"S5: cumple (renombra ref, no toca zonas/route_board)",ausencia_explicita,
++set_footprint_ref,extension,S,S6,no_evaluado_o_na,,21-set-footprint-ref.md,S6,"REFERENCIA_EXISTENTE (resolución de refs duplicados, sin relación con DT3/P1-2)",ausencia_explicita,
++set_footprint_ref,extension,S,S7,cumple,0,21-set-footprint-ref.md,S7,S7: cumple por S7.a (114>=80) y S7.c (114>=100),ausencia_explicita,
++set_footprint_ref,extension,S,S8,no_cumple,1,21-set-footprint-ref.md,S8,S8: NO cumple en ninguna ruta — idéntico patrón a add_via (ficha 14),ausencia_explicita,
++set_footprint_ref,extension,R,R1,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,ausencia_explicita,
++set_footprint_ref,extension,R,R2,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,ausencia_explicita,
++set_footprint_ref,extension,R,R3,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,ausencia_explicita,
++set_footprint_ref,extension,R,R4,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,ausencia_explicita,
++set_footprint_ref,extension,R,R5,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,ausencia_explicita,
++set_footprint_ref,extension,R,R6,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,ausencia_explicita,
++set_footprint_ref,extension,R,R7,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,ausencia_explicita,
++set_footprint_ref,extension,R,R8,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,ausencia_explicita,
++set_footprint_ref,extension,R,R9,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,ausencia_explicita,
++set_footprint_ref,extension,R,R10,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,ausencia_explicita,
++set_footprint_ref,extension,R,R11,activado,1,21-set-footprint-ref.md,R activado,R11 (Ruta B),ausencia_explicita,condicionado a Ruta B
++set_footprint_ref,extension,R,R12,activado,1,21-set-footprint-ref.md,R activado,R12 (Ruta A),ausencia_explicita,condicionado a Ruta A
++set_footprint_ref,extension,R,R13,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,ausencia_explicita,
++set_footprint_ref,extension,R,R14,no_evaluado_o_na,,21-set-footprint-ref.md,(ninguna),ausencia declarada,ausencia_explicita,
+diff --color -ru resultado-S48-A-20260809/02-frecuencias-y-coocurrencias.md resultado-S48-A-20260809-R1/02-frecuencias-y-coocurrencias.md
+--- resultado-S48-A-20260809/02-frecuencias-y-coocurrencias.md	2026-08-09 17:34:21.729936614 -0300
++++ resultado-S48-A-20260809-R1/02-frecuencias-y-coocurrencias.md	2026-08-09 18:14:25.805452720 -0300
+@@ -44,14 +44,25 @@
+ 
+ **OBSERVACION.** Dos señales dominan con ≥50 %: `S8_R11` (16/21) y `S7`
+ (13/21). Una tercera, `R12`, aparece en banda media (8/21, 38.1 %). `S1`
+-también en banda media (6/21, 28.6 %). El resto de las 21 señales
+-canónicas posibles tiene **0 activaciones observadas** en las 21 fichas —
+-no porque se hayan evaluado y descartado, sino porque, salvo las
+-excepciones puntuales de R1 (ficha 1) y R7 (ficha 2), **no están
+-declaradas** en ninguna ficha (`NA` = 20 ó 21 de 21, según el criterio; ver
+-`01a-ontologia-y-derivaciones.md`). Esta ausencia declarativa masiva es en
+-sí misma un hallazgo — ver `04-interpretacion.md` §Q6 y
+-`05-hallazgos-meta.md`.
++también en banda media (6/21, 28.6 %). Las 17 señales canónicas restantes
++tienen **0 activaciones observadas** en las 21 fichas, pero no forman un
++grupo homogéneo — se dividen en dos poblaciones de naturaleza distinta
++(corrección de ronda R1, ver `04-interpretacion.md` §Q6):
++
++- **Evaluadas sin fallo (6 señales):** `S2` (20/21 evaluados, 0 fallos, 1
++  `NA`), `S5` (20/21, 0, 1 `NA`), `S3` (15/21, 0, 6 `NA`), `S4` (12/21, 0,
++  9 `NA`), `R1` (1/21, 0, 20 `NA`), `R7` (1/21, 0, 20 `NA`). Estas señales
++  **sí fueron evaluadas** repetidamente — `S2` y `S5` en 20 de los 21
++  candidatos — y en ningún caso resultaron en fallo.
++- **Sin declaración alguna (11 señales):** `S6`, `R2`, `R3`, `R4`, `R5`,
++  `R6`, `R8`, `R9`, `R10`, `R13`, `R14` — `NA` en las 21 fichas, ninguna
++  evaluación positiva ni negativa registrada.
++
++6 + 11 = 17. La formulación previa de esta nota ("no fueron descartadas
++explícitamente, simplemente no fueron citadas") describía correctamente
++solo a las 11 señales sin declaración, no a las 6 que sí se evalúan
++sistemáticamente y sin fallo — ver `04-interpretacion.md` §Q6 para el
++detalle completo.
+ 
+ Nota de transparencia sobre `S8_R11` sin fusionar (no usada para Q1–Q4,
+ solo diagnóstico): `S8` en estado fuente `no_cumple` en 3/21 fichas,
+@@ -60,10 +71,11 @@
+ `no_evaluado_o_na` (no declarado) en 5/21. La señal canónica `S8_R11`
+ combina ambos por la regla de `01a-ontologia-y-derivaciones.md`.
+ 
+-## Q3 — Coocurrencias entre señales primarias (top, sin duplicar S8/R11)
++## Q3 — Coocurrencias entre señales primarias (pares y trío, sin duplicar S8/R11)
+ 
+-Todas las coocurrencias no nulas observadas en las 21 fichas (menos de 5
+-pares distintos existen; se reportan todos):
++Todas las coocurrencias no nulas observadas en las 21 fichas, por pares
++(menos de 5 pares distintos existen; se reportan todos) y, por separado, el
++único trío no nulo:
+ 
+ | Par | Coocurrencias/21 |
+ |---|---:|
+@@ -73,6 +85,10 @@
+ | `S1` + `S8_R11` | 1 |
+ | `S1` + `S7` | 1 |
+ 
++| Trío | Coocurrencias/21 |
++|---|---:|
++| `{S1, S8_R11, R12}` | 1 |
++
+ **OBSERVACION.** El par dominante con amplio margen es `S7` + `S8_R11`
+ (12/21, 57 %): candidatos pequeños (helper-only o `S7` falla primero por
+ diseño de evaluación, ver `03-firmas-y-clusters.md`) que además no
+@@ -84,5 +100,13 @@
+ con el patrón dual Ruta A/B). Ningún par involucra alguna de las 17 señales
+ con 0 activaciones de Q2.
+ 
++El único trío no nulo, `{S1, S8_R11, R12} = 1` (`_delete_copper`, ficha 1,
++Grupo E de `03-firmas-y-clusters.md`), es también el único candidato de los
++21 con 3 señales canónicas activas en vez de 2 (ver Q1). No hay un segundo
++trío que reportar: por eso el ranking de coocurrencias del contrato §Q3 (que
++pide "pares o tríos") se resuelve en la práctica como 5 pares + 1 trío, no
++como "solo pares" — se documenta explícitamente para no dar la impresión de
++que el trío fue omitido u obviado.
++
+ Fuente citable de cada celda: `01-matriz-refutacion.csv`, columnas
+ `fuente_ficha`/`fuente_seccion`/`fuente_cita`.
+diff --color -ru resultado-S48-A-20260809/03-firmas-y-clusters.md resultado-S48-A-20260809-R1/03-firmas-y-clusters.md
+--- resultado-S48-A-20260809/03-firmas-y-clusters.md	2026-08-09 17:34:57.750965839 -0300
++++ resultado-S48-A-20260809-R1/03-firmas-y-clusters.md	2026-08-09 18:14:52.024496558 -0300
+@@ -107,16 +107,49 @@
+ Todos los 21 candidatos caen en exactamente uno de 7 grupos deterministas;
+ ningún candidato queda sin firma asignada.
+ 
++## Distinción entre firmas exactas y conjuntos de señales activas (corrección de ronda R1)
++
++El contrato §6/Q4 pregunta por candidatos que comparten "exactamente la
++misma firma de señales de fallo". La tabla de 7 grupos arriba responde eso
++sobre el **vector completo** (21 posiciones, incluyendo la posición exacta
++de cada `NA`) — es la partición más fina posible y el resultado primario de
++Q4. Pero conviene distinguir esa cifra de una lectura más gruesa, que
++importa para Q1/Q5: cuántos **conjuntos distintos de señales activas de
++fallo** (ignorando la posición de los `NA`, solo mirando qué señales llegan
++a `senal_fallo=1`) hay entre los 21 candidatos:
++
++| Conjunto de señales activas | Grupos que lo comparten | Candidatos |
++|---|---|---:|
++| `{S7, S8_R11}` | A + B + F | 12 |
++| `{S1, R12}` | C | 4 |
++| `{S8_R11, R12}` | D | 3 |
++| `{S1, S8_R11, R12}` | E | 1 |
++| `{S1, S7}` | G | 1 |
++
++**7 firmas exactas, pero solo 5 conjuntos distintos de señales activas de
++fallo** (12+4+3+1+1=21). Los grupos A, B y F comparten el mismo conjunto
++activo `{S7, S8_R11}` y solo se separan como firmas distintas por el estado
++de celdas que **no** son señales de fallo activas (`S1`/`S4` declarados de
++forma diferente en A vs. B; una declaración adicional de `R7=no_activado`
++en F) — ver §Grupo B y §Grupo F arriba para el detalle candidato a
++candidato.
++
+ ## Clustering exploratorio adicional
+ 
+ Se evaluó agrupar por distancia sobre el vector canónico completo (método
+-alternativo al de firma exacta). El resultado coincide exactamente con la
+-agrupación determinista de arriba (las mismas 7 particiones aparecen bajo
+-cualquier métrica de distancia razonable sobre un espacio de 21 dimensiones
+-binarias/NA con tan pocas señales activas por fila). No aporta información
+-adicional. Se declara explícitamente: el clustering exploratorio no es
+-concluyente como método adicional independiente — la agrupación
+-determinista de firma exacta ya es la partición más fina y correcta posible
+-sobre estos datos. `CLUSTERING_NO_CONCLUYENTE` respecto de aportar una
+-partición *distinta*; la partición determinista de arriba sí es el
+-resultado primario válido de Q4.
++alternativo al de firma exacta). El resultado coincide con la agrupación
++determinista de arriba: no se identificó ninguna partición alternativa que
++separe o una grupos de forma distinta a los 7 de la tabla. **Corrección de
++ronda R1:** la versión previa de este párrafo afirmaba que "las mismas 7
++particiones aparecen bajo cualquier métrica de distancia razonable" — esa
++generalización sobre *cualquier* métrica no fue puesta a prueba (no se
++ejecutó ningún cálculo de distancia real sobre las 21 dimensiones binarias/
++`NA`, solo una inspección cualitativa de que ninguna métrica obvia
++produciría una partición distinta dado lo disperso del espacio activo). Se
++retira la afirmación no demostrada. Lo que sí se sostiene, sin necesidad de
++esa generalización: la partición por firma exacta (7 grupos) ya es la más
++fina posible sobre estos datos, y ningún ejercicio de agrupación adicional
++—exploratorio o no— puede producir más de 7 particiones sin inventar
++información no presente en la matriz. `CLUSTERING_NO_CONCLUYENTE` respecto
++de aportar una partición *distinta* de la determinista; la partición
++determinista de arriba es el resultado primario válido de Q4.
+diff --color -ru resultado-S48-A-20260809/04-interpretacion.md resultado-S48-A-20260809-R1/04-interpretacion.md
+--- resultado-S48-A-20260809/04-interpretacion.md	2026-08-09 17:36:06.266027800 -0300
++++ resultado-S48-A-20260809-R1/04-interpretacion.md	2026-08-09 18:16:36.450671439 -0300
+@@ -37,17 +37,44 @@
+ `OBSERVACION`. Cinco pares con coocurrencia no nula, todos reportados (no
+ hay top-5 recortado, es el universo completo de pares observados): `S7`+
+ `S8_R11` (12/21), `R12`+`S1` (5/21), `R12`+`S8_R11` (4/21), `S1`+`S8_R11`
+-(1/21), `S1`+`S7` (1/21). Ver `02-frecuencias-y-coocurrencias.md` §Q3 para
+-el desglose por grupo estructural.
++(1/21), `S1`+`S7` (1/21). Además, el único trío no nulo observado:
++`{S1, S8_R11, R12} = 1` (`_delete_copper`, el único candidato de los 21 con
++3 señales canónicas activas — ver Q1). El ranking del contrato §6/Q3 pide
++"pares o tríos" explícitamente; se reporta el trío junto con los pares en
++vez de limitar el análisis a pares, precisamente porque existe uno (n=1,
++100 % del universo con 3 señales activas). Ver
++`02-frecuencias-y-coocurrencias.md` §Q3 para el desglose por grupo
++estructural.
+ 
+ ## Q4 — Familias
+ 
+-`OBSERVACION`. 7 firmas exactas deterministas, ninguna con más de 6
+-miembros (ver `03-firmas-y-clusters.md`). El clustering exploratorio
+-adicional no aportó una partición distinta de la determinista —
+-`CLUSTERING_NO_CONCLUYENTE` como método independiente, pero la agrupación
+-determinista sí es un resultado válido y completo de Q4 (los 21 candidatos
+-quedan asignados sin resto).
++`OBSERVACION`. Dos niveles de agregación, con cifras distintas y ambas
++necesarias para no confundirlas (ver `03-firmas-y-clusters.md`):
++
++- **7 firmas exactas** sobre el vector canónico completo (21 posiciones,
++  incluyendo la posición de cada `NA`) — es el resultado primario y más
++  fino de Q4, ninguna con más de 6 miembros.
++- **5 conjuntos distintos de señales activas de fallo** (ignorando la
++  posición de los `NA`, solo las señales con `senal_fallo=1`):
++  `{S7,S8_R11}` (12 candidatos, grupos A+B+F), `{S1,R12}` (4, grupo C),
++  `{S8_R11,R12}` (3, grupo D), `{S1,S8_R11,R12}` (1, grupo E), `{S1,S7}`
++  (1, grupo G).
++
++Las 7 firmas se reducen a 5 conjuntos activos porque los grupos A, B y F
++comparten literalmente el mismo par de señales de fallo (`{S7,S8_R11}`) y
++solo se distinguen entre sí por diferencias en celdas que **no** son
++señales de fallo (declaración de `S1`/`S4` entre paquete original y
++extensión; una única declaración de `R7=no_activado` en el grupo F).
++
++El clustering exploratorio adicional no aportó una partición distinta de la
++determinista de 7 firmas — `CLUSTERING_NO_CONCLUYENTE` como método
++independiente, pero la agrupación determinista sí es un resultado válido y
++completo de Q4 (los 21 candidatos quedan asignados sin resto). **Corrección
++de ronda R1:** se retira la afirmación previa de que "las mismas 7
++particiones aparecen bajo cualquier métrica de distancia razonable" — esa
++generalización nunca fue verificada por cómputo real, solo por inspección
++cualitativa; ver `03-firmas-y-clusters.md` para el detalle de qué sí se
++sostiene sin ella.
+ 
+ ## Q5 — Patrones documentados
+ 
+@@ -60,21 +87,53 @@
+   candidatos adicionales que citan un subconjunto del trío
+   (`_resolve_board` solo: fichas 3, 19, 20; `_audit_error`+`_resolve_board`:
+   ficha 10 ya contada).
+-- **Reexports** como mecanismo de preservación de superficie (S2): citado
+-  explícitamente en 13/21 fichas, siempre en sentido "cumple, por debajo de
+-  `UMBRAL_R7_REEXPORTS=3`" — ninguna ficha reporta un caso donde S2/R7
+-  fallan por exceso de reexports.
++- **Reexports** como mecanismo de preservación de superficie (S2): la
++  palabra "reexport" aparece en **14/21** fichas (corrección de ronda R1;
++  el "13/21" previo no correspondía a ningún criterio verificable). De
++  ellas, **11** declaran un conteo numérico de reexports asociado
++  directamente al gate `S2` (0 ó 1 reexport, siempre por debajo de
++  `UMBRAL_R7_REEXPORTS=3`: fichas 1, 2, 3, 4, 5, 7, 8, 9, 11, 12 del
++  original + 13 de la extensión). Las **3** restantes (14, 18, 21, todas de
++  la extensión) usan el término solo como rótulo de diseño — "Ruta A —
++  reexport natural" — para describir la vía de extracción que crea el
++  ciclo de import (`S1`/`R12`), sin declarar un conteo de `S2` distinto de
++  "cumple". En ambos casos, ninguna ficha reporta `S2` ni `R7` fallando por
++  exceso de reexports: confirmado en la matriz (`S2` fail=0/21, `R7`
++  fail=0/21).
+ - **Monkeypatches**: 0/21 fichas de candidato lo mencionan directamente (el
+   término solo aparece en `enumeracion.md`/`descartados.md`, documentos de
+   síntesis, no en las 21 fichas individuales).
+-- **Cobertura** (`COBERTURA_INFERIDA` vs. `COBERTURA_DEMOSTRADA`): presente
+-  en las 21 fichas sin excepción (S4), con una asimetría documentada entre
+-  paquetes — ver Q5.bis abajo.
+-- **Mezcla con deudas segregadas** (P1-2/DT3): 7/21 fichas (3, 4, 5, 9, 12
+-  del original) registran `REFERENCIA_EXISTENTE` con nota de "adyacencia
+-  temática" hacia DT3, sin escalar a `PRERREQUISITO` — ninguna ficha
+-  reporta relación con P1-2 más allá de compartir el bridge IPC como
+-  módulo externo genérico.
++- **Cobertura** (`COBERTURA_INFERIDA` vs. `COBERTURA_DEMOSTRADA`): mencionada
++  en **20/21** fichas (corrección de ronda R1 — la afirmación previa de
++  "21/21 sin excepción" era incorrecta). La ficha 6 (`_copper_in_bbox`) es
++  la única excepción: no declara `S4` con ninguna palabra de estado, ya
++  registrado como `H-S48A-01` en `05-hallazgos-meta.md`. Esta cifra (20/21
++  fichas que *mencionan* cobertura en prosa) es distinta de la cuenta de
++  `S4` con estado formal en la matriz (12/21 evaluados con `cumple`, 9/21
++  `no_determinante`/`NA` — ver Q6) — ambas correctas, miden cosas distintas
++  (mención narrativa vs. celda estructurada), no se contradicen. Asimetría
++  entre paquetes documentada en Q5.bis abajo.
++- **Mezcla con deudas segregadas** (P1-2/DT3): corrección de ronda R1 —
++  la cifra previa ("7/21 fichas: 3, 4, 5, 9, 12") era incorrecta en dos
++  sentidos: el conteo no coincidía con la lista (5 elementos, no 7), y las
++  fichas 4 y 5 no mencionan DT3 en absoluto. Reverificado por lectura
++  completa de las 21 fichas:
++  - **16/21** fichas mencionan `DT3`/`P1-2` en alguna forma.
++  - De ellas, **4/21** (fichas 3, 9, 10, 12, todas del paquete original)
++    registran una **adyacencia temática real** hacia DT3 — típicamente con
++    hallazgo §14 `DRIFT_AFECTA_CANDIDATO` (fichas 3 y 9 explícitamente) o
++    nota equivalente de proximidad geométrica —, siempre acotada por el
++    criterio objetivo "DT3 vive en `bridge/`, este código vive en
++    `tools/pcb.py`" y **sin escalar a `PRERREQUISITO`** en ningún caso.
++  - Las **12/21** restantes que mencionan DT3 lo hacen para **descartar**
++    explícitamente cualquier relación ("sin relación con DT3/P1-2"; la
++    ficha 7 con la formulación más fuerte, "sin adyacencia siquiera
++    temática con DT3").
++  - **5/21** fichas (4, 5, 6 del original; 15, 16 de la extensión) no
++    mencionan DT3/P1-2 en absoluto.
++  16 (mencionan) + 5 (no mencionan) = 21; 4 (adyacencia) + 12 (descartan) =
++  16. Ninguna ficha reporta relación con P1-2 más allá de compartir el
++  bridge IPC como módulo externo genérico.
+ 
+ **Q5.bis — asimetría documental entre paquetes (`OBSERVACION`).** El
+ paquete original evalúa `S1` incondicionalmente incluso cuando `S7` ya es
+@@ -98,46 +157,106 @@
+ ## Q6 — Naturaleza de los motivos
+ 
+ `OBSERVACION`. De las 21 señales canónicas posibles (S1–S7, `S8_R11`,
+-R1–R10, R12–R14), solo 4 tienen alguna activación observada en los 21
+-candidatos: `S8_R11` (estructural + refutación fusionadas), `S7`
+-(estructural), `R12` (refutación), `S1` (estructural). Las 17 restantes
+-—incluidas R2, R3, R4, R5, R6, R8, R9, R10, R13, R14 en su totalidad, y R1/
+-R7 salvo una única mención cada uno— no tienen ninguna activación
+-declarada en ninguna de las 21 fichas: **no fueron descartadas
+-explícitamente, simplemente no fueron citadas**. La distribución observada
+-de motivos activos está dominada por **gates estructurales** (S1, S7, y la
+-componente S8 de `S8_R11`) más que por **criterios de refutación**
+-puros (solo R12 y, dentro de la señal fusionada, R11).
++R1–R10, R12–R14), solo 4 tienen alguna activación (`senal_fallo=1`)
++observada en los 21 candidatos: `S8_R11` (estructural + refutación
++fusionadas), `S7` (estructural), `R12` (refutación), `S1` (estructural). La
++distribución observada de motivos activos está dominada por **gates
++estructurales** (S1, S7, y la componente S8 de `S8_R11`) más que por
++**criterios de refutación** puros (solo R12 y, dentro de la señal
++fusionada, R11).
++
++Las 17 señales restantes tienen 0 activaciones, pero **no forman una
++población homogénea** — corrección de ronda R1, la formulación previa
++("no fueron descartadas explícitamente, simplemente no fueron citadas")
++aplicaba correctamente solo a una parte de ellas. Se dividen en dos grupos
++de naturaleza distinta:
++
++- **Evaluadas repetidamente sin ningún fallo (6 señales):** `S2` (20/21
++  candidatos evaluados, 0 fallos), `S5` (20/21, 0), `S3` (15/21, 0), `S4`
++  (12/21, 0), `R1` (1/21, 0), `R7` (1/21, 0). Estas señales sí fueron
++  citadas y resueltas por las fichas — `S2` y `S5` en 20 de los 21
++  candidatos, la inmensa mayoría del universo — y nunca resultaron en un
++  fallo. Describirlas como "no citadas" es incorrecto.
++- **Sin ninguna declaración, positiva o negativa (11 señales):** `S6`, `R2`,
++  `R3`, `R4`, `R5`, `R6`, `R8`, `R9`, `R10`, `R13`, `R14` — `NA` (`no_
++  evaluado_o_na`) en las 21 fichas. A estas sí les aplica sin matices la
++  descripción "no fueron citadas".
++
++6 + 11 = 17. La distinción importa para leer Q6 correctamente: el universo
++de 21 `NO_APTO` no es un universo donde 17 de 21 criterios "no aplicaron" —
++6 de ellos sí se evaluaron sistemáticamente y resultaron favorables
++(`cumple`/`no_activado`); solo 11 quedan genuinamente fuera del rango
++declarativo de las fichas.
+ 
+ `F-DT.1`, `F-DT.3` y `F-DT.4` son `NO_APLICABLE` en este universo de 21,
+ conforme al contrato §7.1/§8: son filtros de exclusión previos a la
+ materialización de fichas, no motivos observables sobre los supervivientes.
+ No se producen conteos ni inferencias sobre ellos.
+ 
+-## Q7 — Convención A
++## Q7 — Convención A (reanalizada en ronda R1)
+ 
+-`HALLAZGO_META` + `EVIDENCIA_INSUFICIENTE`. El término "Convención A" (o
+-cualquier mención de "M2 cualitativo por comparación no homogénea") **no
+-aparece en ninguna de las fuentes autorizadas por el contrato §5.1**: no
+-está en `CONTRATO-AUDITADO.md` (ninguno de los dos paquetes, mismo hash
+-`3b16079c…1402`), no está en la fe de erratas ejecutiva
+-(`fe-de-erratas-ejecutiva-contrato-S47-v6.md`, custodiada fuera de los
+-paquetes pero citada por hash en `PACKAGE-METADATA.md`), y no está en
+-ninguna de las 21 fichas de candidato — se verificó por búsqueda textual
+-exhaustiva sobre los 21 archivos (`convenci[oó]n A`, `no homog`,
+-`cualitativ`), 0 coincidencias.
+-
+-Columna `convencion_a` de la matriz: `no` en las 462 filas — no porque se
+-haya verificado activamente que ningún candidato la invoque en el sentido
+-formal que el contrato v6 pudiera definirle, sino porque el término no
+-aparece citado en ninguna fuente disponible dentro de `MODO_SOLO_PAQUETES`.
+-
+-Registrado como `HALLAZGO_META` en `05-hallazgos-meta.md`
+-(`H-S48A-02`): el contrato S47 v6 delega varias secciones normativas en su
+-versión v5 ("Idéntico a v5") — ver `CONTRATO-AUDITADO.md` §§11.4/11.5 — y
+-v5 no forma parte de las fuentes autorizadas por §5.1 de este contrato ni
+-está dentro de los dos paquetes S47 congelados. Si "Convención A" se define
+-en v5, este análisis no tiene acceso autorizado a esa definición.
+-`Q7 = EVIDENCIA_INSUFICIENTE` sobre la caracterización del subconjunto; el
+-recuento `0/21 fichas la invocan explícitamente por ese nombre` sí es una
+-`OBSERVACION` firme.
++**Corrección de metodología.** La versión previa de esta sección buscó el
++rótulo literal "Convención A" en las fuentes de §5.1, no lo encontró, y
++concluyó `EVIDENCIA_INSUFICIENTE` atribuyendo la laguna a que v6 delega en
++v5 (fuente no autorizada). Esa vía era incorrecta por partida doble: (a) el
++contrato §6/Q7 no pregunta por un rótulo, pregunta "¿en cuántos candidatos
++se usó M2 cualitativo por comparación no homogénea?" — una **conducta**
++observable en las fichas, no un término a buscar; y (b) la semántica que
++define esa conducta está en la **Regla 3 de la fe de erratas ejecutiva**
++(SHA-256 `63fe27be8ca2fa852d2f5dfef3996549edcced710b2b67275b970c19a36dcdd4`,
++verificado en `00-preflight.md` §8.1), no en v5 — v5 nunca fue la fuente
++correcta a buscar.
++
++**Reanálisis.** Aplicando el predicado de tres estados de
++`01a-ontologia-y-derivaciones.md` (§"Operacionalización de la Regla 3") a
++las 21 fichas, con evidencia citada candidato a candidato:
++
++| Estado | N/21 | Candidatos |
++|---|---:|---|
++| `aplicada` | 5 | 1, 3, 8, 9, 10 |
++| `ausencia_explicita` | 10 | 2, 4, 5, 7, 11, 12, 13, 14, 18, 21 |
++| `no_determinable` | 6 | 6, 15, 16, 17, 19, 20 |
++
++`OBSERVACION`, `HIPOTESIS` marcada donde corresponde:
++
++- `OBSERVACION`. **15/21 candidatos son clasificables sustantivamente**:
++  5 aplicaron la vía cualitativa de la Regla 3 (`aplicada`), 10 no la
++  necesitaron porque lograron una comparación homogénea completa
++  (`ausencia_explicita`).
++- `OBSERVACION`. El subconjunto `aplicada` (n=5) coincide **exactamente**
++  con Grupo C + Grupo E de `03-firmas-y-clusters.md`: los 5 candidatos con
++  closure sustancial del paquete original donde la Ruta A de extracción
++  (reexport natural hacia `pcb.py`) activa `R12` y la Ruta B (inyección
++  explícita) hace que `S8` deje de tener un veredicto único cuantificable
++  ("S8 — falla bajo Opción B; no evaluable con sentido bajo Opción A").
++  Todas del paquete original; ninguna de la extensión.
++- `HIPOTESIS` (sin implicar viabilidad de DT1): el hecho de que las 5
++  aplicaciones caigan exactamente en los candidatos de mayor fan-in del
++  paquete original sugiere que la vía cualitativa de la Regla 3 se activa
++  específicamente cuando el candidato depende de helpers de alto consumo
++  compartido (`_audit_error`/`_resolve_board`/`_similars`, ver Q5) — no
++  verificable más allá de esta correlación observada sobre 5 casos.
++- `OBSERVACION`. Los **6/21 no determinables** (ficha 6 + las 5 fichas de
++  extensión donde `S7` rechaza primero bajo la corrección `C-EXT-03`:
++  15, 16, 17, 19, 20) nunca llegan a computar `M2_proyectado`, por lo que
++  el antecedente mismo de la Regla 3 ("dos estados [...] sobre un
++  candidato concreto") no se pone a prueba. La limitación es real, pero es
++  **distinta** de la que declaraba la versión previa: no es ausencia de
++  fuente autorizada, es ausencia de la comparación M2 en la ficha misma.
++
++**Veredicto de Q7 (corregido):** respondida sustantivamente para 15/21
++candidatos. `EVIDENCIA_INSUFICIENTE` se **retiene**, pero **acotada** a los
++6/21 candidatos `no_determinable` — se elimina como fundamento del
++veredicto la afirmación de que el término no aparece en ninguna fuente
++autorizada; esa búsqueda era la pregunta equivocada. No se fuerza
++`ANALISIS_COMPLETO`: la limitación sobre esos 6 candidatos es genuina y se
++mantiene declarada en `06-cierre.md`.
++
++Se conserva como diagnóstico secundario, no como fundamento del veredicto:
++el rótulo literal "Convención A" no aparece en ninguna de las 21 fichas ni
++en `CONTRATO-AUDITADO.md` — 0 coincidencias en búsqueda textual exhaustiva.
++Esto ya no importa para responder Q7 (la Regla 3 nunca definió ese rótulo),
++pero se documenta para que quede constancia de que la búsqueda literal
++original no era, en sí misma, errónea — el error estaba en detenerse ahí en
++vez de aplicar la semántica conductual de la Regla 3. Ver
++`05-hallazgos-meta.md` `H-S48A-02` (reescrito en esta ronda).
+diff --color -ru resultado-S48-A-20260809/05-hallazgos-meta.md resultado-S48-A-20260809-R1/05-hallazgos-meta.md
+--- resultado-S48-A-20260809/05-hallazgos-meta.md	2026-08-09 17:36:31.617052675 -0300
++++ resultado-S48-A-20260809-R1/05-hallazgos-meta.md	2026-08-09 18:17:22.636748914 -0300
+@@ -26,16 +26,50 @@
+ vez de permanecer aislado (Grupo G). Se documenta la magnitud del posible
+ impacto sin aplicarlo — el contrato prohíbe inferir desde el código.
+ 
+-## H-S48A-02 — Q7 (Convención A) sin fuente autorizada
++**Precisión de ronda R1 (§10.2 del contrato, no ampliación):** revisando la
++ficha para clasificar `convencion_a` (ver Q7 abajo) se detectó que la
++ficha 6 sí declara S8 en línea, dentro del bloque de S1/M2 ("Opción B:
++inyectarlo como parámetro -> d1 pasa de 0 a 1, EMPEORA... S8 no cumple"),
++sin encabezado propio `## S8`. La frase de este hallazgo ("S2–S6, S8 sin
++mención de estado") era imprecisa específicamente para S8. No se corrige la
++celda de la matriz — S8 sigue condicional a la Opción B, igual que en la
++ficha 1, donde el criterio de extracción del contrato también produce
++`NA`; alterar la celda excede los 6 puntos autorizados en `00-preflight.md`
++§8.4. Ver `01a-ontologia-y-derivaciones.md` para el detalle.
+ 
+-Ver `04-interpretacion.md` §Q7 para el detalle completo. Resumen: el
+-término no aparece en ninguna fuente dentro del alcance de §5.1 (ambos
+-paquetes S47, contrato v6, fe de erratas). v6 delega en v5 para varias
+-secciones normativas (§§11.4/11.5 de `CONTRATO-AUDITADO.md`: "Idéntico a
+-v5"), y v5 no es un insumo autorizado ni está dentro de los paquetes
+-congelados. No se leyó v5. Produce `EVIDENCIA_INSUFICIENTE` en Q7, no
+-`NO_GO_ENTRADA` (una pregunta sin poder responderse no detiene el análisis,
+-§9 del contrato).
++## H-S48A-02 — Q7 (Convención A): limitación redefinida en ronda R1
++
++**Texto original de este hallazgo (superado, se conserva por trazabilidad):**
++la versión previa de esta sesión buscó el rótulo literal "Convención A" en
++las fuentes de §5.1, no lo encontró en ninguno de los dos paquetes S47, el
++contrato v6 ni la fe de erratas, y concluyó `EVIDENCIA_INSUFICIENTE`
++atribuyendo la causa a que v6 delega varias secciones en su versión v5
++(`CONTRATO-AUDITADO.md` §§11.4/11.5, "Idéntico a v5"), fuente no autorizada
++por §5.1 y no leída.
++
++**Corrección de ronda R1:** esa vía era la incorrecta. El contrato §6/Q7 no
++pregunta por un rótulo — pregunta "¿en cuántos candidatos se usó M2
++cualitativo por comparación no homogénea?", una conducta de evaluación
++descrita por la **Regla 3** de la fe de erratas ejecutiva (SHA-256
++`63fe27be8ca2fa852d2f5dfef3996549edcced710b2b67275b970c19a36dcdd4`,
++verificado en `00-preflight.md` §8.1) — no un término a buscar, y v5 nunca
++fue la fuente relevante. Aplicando la Regla 3 como predicado de tres
++estados sobre las 21 fichas (`01a-ontologia-y-derivaciones.md`), Q7 resulta
++sustantivamente respondible para **15/21** candidatos (5 `aplicada` + 10
++`ausencia_explicita`). La limitación real y remanente es **más estrecha**
++que la declarada originalmente: se acota a **6/21** candidatos
++(`no_determinable`: fichas 6, 15, 16, 17, 19, 20) donde la ficha nunca
++computa `M2_proyectado` — no por ausencia de fuente autorizada, sino porque
++el antecedente mismo de la Regla 3 no se pone a prueba en esas fichas
++(`S7` rechaza primero bajo `C-EXT-03`, o la ficha 6 es declarativamente
++incompleta, `H-S48A-01`).
++
++`Q7 = EVIDENCIA_INSUFICIENTE`, pero acotada a esos 6/21 candidatos, no a la
++pregunta completa — los 15/21 restantes quedan respondidos con evidencia
++citada. Esta limitación acotada no produce `NO_GO_ENTRADA` (§9 del
++contrato; `EVIDENCIA_INSUFICIENTE` es una respuesta válida para cualquier
++pregunta). Ver `04-interpretacion.md` §Q7 para la tabla completa y la
++evidencia citada candidato a candidato.
+ 
+ ## Limitaciones heredadas de los paquetes S47 (no nuevas de esta sesión)
+ 
+diff --color -ru resultado-S48-A-20260809/06-cierre.md resultado-S48-A-20260809-R1/06-cierre.md
+--- resultado-S48-A-20260809/06-cierre.md	2026-08-09 17:37:07.459089490 -0300
++++ resultado-S48-A-20260809-R1/06-cierre.md	2026-08-09 18:18:57.752908674 -0300
+@@ -6,11 +6,26 @@
+ ANALISIS_PARCIAL_CON_LIMITACIONES
+ ```
+ 
+-Motivo: Q7 (Convención A) no pudo responderse sobre su caracterización
+-sustantiva por ausencia de fuente autorizada dentro de `MODO_SOLO_PAQUETES`
+-(§5.1 del contrato) — ver `04-interpretacion.md` §Q7 y
+-`05-hallazgos-meta.md` `H-S48A-02`. Las seis preguntas restantes (Q1–Q6) se
+-respondieron completas con evidencia citada celda a celda.
++**Corrección de ronda R1 (§10.2 del contrato):** el motivo de este veredicto
++cambia respecto de la unidad original (`resultado-S48-A-20260809`), aunque
++el veredicto de tres valores permanece el mismo. La unidad original atribuía
++la limitación de Q7 a ausencia de fuente autorizada; esa atribución era
++incorrecta — ver `05-hallazgos-meta.md` `H-S48A-02` para el detalle
++completo de la corrección.
++
++Motivo (corregido): Q7 (Convención A) se respondió sustantivamente para
++15/21 candidatos aplicando la Regla 3 de la fe de erratas ejecutiva
++(SHA-256 `63fe27be8ca2fa852d2f5dfef3996549edcced710b2b67275b970c19a36dcdd4`,
++fuente `READ-ONLY` verificada en `00-preflight.md` §8.1) — ver
++`04-interpretacion.md` §Q7 y `01a-ontologia-y-derivaciones.md`. La
++limitación remanente es real pero **más estrecha** de lo declarado
++originalmente: se acota a 6/21 candidatos donde la ficha nunca computa
++`M2_proyectado`, no a la pregunta completa. Las seis preguntas restantes
++(Q1–Q6) se respondieron completas con evidencia citada celda a celda; Q3 y
++Q4 incorporan además el trío no nulo y la distinción firmas/conjuntos
++activos omitidos en la unidad original, y Q5/Q6 corrigen conteos y
++enumeraciones imprecisos (ver `04-interpretacion.md` para el detalle de
++cada corrección).
+ 
+ ## Universo analizado
+ 
+@@ -23,12 +38,12 @@
+ | Pregunta | Estado |
+ |---|---|
+ | Q1 — Distribución | Respondida (`OBSERVACION` + `HIPOTESIS` marcada) |
+-| Q2 — Frecuencia | Respondida (`OBSERVACION`) |
+-| Q3 — Coocurrencia | Respondida (`OBSERVACION`) |
+-| Q4 — Familias | Respondida (`OBSERVACION`, agrupación determinista completa) |
+-| Q5 — Patrones documentados | Respondida (`OBSERVACION` + `HIPOTESIS` marcada) |
+-| Q6 — Naturaleza de motivos | Respondida (`OBSERVACION`; `F-DT.1/3/4` `NO_APLICABLE`) |
+-| Q7 — Convención A | **No respondida sustantivamente** — `EVIDENCIA_INSUFICIENTE` + `HALLAZGO_META` |
++| Q2 — Frecuencia | Respondida (`OBSERVACION`; nota de las 17 señales de 0 activaciones corregida en R1: 6 evaluadas-sin-fallo / 11 sin declaración) |
++| Q3 — Coocurrencia | Respondida (`OBSERVACION`; corregida en R1 con el único trío no nulo `{S1,S8_R11,R12}=1`) |
++| Q4 — Familias | Respondida (`OBSERVACION`, agrupación determinista completa; corregida en R1 para distinguir 7 firmas exactas de 5 conjuntos de señales activas) |
++| Q5 — Patrones documentados | Respondida (`OBSERVACION` + `HIPOTESIS` marcada; corregida en R1: cobertura 20/21, reexports 14/21 con desglose, adyacencia DT3 4/21) |
++| Q6 — Naturaleza de motivos | Respondida (`OBSERVACION`; `F-DT.1/3/4` `NO_APLICABLE`; corregida en R1 para separar señales evaluadas-sin-fallo de señales sin declaración) |
++| Q7 — Convención A | Respondida sustantivamente para 15/21 (corregida en R1, Regla 3) — `EVIDENCIA_INSUFICIENTE` acotada a 6/21 |
+ 
+ ## Modo de ejecución
+ 
+@@ -60,26 +75,37 @@
+ - El hallazgo `H-S48A-01` (ficha 6 declarativamente incompleta) se
+   documenta con su posible impacto cuantificado sobre `02-*` y `03-*`, sin
+   aplicarlo — no se infiere desde el código ni desde el patrón estructural
+-  de fichas análogas.
++  de fichas análogas. Precisión de ronda R1: la ficha 6 sí declara S8 en
++  línea bajo Opción B; no cambia la celda de la matriz (ver
++  `05-hallazgos-meta.md`).
++- Ronda de corrección R1 (§10.2 del contrato): única ronda de corrección
++  material autorizada, ya ejercida sobre esta unidad. Alcance cerrado a los
++  6 puntos de `00-preflight.md` §8.4. Una segunda necesidad material se
++  eleva a Gato con alternativas concretas, no inicia un ciclo automático.
+ 
+-## Ausencia de modificación del repositorio y de S47
++## Ausencia de modificación del repositorio, de S47 y de la unidad original (ronda R1)
+ 
+-Verificado al cierre (re-ejecución de las mismas comprobaciones de
+-preflight):
++Verificado al cierre de la ronda R1:
+ 
+ ```text
+-sha256sum del contrato S48-A:      f2ca64b6…3383b1  — coincide con §13
+-sha256sum -c paquete original:     25/25 OK (sin cambios desde preflight)
+-sha256sum -c paquete extensión:    29/29 OK (sin cambios desde preflight)
+-git status --porcelain (repo):     M docs/BACKLOG.md  (preexistente, sin
+-                                    relación con esta sesión; sin cambios
+-                                    adicionales)
++sha256sum del contrato S48-A:              f2ca64b6…3383b1  — coincide con §13
++sha256sum -c paquete original S47:         25/25 OK (sin cambios)
++sha256sum -c paquete extensión S47:        29/29 OK (sin cambios, ver auditoría previa)
++sha256sum -c resultado-S48-A-20260809/:    8/8 OK (unidad original intacta)
++sha256sum -c resultado-S48-A-20260809-R1/: 8/8 OK (esta unidad, recién generada)
++git status --porcelain (repo kicad-mcp):   M docs/BACKLOG.md  (preexistente,
++                                            sin relación con esta sesión;
++                                            sin cambios adicionales)
+ ```
+ 
+-Ningún archivo de `S47-ORIGINAL-H11/`, `S47-EXT-13-21-CORREGIDO/` ni del
+-repositorio `kicad-mcp` fue modificado durante la ejecución de S48-A. Toda
+-escritura de esta sesión ocurrió exclusivamente dentro de
+-`$S48A_TMP/S48-A/`.
++Ningún archivo de `S47-ORIGINAL-H11/`, `S47-EXT-13-21-CORREGIDO/`, del
++contrato, de la unidad original `resultado-S48-A-20260809/` ni del
++repositorio `kicad-mcp` fue modificado durante esta ronda de corrección.
++Toda escritura de R1 ocurrió exclusivamente dentro de
++`resultado-S48-A-20260809-R1/`. La única columna modificada en
++`01-matriz-refutacion.csv` respecto de la unidad original es
++`convencion_a` (462/462 filas, `estado_fuente` y `senal_fallo` intactos —
++ningún agregado de Q1/Q2 cambia por esta corrección).
+ 
+ ## Productos del paquete
+ 
+@@ -97,7 +123,13 @@
+ 
+ ## Autoridad siguiente (§12 del contrato)
+ 
+-Paso 3 (Claude Code ejecuta S48-A READ-ONLY) completado. Pendiente: paso 4
+-(revisión de Codex sobre el paquete exacto y su `MANIFEST.sha256`), paso 5
+-(decisión de Gato sobre el diagnóstico). Ningún paso posterior queda
+-autorizado por la existencia de este paquete.
++Esta unidad es `resultado-S48-A-20260809-R1`, la única ronda de corrección
++material de §10.2, ejecutada sobre 6 puntos señalados por la Autoridad
++(`00-preflight.md` §8.4). La unidad original `resultado-S48-A-20260809`
++permanece intacta y verificada, no se sustituye ni se elimina.
++
++Paso 3 (Claude Code ejecuta S48-A READ-ONLY) completado, incluida esta
++ronda de corrección. Pendiente: paso 4 (revisión de Codex sobre el paquete
++exacto de R1 y su `MANIFEST.sha256`), paso 5 (decisión de Gato sobre el
++diagnóstico). Ningún paso posterior queda autorizado por la existencia de
++este paquete.
+diff --color -ru resultado-S48-A-20260809/MANIFEST.sha256 resultado-S48-A-20260809-R1/MANIFEST.sha256
+--- resultado-S48-A-20260809/MANIFEST.sha256	2026-08-09 17:37:14.865097327 -0300
++++ resultado-S48-A-20260809-R1/MANIFEST.sha256	2026-08-09 18:19:06.393923203 -0300
+@@ -1,8 +1,8 @@
+-1e6dca759444246264a47b21b41851dcc6857111c2aca820e668ffcf46f83e89  00-preflight.md
+-d8b2d7118ef0683f2afc841070dd585524970bbfc492c59037288b9f8174fcb4  01-matriz-refutacion.csv
+-ae3ffef4975f49d834536d3cd6e61cb8b72c841e978454cdae2b6e8a0cca9368  01a-ontologia-y-derivaciones.md
+-937903f1d10679f71031b6ae975cb50c8959207762fe6170d1a7fd121294a477  02-frecuencias-y-coocurrencias.md
+-8fd0bca60536f5918a396cb1e45d18d15f491885289941d449e3ddaa17273c6e  03-firmas-y-clusters.md
+-c42d67b2459c3a2f330a7556bce11aa5d612471562472f025dc8e4d6b3d1dfd2  04-interpretacion.md
+-e112466b54892a3129363e3decdb88be5cb0746d46a7432c8799db474d33899e  05-hallazgos-meta.md
+-a753c71c5dee43c789c3894bc2ae04a58a41881514a075e0d79b28e6f001d2d2  06-cierre.md
++738b535cc990adb0ffc49b7576a5891394670ea2cc1860d696ebd123b55283aa  00-preflight.md
++49c6e6dffc6e05ff2e772ea462ad23d75ab31c4ee0f7f9b147fc70059fe0d1ee  01-matriz-refutacion.csv
++7089e4cff580dacfadb0e42786aab2d130693a7277302a61d27267ff4ec19750  01a-ontologia-y-derivaciones.md
++1aef0244b6c54bf5f973d62d5f2d6d8b4eda80174444a005286a05a22265f5af  02-frecuencias-y-coocurrencias.md
++ce6caecea3395d956d0f58eee0942121446a316b9100340ad58092b1d7c0358c  03-firmas-y-clusters.md
++7d5e83ce8e21f64aaaf44d69d9cf96a252a66298c8384fa45f64c50ef4c80c8c  04-interpretacion.md
++fc86165fba101f5d52511dcc786e76d2939f7eaab89c7bb7481132aeb0910a2a  05-hallazgos-meta.md
++c4e275526c96f73cf61a39486851423470e2442c81aaa1d04f8eb173dc1458f5  06-cierre.md

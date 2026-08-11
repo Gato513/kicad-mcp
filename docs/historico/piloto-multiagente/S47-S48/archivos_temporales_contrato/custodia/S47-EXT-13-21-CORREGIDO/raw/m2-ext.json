@@ -1,0 +1,402 @@
+{
+  "[\"_similars\"]": {
+    "K": [
+      "_similars"
+    ],
+    "M2_actual_vector": [
+      0,
+      0,
+      0,
+      1,
+      9
+    ],
+    "d1_capturas_scope_actual": 0,
+    "d1_simbolos": [],
+    "d2_aristas": [],
+    "d2_cortes_hacia_pcb_actual": 0,
+    "d3_modulos": [],
+    "d3_modulos_externos_actual": 0,
+    "d4_helpers_multi_consumer_actual": 1,
+    "d4_simbolos": [
+      "_similars"
+    ],
+    "d5_detalle": {
+      "entrante_interna": [
+        "_delete_copper",
+        "add_track",
+        "add_via",
+        "add_zone",
+        "delete_tracks_bulk",
+        "get_tracks",
+        "get_zones",
+        "move_footprint",
+        "set_footprint_ref"
+      ],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 9
+  },
+  "[\"_via_params\", \"add_via\"]": {
+    "K": [
+      "_via_params",
+      "add_via"
+    ],
+    "M2_actual_vector": [
+      1,
+      3,
+      8,
+      0,
+      0
+    ],
+    "d1_capturas_scope_actual": 1,
+    "d1_simbolos": [
+      "bridge"
+    ],
+    "d2_aristas": [
+      [
+        "add_via",
+        "_audit_error",
+        "CALL"
+      ],
+      [
+        "add_via",
+        "_resolve_board",
+        "CALL"
+      ],
+      [
+        "add_via",
+        "_similars",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 3,
+    "d3_modulos": [
+      "..audit.logger",
+      "..bridge.ipc",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "d3_modulos_externos_actual": 8,
+    "d4_helpers_multi_consumer_actual": 0,
+    "d4_simbolos": [],
+    "d5_detalle": {
+      "entrante_interna": [],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 0
+  },
+  "[\"delete_track\"]": {
+    "K": [
+      "delete_track"
+    ],
+    "M2_actual_vector": [
+      0,
+      1,
+      2,
+      0,
+      0
+    ],
+    "d1_capturas_scope_actual": 0,
+    "d1_simbolos": [],
+    "d2_aristas": [
+      [
+        "delete_track",
+        "_delete_copper",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 1,
+    "d3_modulos": [
+      "..logging_config",
+      "._mutating"
+    ],
+    "d3_modulos_externos_actual": 2,
+    "d4_helpers_multi_consumer_actual": 0,
+    "d4_simbolos": [],
+    "d5_detalle": {
+      "entrante_interna": [],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 0
+  },
+  "[\"delete_via\"]": {
+    "K": [
+      "delete_via"
+    ],
+    "M2_actual_vector": [
+      0,
+      1,
+      2,
+      0,
+      0
+    ],
+    "d1_capturas_scope_actual": 0,
+    "d1_simbolos": [],
+    "d2_aristas": [
+      [
+        "delete_via",
+        "_delete_copper",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 1,
+    "d3_modulos": [
+      "..logging_config",
+      "._mutating"
+    ],
+    "d3_modulos_externos_actual": 2,
+    "d4_helpers_multi_consumer_actual": 0,
+    "d4_simbolos": [],
+    "d5_detalle": {
+      "entrante_interna": [],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 0
+  },
+  "[\"get_component_detail\"]": {
+    "K": [
+      "get_component_detail"
+    ],
+    "M2_actual_vector": [
+      1,
+      1,
+      3,
+      0,
+      0
+    ],
+    "d1_capturas_scope_actual": 1,
+    "d1_simbolos": [
+      "bridge"
+    ],
+    "d2_aristas": [
+      [
+        "get_component_detail",
+        "_resolve_board",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 1,
+    "d3_modulos": [
+      "..errors",
+      "..logging_config",
+      ".pcb_encoders"
+    ],
+    "d3_modulos_externos_actual": 3,
+    "d4_helpers_multi_consumer_actual": 0,
+    "d4_simbolos": [],
+    "d5_detalle": {
+      "entrante_interna": [],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 0
+  },
+  "[\"get_tracks\"]": {
+    "K": [
+      "get_tracks"
+    ],
+    "M2_actual_vector": [
+      1,
+      6,
+      4,
+      0,
+      0
+    ],
+    "d1_capturas_scope_actual": 1,
+    "d1_simbolos": [
+      "bridge"
+    ],
+    "d2_aristas": [
+      [
+        "get_tracks",
+        "_TRACKS_BUDGET_SAFETY",
+        "CONSTANT_READ"
+      ],
+      [
+        "get_tracks",
+        "_TRACKS_DEFAULT_BUDGET",
+        "CONSTANT_READ"
+      ],
+      [
+        "get_tracks",
+        "_copper_in_bbox",
+        "CALL"
+      ],
+      [
+        "get_tracks",
+        "_copper_on_layer",
+        "CALL"
+      ],
+      [
+        "get_tracks",
+        "_resolve_board",
+        "CALL"
+      ],
+      [
+        "get_tracks",
+        "_similars",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 6,
+    "d3_modulos": [
+      "..errors",
+      "..logging_config",
+      "..snapshots",
+      ".pcb_encoders"
+    ],
+    "d3_modulos_externos_actual": 4,
+    "d4_helpers_multi_consumer_actual": 0,
+    "d4_simbolos": [],
+    "d5_detalle": {
+      "entrante_interna": [],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 0
+  },
+  "[\"reload_board_from_disk\"]": {
+    "K": [
+      "reload_board_from_disk"
+    ],
+    "M2_actual_vector": [
+      1,
+      1,
+      6,
+      0,
+      0
+    ],
+    "d1_capturas_scope_actual": 1,
+    "d1_simbolos": [
+      "bridge"
+    ],
+    "d2_aristas": [
+      [
+        "reload_board_from_disk",
+        "_resolve_board",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 1,
+    "d3_modulos": [
+      "..audit.logger",
+      "..bridge.state_builder",
+      "..errors",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "d3_modulos_externos_actual": 6,
+    "d4_helpers_multi_consumer_actual": 0,
+    "d4_simbolos": [],
+    "d5_detalle": {
+      "entrante_interna": [],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 0
+  },
+  "[\"save_board\"]": {
+    "K": [
+      "save_board"
+    ],
+    "M2_actual_vector": [
+      1,
+      1,
+      7,
+      0,
+      0
+    ],
+    "d1_capturas_scope_actual": 1,
+    "d1_simbolos": [
+      "bridge"
+    ],
+    "d2_aristas": [
+      [
+        "save_board",
+        "_resolve_board",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 1,
+    "d3_modulos": [
+      "..audit.logger",
+      "..bridge.state_builder",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "..tools.world",
+      "._mutating"
+    ],
+    "d3_modulos_externos_actual": 7,
+    "d4_helpers_multi_consumer_actual": 0,
+    "d4_simbolos": [],
+    "d5_detalle": {
+      "entrante_interna": [],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 0
+  },
+  "[\"set_footprint_ref\"]": {
+    "K": [
+      "set_footprint_ref"
+    ],
+    "M2_actual_vector": [
+      1,
+      3,
+      8,
+      0,
+      0
+    ],
+    "d1_capturas_scope_actual": 1,
+    "d1_simbolos": [
+      "bridge"
+    ],
+    "d2_aristas": [
+      [
+        "set_footprint_ref",
+        "_audit_error",
+        "CALL"
+      ],
+      [
+        "set_footprint_ref",
+        "_resolve_board",
+        "CALL"
+      ],
+      [
+        "set_footprint_ref",
+        "_similars",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 3,
+    "d3_modulos": [
+      "..audit.logger",
+      "..bridge.ipc",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "d3_modulos_externos_actual": 8,
+    "d4_helpers_multi_consumer_actual": 0,
+    "d4_simbolos": [],
+    "d5_detalle": {
+      "entrante_interna": [],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 0
+  }
+}

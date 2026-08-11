@@ -1,0 +1,553 @@
+{
+  "[\"_DELETE_TOLERANCE_MM\", \"_copper_candidate_dict\", \"_delete_copper\", \"_match_copper\"]": {
+    "K": [
+      "_DELETE_TOLERANCE_MM",
+      "_copper_candidate_dict",
+      "_delete_copper",
+      "_match_copper"
+    ],
+    "M2_actual_vector": [
+      1,
+      4,
+      8,
+      0,
+      2
+    ],
+    "d1_capturas_scope_actual": 1,
+    "d1_simbolos": [
+      "bridge"
+    ],
+    "d2_aristas": [
+      [
+        "_delete_copper",
+        "_audit_error",
+        "CALL"
+      ],
+      [
+        "_delete_copper",
+        "_resolve_board",
+        "CALL"
+      ],
+      [
+        "_delete_copper",
+        "_similars",
+        "CALL"
+      ],
+      [
+        "_match_copper",
+        "_copper_distance_mm",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 4,
+    "d3_modulos": [
+      "..audit.logger",
+      "..bridge.ipc",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "d3_modulos_externos_actual": 8,
+    "d4_helpers_multi_consumer_actual": 0,
+    "d4_simbolos": [],
+    "d5_detalle": {
+      "entrante_interna": [
+        "delete_track",
+        "delete_via"
+      ],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 2
+  },
+  "[\"_audit_error\"]": {
+    "K": [
+      "_audit_error"
+    ],
+    "M2_actual_vector": [
+      0,
+      0,
+      2,
+      1,
+      11
+    ],
+    "d1_capturas_scope_actual": 0,
+    "d1_simbolos": [],
+    "d2_aristas": [],
+    "d2_cortes_hacia_pcb_actual": 0,
+    "d3_modulos": [
+      "..audit.logger",
+      "..errors"
+    ],
+    "d3_modulos_externos_actual": 2,
+    "d4_helpers_multi_consumer_actual": 1,
+    "d4_simbolos": [
+      "_audit_error"
+    ],
+    "d5_detalle": {
+      "entrante_interna": [
+        "_delete_copper",
+        "_refill_enforce_and_save",
+        "add_keepout_zone",
+        "add_track",
+        "add_via",
+        "add_zone",
+        "delete_zone",
+        "draw_board_outline",
+        "fill_zones",
+        "move_footprint",
+        "set_footprint_ref"
+      ],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 11
+  },
+  "[\"_bbox_distance_to_point\", \"_closest_board_edge\", \"_closest_point_copper_bbox\", \"_copper_distance_to_bbox\", \"get_footprint_neighbors\"]": {
+    "K": [
+      "_bbox_distance_to_point",
+      "_closest_board_edge",
+      "_closest_point_copper_bbox",
+      "_copper_distance_to_bbox",
+      "get_footprint_neighbors"
+    ],
+    "M2_actual_vector": [
+      1,
+      4,
+      4,
+      0,
+      0
+    ],
+    "d1_capturas_scope_actual": 1,
+    "d1_simbolos": [
+      "bridge"
+    ],
+    "d2_aristas": [
+      [
+        "_copper_distance_to_bbox",
+        "_segment_intersects_bbox",
+        "CALL"
+      ],
+      [
+        "get_footprint_neighbors",
+        "_TRACKS_BUDGET_SAFETY",
+        "CONSTANT_READ"
+      ],
+      [
+        "get_footprint_neighbors",
+        "_TRACKS_DEFAULT_BUDGET",
+        "CONSTANT_READ"
+      ],
+      [
+        "get_footprint_neighbors",
+        "_resolve_board",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 4,
+    "d3_modulos": [
+      "..bridge.ipc",
+      "..errors",
+      "..logging_config",
+      "..snapshots"
+    ],
+    "d3_modulos_externos_actual": 4,
+    "d4_helpers_multi_consumer_actual": 0,
+    "d4_simbolos": [],
+    "d5_detalle": {
+      "entrante_interna": [],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 0
+  },
+  "[\"_bbox_distance_to_point\"]": {
+    "K": [
+      "_bbox_distance_to_point"
+    ],
+    "M2_actual_vector": [
+      0,
+      0,
+      0,
+      1,
+      3
+    ],
+    "d1_capturas_scope_actual": 0,
+    "d1_simbolos": [],
+    "d2_aristas": [],
+    "d2_cortes_hacia_pcb_actual": 0,
+    "d3_modulos": [],
+    "d3_modulos_externos_actual": 0,
+    "d4_helpers_multi_consumer_actual": 1,
+    "d4_simbolos": [
+      "_bbox_distance_to_point"
+    ],
+    "d5_detalle": {
+      "entrante_interna": [
+        "_closest_point_copper_bbox",
+        "_copper_distance_to_bbox",
+        "get_footprint_neighbors"
+      ],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 3
+  },
+  "[\"_copper_distance_mm\", \"_dist_point_segment\"]": {
+    "K": [
+      "_copper_distance_mm",
+      "_dist_point_segment"
+    ],
+    "M2_actual_vector": [
+      0,
+      0,
+      1,
+      1,
+      2
+    ],
+    "d1_capturas_scope_actual": 0,
+    "d1_simbolos": [],
+    "d2_aristas": [],
+    "d2_cortes_hacia_pcb_actual": 0,
+    "d3_modulos": [
+      "..bridge.ipc"
+    ],
+    "d3_modulos_externos_actual": 1,
+    "d4_helpers_multi_consumer_actual": 1,
+    "d4_simbolos": [
+      "_copper_distance_mm"
+    ],
+    "d5_detalle": {
+      "entrante_interna": [
+        "_match_copper",
+        "_opposite_layer_blocked"
+      ],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 2
+  },
+  "[\"_copper_in_bbox\"]": {
+    "K": [
+      "_copper_in_bbox"
+    ],
+    "M2_actual_vector": [
+      0,
+      1,
+      1,
+      1,
+      2
+    ],
+    "d1_capturas_scope_actual": 0,
+    "d1_simbolos": [],
+    "d2_aristas": [
+      [
+        "_copper_in_bbox",
+        "_segment_intersects_bbox",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 1,
+    "d3_modulos": [
+      "..bridge.ipc"
+    ],
+    "d3_modulos_externos_actual": 1,
+    "d4_helpers_multi_consumer_actual": 1,
+    "d4_simbolos": [
+      "_copper_in_bbox"
+    ],
+    "d5_detalle": {
+      "entrante_interna": [
+        "delete_tracks_bulk",
+        "get_tracks"
+      ],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 2
+  },
+  "[\"_copper_on_layer\"]": {
+    "K": [
+      "_copper_on_layer"
+    ],
+    "M2_actual_vector": [
+      0,
+      0,
+      1,
+      1,
+      3
+    ],
+    "d1_capturas_scope_actual": 0,
+    "d1_simbolos": [],
+    "d2_aristas": [],
+    "d2_cortes_hacia_pcb_actual": 0,
+    "d3_modulos": [
+      "..bridge.ipc"
+    ],
+    "d3_modulos_externos_actual": 1,
+    "d4_helpers_multi_consumer_actual": 1,
+    "d4_simbolos": [
+      "_copper_on_layer"
+    ],
+    "d5_detalle": {
+      "entrante_interna": [
+        "_opposite_layer_blocked",
+        "delete_tracks_bulk",
+        "get_tracks"
+      ],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 3
+  },
+  "[\"_derive_post_state\", \"_find_target\", \"_register_post_snapshot\", \"move_footprint\"]": {
+    "K": [
+      "_derive_post_state",
+      "_find_target",
+      "_register_post_snapshot",
+      "move_footprint"
+    ],
+    "M2_actual_vector": [
+      1,
+      3,
+      8,
+      0,
+      0
+    ],
+    "d1_capturas_scope_actual": 1,
+    "d1_simbolos": [
+      "bridge"
+    ],
+    "d2_aristas": [
+      [
+        "move_footprint",
+        "_audit_error",
+        "CALL"
+      ],
+      [
+        "move_footprint",
+        "_resolve_board",
+        "CALL"
+      ],
+      [
+        "move_footprint",
+        "_similars",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 3,
+    "d3_modulos": [
+      "..audit.logger",
+      "..bridge.ipc",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "d3_modulos_externos_actual": 8,
+    "d4_helpers_multi_consumer_actual": 0,
+    "d4_simbolos": [],
+    "d5_detalle": {
+      "entrante_interna": [],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 0
+  },
+  "[\"_dist_segment_to_pad\", \"_find_track_pad_collision\", \"_parse_pad_ref\", \"_resolve_endpoint\", \"_resolve_pad_coord\", \"_rounded_rect_sdf\", \"_track_params\", \"add_track\"]": {
+    "K": [
+      "_dist_segment_to_pad",
+      "_find_track_pad_collision",
+      "_parse_pad_ref",
+      "_resolve_endpoint",
+      "_resolve_pad_coord",
+      "_rounded_rect_sdf",
+      "_track_params",
+      "add_track"
+    ],
+    "M2_actual_vector": [
+      1,
+      3,
+      10,
+      0,
+      0
+    ],
+    "d1_capturas_scope_actual": 1,
+    "d1_simbolos": [
+      "bridge"
+    ],
+    "d2_aristas": [
+      [
+        "add_track",
+        "_audit_error",
+        "CALL"
+      ],
+      [
+        "add_track",
+        "_resolve_board",
+        "CALL"
+      ],
+      [
+        "add_track",
+        "_similars",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 3,
+    "d3_modulos": [
+      "..audit.logger",
+      "..bridge.ipc",
+      "..bridge.rules_reader",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "..tools.world",
+      "._mutating"
+    ],
+    "d3_modulos_externos_actual": 10,
+    "d4_helpers_multi_consumer_actual": 0,
+    "d4_simbolos": [],
+    "d5_detalle": {
+      "entrante_interna": [],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 0
+  },
+  "[\"_outline_params\", \"draw_board_outline\"]": {
+    "K": [
+      "_outline_params",
+      "draw_board_outline"
+    ],
+    "M2_actual_vector": [
+      1,
+      2,
+      8,
+      0,
+      0
+    ],
+    "d1_capturas_scope_actual": 1,
+    "d1_simbolos": [
+      "bridge"
+    ],
+    "d2_aristas": [
+      [
+        "draw_board_outline",
+        "_audit_error",
+        "CALL"
+      ],
+      [
+        "draw_board_outline",
+        "_resolve_board",
+        "CALL"
+      ]
+    ],
+    "d2_cortes_hacia_pcb_actual": 2,
+    "d3_modulos": [
+      "..audit.logger",
+      "..bridge.ipc",
+      "..bridge.state_builder",
+      "..errors",
+      "..gates.g1",
+      "..logging_config",
+      "..snapshots",
+      "._mutating"
+    ],
+    "d3_modulos_externos_actual": 8,
+    "d4_helpers_multi_consumer_actual": 0,
+    "d4_simbolos": [],
+    "d5_detalle": {
+      "entrante_interna": [],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 0
+  },
+  "[\"_resolve_board\"]": {
+    "K": [
+      "_resolve_board"
+    ],
+    "M2_actual_vector": [
+      0,
+      0,
+      2,
+      1,
+      17
+    ],
+    "d1_capturas_scope_actual": 0,
+    "d1_simbolos": [],
+    "d2_aristas": [],
+    "d2_cortes_hacia_pcb_actual": 0,
+    "d3_modulos": [
+      "..bridge.ipc",
+      "..errors"
+    ],
+    "d3_modulos_externos_actual": 2,
+    "d4_helpers_multi_consumer_actual": 1,
+    "d4_simbolos": [
+      "_resolve_board"
+    ],
+    "d5_detalle": {
+      "entrante_interna": [
+        "_delete_copper",
+        "add_keepout_zone",
+        "add_track",
+        "add_via",
+        "add_zone",
+        "delete_tracks_bulk",
+        "delete_zone",
+        "draw_board_outline",
+        "fill_zones",
+        "get_component_detail",
+        "get_footprint_neighbors",
+        "get_tracks",
+        "get_zones",
+        "move_footprint",
+        "reload_board_from_disk",
+        "save_board",
+        "set_footprint_ref"
+      ],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 17
+  },
+  "[\"_segment_intersects_bbox\"]": {
+    "K": [
+      "_segment_intersects_bbox"
+    ],
+    "M2_actual_vector": [
+      0,
+      0,
+      0,
+      1,
+      2
+    ],
+    "d1_capturas_scope_actual": 0,
+    "d1_simbolos": [],
+    "d2_aristas": [],
+    "d2_cortes_hacia_pcb_actual": 0,
+    "d3_modulos": [],
+    "d3_modulos_externos_actual": 0,
+    "d4_helpers_multi_consumer_actual": 1,
+    "d4_simbolos": [
+      "_segment_intersects_bbox"
+    ],
+    "d5_detalle": {
+      "entrante_interna": [
+        "_copper_distance_to_bbox",
+        "_copper_in_bbox"
+      ],
+      "entrante_src": [],
+      "entrante_tests": []
+    },
+    "d5_fronteras_entrantes_actual": 2
+  }
+}

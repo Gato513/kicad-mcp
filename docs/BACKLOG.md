@@ -516,6 +516,37 @@ seleccionar el segundo cluster mediante cohesión, dependencias, consumidores,
 monkeypatches, ciclos, re-exports, cobertura y reversibilidad. No seleccionar
 únicamente por LOC. La sesión concreta requiere decisión humana.
 
+**Caracterización DT1 Slice 2 (S47 v6 + extensión H11) — CERRADA,
+`NO_GO_POR_PRESUPUESTO`, `ALCANCE_SUPERVIVIENTES_21`:** aplicando gates
+S1-S8 (AND) / R1-R14 (OR) (contrato `S47-DT1-SLICE2-CARACTERIZACION_v6.md`)
+a los 12 candidatos originales y, tras `EVIDENCIA_INSUFICIENTE`, a los 9
+pendientes (contrato `S47-H11-AMPLIACION-13-21_v1.md`), el universo completo
+de 21 símbolos supervivientes de `register()` en `tools/pcb.py` resultó
+**21/21 `NO_APTO`** bajo el diseño de extracción mínimo evaluado (mover +
+wrapper delgado). Patrón dominante: los símbolos pequeños fallan S7 (tamaño
+insuficiente, <80 LOC); los pocos con tamaño suficiente (`add_via`,
+`get_tracks`, `set_footprint_ref`) fallan S1/S8 por fan-in alto hacia
+helpers compartidos (`_delete_copper`/`_resolve_board`/`_via_params`).
+Revisado independientemente (Codex, `APROBAR_CON_CAMBIOS` → 4 hallazgos
+documentales sin impacto en veredicto, reconciliados) y aprobado por la
+Autoridad (`APROBAR`, 2026-08-08). Unidad final `S47-EXT-13-21-CORREGIDO`,
+manifiesto
+`d564029b1eea5e6bd3da648cbdb615c3b6cec6f5195fdbf73ea12d2261f65074`, en
+custodia histórica versionada
+(`docs/historico/piloto-multiagente/S47-S48/archivos_temporales_contrato/custodia/S47-EXT-13-21-CORREGIDO/`).
+`NO_GO_POR_PRESUPUESTO` **no** autoriza S48 ni ningún paso
+de implementación (contrato §1/§8.6); tampoco refuta los 8 clusters
+excluidos institucionalmente, que nunca se evaluaron.
+
+**Consecuencia para el siguiente paso arriba:** el universo de símbolos
+individuales de `tools/pcb.py` evaluable bajo extracción mínima
+(mover + wrapper delgado) está agotado — no queda ningún candidato "por LOC"
+ni por cohesión de símbolo único pendiente de caracterizar con este método.
+Retomar DT1 Slice 2 requiere una unidad de extracción distinta (cluster
+cohesivo de varias funciones relacionadas, no un símbolo aislado) o un
+diseño de extracción distinto al evaluado. Decisión de diseño, exclusivamente
+humana.
+
 ## DT3 — Geometría de dominio dentro de `bridge/` — ABIERTA
 
 **Estado:** abierta; no modificada por las sesiones 40–41.

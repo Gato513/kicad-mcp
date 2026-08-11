@@ -845,7 +845,21 @@ puramente de estructura/links no obliga a retraducir.
 
 **Fuente:** sesión 34b.
 
-## 3. Decisiones superadas (referencia histórica, no vigentes)
+## 3. Decisiones de proceso vigentes
+
+### 2026-08-10 — Flujo híbrido multiagente v2
+
+Se sustituye el protocolo iterativo usado en el piloto S40–S48 por un ciclo de
+objetivo: propuesta de Claude, auditoría previa única de ChatGPT, ejecución
+continua de Claude Code, revisión posterior única de Codex y retorno a Claude.
+Se conserva la evidencia histórica; sus controles específicos no se
+generalizan. Se permite como máximo una reparación material y el control es
+proporcional al riesgo R0–R2.
+
+La autoridad institucional vive en `AGENTS.md` y la única autoridad operativa
+detallada vigente en `docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md`.
+
+## 4. Decisiones superadas (referencia histórica, no vigentes)
 
 - **D-V3.1** (revert humano post-route): superada por recarga programática (`Board.revert()`, sesión 18) — ya no hay contacto humano por route.
 - **D-R2/D-14.1** (revert + F8 como costo tolerable): revocada por D-V3.1 — el ruteo real es iterativo, el costo por iteración era inaceptable.
@@ -857,6 +871,6 @@ puramente de estructura/links no obliga a retraducir.
 
 Al agregar un ADR nuevo, añadir una fila a §1. Al fijar una decisión informal
 que se espera dure más de una sesión, añadirla a §2 con la fuente. Cuando una
-decisión de §2 queda superada, moverla a §3 con una frase de una línea sobre
+decisión de §2 queda superada, moverla a §4 con una frase de una línea sobre
 qué la reemplazó — el detalle completo queda en el reporte de sesión que la
 originó, no se re-narra aquí.

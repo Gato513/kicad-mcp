@@ -10,9 +10,11 @@ originó). El objetivo: que nadie —humano o agente— necesite abrir
 En este orden, y solo lo que aplique a la tarea:
 
 1. **`AGENTS.md`** (raíz) — contrato transversal para trabajo multiagente:
-   roles, autoridad, independencia, handoffs. Leer cuando la herramienta lo
-   cargue como instrucciones del repositorio; no es requisito para una
-   tarea humana que no involucra agentes.
+   roles, autoridad, independencia, ciclo de objetivo y handoffs. Su autoridad
+   operativa detallada es
+   **`docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md`**. Leer cuando la
+   herramienta lo cargue como instrucciones del repositorio; no es requisito
+   para una tarea humana que no involucra agentes.
 2. **`CLAUDE.md`** (raíz) — siempre para el ejecutor Claude Code. Es su
    contrato específico: comandos, fronteras F1–F5, reglas de código,
    Definition of Done. Se auto-carga.
@@ -41,6 +43,7 @@ Eso alcanza para el 90% de las sesiones. Lo demás es "bajo demanda":
 | Archivo | Qué es | Mantenido por |
 |---|---|---|
 | `AGENTS.md` | Contrato transversal de coordinación multiagente: roles, autoridad, independencia, handoffs | Humano, tras cada sesión que cambie reglas de coordinación |
+| `docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md` | Único protocolo operativo vigente de coordinación multiagente | Humano, cuando cambie el flujo operativo |
 | `CLAUDE.md` | Contrato del ejecutor Claude Code | Humano, tras cada sesión que cambie reglas |
 | `README.md` | Punto de entrada, quickstart, mapa de estructura | Humano/agente al DoD |
 | `docs/CONTEXT.md` | Visión consolidada del sistema y riesgos | Humano |
@@ -58,6 +61,11 @@ Eso alcanza para el 90% de las sesiones. Lo demás es "bajo demanda":
 | `docs/investigacion/*.md` | Investigaciones de causa raíz (P4.0-style), referenciadas desde ADR/specs — lectura obligatoria antes de re-hipotetizar sobre un bug ya investigado | Se agregan por sesión, no se editan retroactivamente |
 | `docs/analisis/40-dt1-caracterizacion.md` | Caracterización canónica de DT1 y autorización de Slice 1 | Histórico de decisión, base para recaracterizar DT1 |
 | `docs/analisis/CONTEXTO_CHAT.md` | Handoff previo a sesión 40; su cierre lo declara obsoleto después de esa sesión | Histórico, no fuente viva |
+
+Coordinación multiagente vigente:
+
+- `AGENTS.md` — autoridad institucional.
+- `docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md` — protocolo operativo.
 
 ## `docs/historico/` — evidencia del proceso, no operativo
 

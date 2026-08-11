@@ -16,6 +16,23 @@ quedan en `docs/historico/CONTEXT-v7.md` y `docs/historico/sesiones/`.
 
 ---
 
+## Coordinación multiagente vigente
+
+Desde 2026-08-10 el trabajo híbrido usa un ciclo orientado a objetivos:
+Claude Chat propone una unidad completa; ChatGPT realiza una auditoría previa
+única; Claude Code ejecuta investigación, implementación y pruebas dentro del
+alcance; Codex revisa la unidad terminada; Claude recibe el estado y cierra o
+propone el objetivo siguiente. Gato conserva objetivo, alcance, excepciones,
+publicación, push, PR y merge.
+
+El piloto S40–S48 se conserva como evidencia histórica. Demostró que la
+separación de roles es útil, pero que auditorías recursivas, contratos extensos
+y empaquetado obligatorio para trabajo read-only generan un costo
+desproporcionado. Esos mecanismos no son precedentes para ciclos nuevos.
+
+Autoridades: `AGENTS.md` para reglas institucionales y
+`docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md` para el protocolo operativo.
+
 ## Qué es el sistema
 
 Servidor MCP que permite a un agente LLM (Claude Code) operar KiCad

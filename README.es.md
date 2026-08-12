@@ -63,14 +63,19 @@ nada acá es una suposición.
   llamar `fill_zones()` una sola vez al final en vez de `fill=true` por
   zona. Detalle: [`docs/analisis/auditoria-contratos-bridge.md`](docs/analisis/auditoria-contratos-bridge.md) §4.
 - **La mayoría de las tools de escritura no persisten a disco solas** —
-  el llamador debe invocar `save_board()` explícitamente. Solo
-  `route_board`, `fill_zones` y `add_zone(fill=true)` garantizan
-  disco==memoria al terminar exitosamente
+  el llamador debe invocar `save_board()` explícitamente. Garantizan
+  disco==memoria al terminar exitosamente `route_board`, `fill_zones`,
+  `add_zone(fill=true)` y —cuando la placa tiene zonas de cobre—
+  `delete_tracks_bulk`
   ([ADR-0012](docs/adr/0012-route-board-persist-contract.md)).
-- **`delete_tracks_bulk` refilla en memoria pero no persiste ni
-  re-verifica clearance** — llamar `fill_zones()` si el borrado tocó una
-  zona. `delete_zone` y `add_keepout_zone` tampoco recalculan fills
-  vecinos solos.
+- **`delete_tracks_bulk` tiene dos modos.** Si la placa contiene al menos
+  una zona de cobre —chequeo a nivel de tablero, no una verificación
+  geométrica de si el borrado tocó esa zona— refilla, re-aplica el
+  clearance de agujeros y guarda a disco antes de retornar, con
+  `POST_ZONE_PERSIST_FAILED` si el guardado falla, nunca éxito silencioso.
+  Sin zonas de cobre, muta solo en memoria y el `save_board()` queda a
+  cargo del llamador. `delete_zone` y `add_keepout_zone` tampoco recalculan
+  fills vecinos solos.
 - **Freerouting no trata un plano GND como zona de exclusión para nets
   ajenos** — una variante same-layer del patrón de vía huérfana resultante
   no está cubierta todavía por el stitching post-ruteo existente.

@@ -34,6 +34,7 @@ from kicad_mcp.bridge.ipc import (
     Mm,
     ZoneItem,
 )
+from kicad_mcp.errors import ErrorCode, KicadMcpError
 from kicad_mcp.gates import g1
 from kicad_mcp.tools.pcb import register as register_pcb
 
@@ -48,6 +49,7 @@ class _FakeBridge(IpcBridge):
         bbox: BBoxMm | None = None,
         copper: dict[str, list[CopperItem]] | None = None,
         zones: list[ZoneItem] | None = None,
+        fail_save_after: int | None = None,
     ) -> None:
         self._client = None  # type: ignore[assignment]
         self._instance_token = None
@@ -60,9 +62,40 @@ class _FakeBridge(IpcBridge):
         self.removed_kiids: list[str] = []
         self.remove_many_calls: list[list[str]] = []
         self.refill_calls = 0
+        self.enforce_hole_clearance_calls = 0
+        self.calls: list[str] = []
+        # 34a-fix-1 (patrón test_pcb_zones.py, sesión 27): a partir de la
+        # llamada N+1 a save_board(), levanta KicadMcpError — simula el
+        # fallo de persistencia post-refill sin tocar kipy real. ``None`` =
+        # nunca falla.
+        self._fail_save_after = fail_save_after
+        self.saved: list[str] = []
 
     def get_open_board(self) -> BoardHandle | None:
         return BoardHandle(_raw=object())
+
+    def refill_zones(self, board: BoardHandle) -> int:  # type: ignore[override]
+        self.refill_calls += 1
+        self.calls.append("refill")
+        return sum(1 for z in self._zones if z.kind == "copper")
+
+    def enforce_hole_clearance(self, board: BoardHandle, pcb_path: Path) -> int:  # type: ignore[override]
+        # F-D3-01 (sesión 21): sin geometría real de holes en este fake (sin
+        # kipy) — sólo registra que el paso corrió, mismo espíritu que
+        # refill_calls.
+        self.enforce_hole_clearance_calls += 1
+        self.calls.append("enforce")
+        return 0
+
+    def save_board(self, board: BoardHandle) -> None:  # type: ignore[override]
+        self.calls.append("save")
+        self.saved.append("proj.kicad_pcb")
+        if self._fail_save_after is not None and len(self.saved) > self._fail_save_after:
+            raise KicadMcpError(
+                code=ErrorCode.KICAD_CLI_FAILED,
+                message="fake: save_board falló (test 34a-fix-1).",
+                hint="test only",
+            )
 
     def list_net_names(self, board: BoardHandle) -> list[str]:  # type: ignore[override]
         return list(self._nets)
@@ -102,10 +135,6 @@ class _FakeBridge(IpcBridge):
 
     def list_zones(self, board: BoardHandle) -> tuple[ZoneItem, ...]:  # type: ignore[override]
         return tuple(self._zones)
-
-    def refill_zones(self, board: BoardHandle) -> int:  # type: ignore[override]
-        self.refill_calls += 1
-        return sum(1 for z in self._zones if z.kind == "copper")
 
 
 def _make_project(tmp_path: Path) -> Path:
@@ -355,3 +384,67 @@ async def test_delete_tracks_bulk_no_refill_without_copper_zones(
     payload = _json(result)
     assert payload["zones_refilled"] == 0
     assert bridge.refill_calls == 0
+
+
+@pytest.mark.unit
+async def test_delete_tracks_bulk_zone_touch_runs_refill_enforce_save_in_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """34a-fix-1: cuando el borrado toca ≥1 zona de cobre, delete_tracks_bulk
+    corre refill → enforce_hole_clearance → save_board (D-23.2, precedente
+    técnico de ADR-0012 extendido a add_zone/fill_zones en sesión 27) — sin
+    esto el disco queda con el clearance roto de forma indefinida (A1)."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    copper = {"GND": [_track("T1", "GND", 0.0, 0.0, 10.0, 0.0)]}
+    zones = [_copper_zone("Z1", "GND")]
+    bridge = _FakeBridge(nets=["GND"], copper=copper, zones=zones)
+    mcp = _make_server(bridge)
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("delete_tracks_bulk", {"net": "GND"})
+    assert not result.isError, _text(result)
+    payload = _json(result)
+    # Sin regresión respecto de test_delete_tracks_bulk_refills_zones_when_copper_zone_present.
+    assert payload["tracks_deleted"] == 1
+    assert payload["zones_refilled"] == 1
+    assert payload["snap_id"] is not None
+    # A1: orden estricto refill → enforce → save, cada uno exactamente 1 vez.
+    assert bridge.refill_calls == 1
+    assert bridge.enforce_hole_clearance_calls == 1
+    assert len(bridge.saved) == 1
+    assert bridge.calls == ["refill", "enforce", "save"]
+
+
+@pytest.mark.unit
+async def test_delete_tracks_bulk_zone_touch_persist_failure_is_visible(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """34a-fix-1 (A2/P2): si save_board() falla tras refill+enforce,
+    delete_tracks_bulk audita el fallo y re-levanta KicadMcpError con
+    POST_ZONE_PERSIST_FAILED — nunca completa como éxito silencioso; el
+    vivo ya tiene el fix (live_has_fix=True)."""
+    import json
+
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    copper = {"GND": [_track("T1", "GND", 0.0, 0.0, 10.0, 0.0)]}
+    zones = [_copper_zone("Z1", "GND")]
+    bridge = _FakeBridge(nets=["GND"], copper=copper, zones=zones, fail_save_after=0)
+    mcp = _make_server(bridge)
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("delete_tracks_bulk", {"net": "GND"})
+    assert result.isError
+    text = _text(result)
+    assert "POST_ZONE_PERSIST_FAILED" in text
+    assert "delete_tracks_bulk" in text
+    assert "live_has_fix" in text
+    # El vivo sí quedó arreglado — sólo la persistencia falló.
+    assert bridge.refill_calls == 1
+    assert bridge.enforce_hole_clearance_calls == 1
+    assert len(bridge.saved) == 1
+
+    audit_file = project / ".kicad-mcp" / "audit.jsonl"
+    assert audit_file.is_file()
+    entries = [json.loads(line) for line in audit_file.read_text().splitlines()]
+    assert entries[-1]["tool"] == "delete_tracks_bulk"
+    assert entries[-1]["error_code"] == "POST_ZONE_PERSIST_FAILED"

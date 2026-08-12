@@ -13,6 +13,7 @@ Uso:
 `survivors` -- p.ej. "12:21" para los 9 supervivientes 13-21 (posiciones
 1-indexed 13..21).
 """
+
 import json
 import sys
 from pathlib import Path

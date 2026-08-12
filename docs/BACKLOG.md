@@ -252,43 +252,53 @@ abajo. **Ratificado 25/25 en producción real hasta cierre D7 (sesión 29),
 sin divergencias.** Reabrir como P0 solo si una sesión futura lo ratifica
 como regresión.
 
-## P1 — `delete_tracks_bulk` no respeta D-23.2/ADR-0012 sobre zonas tocadas — Abierto, agendado `34a-fix-1`
+## P1 — `delete_tracks_bulk` no respeta D-23.2/ADR-0012 sobre zonas tocadas — ✅ CERRADO sesión 34a-fix-1
 
 **Origen:** observado en sesión 32b (`docs/BACKLOG.md` §Higiene menor,
 histórico), no accionado por estar fuera del alcance quirúrgico de esa
 sesión. **Confirmado con severidad P1** (no P3/higiene) en la auditoría
 sistemática de contratos de escritura de sesión 34a.
 
-`delete_tracks_bulk` (`src/kicad_mcp/tools/pcb.py:2039`) llama
-`bridge.refill_zones(board)` cuando el borrado toca tracks de una zona de
-cobre, pero **sin** `enforce_hole_clearance()` ni `save_board()`
+`delete_tracks_bulk` (`src/kicad_mcp/tools/pcb.py:2039`) llamaba
+`bridge.refill_zones(board)` cuando el borrado tocaba tracks de una zona
+de cobre, pero **sin** `enforce_hole_clearance()` ni `save_board()`
 posteriores — a diferencia de `route_board`, `fill_zones` y
 `add_zone(fill=True)`, que corren las tres juntas (contrato D-23.2/
 ADR-0012). Dos consecuencias concretas: (1) el clearance contra holes
-puede quedar roto (mismo bug conceptual que F-D3-01, sin su workaround
-acá); (2) el refill vive sólo en memoria — el payload reporta
-`zones_refilled: 1` pero el disco nunca se actualiza, así que un
-`run_drc()` inmediato mide el estado viejo. El propio docstring de
+podía quedar roto (mismo bug conceptual que F-D3-01, sin su workaround
+acá); (2) el refill vivía sólo en memoria — el payload reportaba
+`zones_refilled: 1` pero el disco nunca se actualizaba, así que un
+`run_drc()` inmediato medía el estado viejo. El propio docstring de
 `enforce_hole_clearance` (`ipc.py:2016`) exige llamarlo **siempre**
-inmediatamente después de `refill_zones()` — esta tool viola esa
+inmediatamente después de `refill_zones()` — esta tool violaba esa
 invariante directamente.
 
-**Evidencia de test:**
-`tests/test_pcb_delete_bulk.py::test_delete_tracks_bulk_refills_zones_when_copper_zone_present`
-sólo asegura `zones_refilled == 1` — sin ninguna assertion de
-`save_board()`/`enforce_hole_clearance()` invocados. El test documenta el
-comportamiento actual, no lo objeta.
-
 **No fixeado en sesión 34a** (fuera de alcance: la sesión es auditoría
-pura, fixes triviales <20 líneas únicamente). Hipótesis de fix agendada
-como `34a-fix-1`: reemplazar la llamada inline por
-`_refill_enforce_and_save(bridge, board, pcb_path, root, params,
-context="borrado bulk")` (mismo helper que ya usa `route_board`), con
-manejo de fallo de persistencia visible (código nuevo o reuso de
-`POST_ZONE_PERSIST_FAILED`). Requiere: decisión del arquitecto sobre si
-extiende ADR-0012 formalmente, test de regresión con zona de cobre real +
-verificación de disco post-save, y gate GUI del DoD (toca pipeline de
-zonas). Detalle completo:
+pura, fixes triviales <20 líneas únicamente). Fix agendado como
+`34a-fix-1` y cerrado en esa sesión.
+
+**Fix (sesión 34a-fix-1, rama R-A):** cuando el borrado toca ≥1 zona de
+cobre, `delete_tracks_bulk` corre `refill_zones` → `enforce_hole_clearance`
+→ `save_board`, con fallo de persistencia visible
+(`POST_ZONE_PERSIST_FAILED` reusado tal cual de sesión 27, sin código
+nuevo) y mtimes registrados post-save (patrón `add_zone`, hallazgo #31
+sesión 24). La hipótesis original del BACKLOG (reusar
+`_refill_enforce_and_save`, el helper de `route_board`) se descartó por
+inspección: el helper está acoplado a `route_board` en su mensaje de
+error y en `POST_ROUTE_PERSIST_FAILED`; se implementó inline, paralelo a
+`add_zone`/`fill_zones` (sus hermanos semánticos, también inline).
+
+**Evidencia:** 2 tests unit nuevos (orden estricto `refill → enforce →
+save`; fallo de `save_board()` visible y auditado) en
+`tests/test_pcb_delete_bulk.py`, sin editar los 8 preexistentes; 1 test
+GUI nuevo (`tests/test_pcb_session34afix1_delete_bulk_persist_gui.py`,
+`integration_gui_slow`, gate del merge), 1/1 verde contra KiCad 10.0.4
+real: `zones_refilled == 1`, `run_drc()` independiente sin
+`hole_clearance` ni `clearance` contra Zone GND, sin
+`EXTERNAL_EDIT_DETECTED` espurio post-save, keepouts en rango esperado.
+Suite offline 408 passed, `ruff`/`mypy` limpios. Revisión independiente de
+Codex: **APROBAR, 0 hallazgos**. Detalle completo:
+`docs/historico/sesiones/34a-fix-1-reporte.md`,
 `docs/analisis/auditoria-contratos-bridge.md` §3 (ficha
 `delete_tracks_bulk`) y §5.3.
 

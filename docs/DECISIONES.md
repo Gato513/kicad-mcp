@@ -845,6 +845,45 @@ puramente de estructura/links no obliga a retraducir.
 
 **Fuente:** sesión 34b.
 
+### D-34a-fix-1.1 — Cierre de la asimetría A1: pipeline D-23.2 inline, no reuso del helper de `route_board`
+
+**Contexto:** sesión 34a (D-34a.2) confirmó que `delete_tracks_bulk`
+refillea zonas de cobre sin `enforce_hole_clearance()` ni `save_board()`
+posteriores (asimetría A1, P1). `docs/BACKLOG.md` agendaba el fix con una
+hipótesis concreta: reusar `_refill_enforce_and_save`, el helper que ya
+comparten los dos call-sites internos de `route_board`.
+
+**Decisión:** se descartó la hipótesis y se implementó **inline** (rama
+R-A), paralelo a `add_zone`/`fill_zones`. El helper resultó acoplado a
+`route_board` en dos puntos no triviales de desacoplar sin tocarlo:
+interpola `"route_board completó …"` en el mensaje de error y siempre
+levanta `POST_ROUTE_PERSIST_FAILED`. Los dos callers semánticamente
+hermanos del caso nuevo — `add_zone(fill=True)` y `fill_zones` — ya son
+inline con `POST_ZONE_PERSIST_FAILED` desde sesión 27; parametrizar el
+helper (rama R-B, con `tool_name`/`error_code` y defaults
+backward-compatibles) no ofrecía reutilización material sobre ese
+precedente y ampliaba el blast radius de la revisión sin necesidad.
+`enforce_hole_clearance` se confirmó aplicable al caso de borrado (no
+rama R-C/aborto): es idempotente y borrar vías elimina agujeros del
+board, exactamente el escenario que el workaround protege.
+
+**Consecuencia operacional:** `delete_tracks_bulk` pasa a ser
+**W-COMPOSITE** (taxonomía de la auditoría 34a) cuando el borrado toca
+zona de cobre, **W-IPC** cuando no. `POST_ZONE_PERSIST_FAILED` queda
+compartido por tres tools (`add_zone`, `fill_zones`,
+`delete_tracks_bulk`); `POST_ROUTE_PERSIST_FAILED` sigue exclusivo de
+`route_board` — ningún código de error nuevo, ninguno renombrado.
+
+**Nota de proceso:** primer ciclo ejecutado de punta a punta bajo el
+flujo híbrido multiagente v2 (`docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md`),
+clasificado R2 por el arquitecto — commit local único como unidad
+revisable, gates mecánicos + gate GUI con oráculo determinista, revisión
+posterior independiente de Codex (`APROBAR`, 0 hallazgos). Precedente de
+que el ciclo funciona sin fricción para un fix P1 acotado.
+
+**Fuente:** sesión 34a-fix-1,
+`docs/historico/sesiones/34a-fix-1-reporte.md`.
+
 ## 3. Decisiones de proceso vigentes
 
 ### 2026-08-10 — Flujo híbrido multiagente v2

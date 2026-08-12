@@ -1935,22 +1935,67 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
             kiids = [it.kiid for it in items]
             removed = bridge.remove_many_by_kiid(board, kiids)
 
+            raw_params = {
+                "net": net,
+                "bbox": bbox_t,
+                "layer": layer,
+                "include_vias": include_vias,
+                "base_snap": base_snap,
+            }
+
             zones_refilled = 0
-            if any(z.kind == "copper" for z in bridge.list_zones(board)):
+            touched_copper_zone = any(z.kind == "copper" for z in bridge.list_zones(board))
+            if touched_copper_zone:
+                pcb_path = _resolve_root_pcb()
                 zones_refilled = bridge.refill_zones(board)  # D-14.1: refill post-bulk
+                # F-D3-01 (sesión 21): el refill puede dejar 0mm de clearance
+                # contra agujeros PTH/NPTH/vías ajenos — workaround post-fill
+                # obligatorio en TODO camino que rellene (docstring de
+                # enforce_hole_clearance: "llamar SIEMPRE inmediatamente
+                # después de refill_zones()"). Borrar vías además elimina
+                # agujeros del board — enforce_hole_clearance limpia sus
+                # propios keepouts huérfanos de la pasada previa antes de
+                # recalcular (idempotente).
+                bridge.enforce_hole_clearance(board, pcb_path)
+                # Precedente técnico D-23.2 (ADR-0012, extendido sesión 27 a
+                # add_zone/fill_zones): persistir el vivo ya arreglado por
+                # refill+enforce — sin esto el disco queda con el clearance
+                # roto de forma indefinida (34a-fix-1: cierra la asimetría de
+                # delete_tracks_bulk, único mutante de zonas sin este
+                # pipeline).
+                try:
+                    bridge.save_board(board)
+                except KicadMcpError as exc:
+                    _audit_error(
+                        root, "delete_tracks_bulk", raw_params, ErrorCode.POST_ZONE_PERSIST_FAILED
+                    )
+                    raise KicadMcpError(
+                        code=ErrorCode.POST_ZONE_PERSIST_FAILED,
+                        message=(
+                            f"delete_tracks_bulk corrió refill+enforce en {pcb_path.name} "
+                            "pero no pudo guardar el board a disco."
+                        ),
+                        hint=(
+                            "El board VIVO ya tiene el borrado y el clearance arreglado; "
+                            "reintentá save_board() manual o descartá los cambios."
+                        ),
+                        data={"pcb": pcb_path.name, "live_has_fix": True},
+                    ) from exc
 
             new_state = build_state_from_snapshot(ctx.footprints)
-            snap_id = get_default_store().register(new_state, mtimes=None)
+            if touched_copper_zone:
+                # D-23.2: mtimes recolectados POST-save (hallazgo #31 sesión
+                # 24) — si se recolectaran antes, quedarían stale y el propio
+                # save de delete_tracks_bulk dispararía un
+                # EXTERNAL_EDIT_DETECTED espurio en la siguiente lectura.
+                mtimes = collect_project_mtimes(_resolve_root_schematic_or_pcb())
+                snap_id = get_default_store().register(new_state, mtimes)
+            else:
+                snap_id = get_default_store().register(new_state, mtimes=None)
             audit_record(
                 root,
                 tool="delete_tracks_bulk",
-                params={
-                    "net": net,
-                    "bbox": bbox_t,
-                    "layer": layer,
-                    "include_vias": include_vias,
-                    "base_snap": base_snap,
-                },
+                params=raw_params,
                 result={"snap": snap_id, "backup": backup_info.get("backup"), "removed": removed},
             )
             result = {

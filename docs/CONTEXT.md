@@ -368,12 +368,29 @@ Fase 1-3— nunca ejercitó, no una regresión del código.
    puramente documental, `src/` intocado). Ver
    `docs/historico/sesiones/34b-reporte.md`.
 
-**34a-fix-1 (fix de `delete_tracks_bulk`, asimetría A1)** es la próxima
-sesión, con la salvedad de que `F-V3-ZONE-FILL-CRASH` y el crash-loop de
-Freerouting quedan como candidatos a investigación intermedia si
-reaparecen antes del release. Precede a **34c** (docs de arquitectura
-para colaboradores externos), de modo que 34c documente la asimetría A1
-ya resuelta.
+7. Sesión 34a-fix-1 — **fix de `delete_tracks_bulk` (asimetría A1) —
+   ✅ cerrada.** Primer ciclo ejecutado de punta a punta bajo el flujo
+   híbrido multiagente v2 (R2, `docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md`).
+   Cuando el borrado toca ≥1 zona de cobre, `delete_tracks_bulk` ahora
+   corre `refill_zones` → `enforce_hole_clearance` → `save_board`, con
+   fallo de persistencia visible (`POST_ZONE_PERSIST_FAILED`, reusado sin
+   código nuevo) y mtimes post-save (D-34a-fix-1.1). Implementado inline
+   (rama R-A), no con el helper de `route_board` que hipotetizaba el
+   BACKLOG (acoplado a `route_board` en mensaje y código de error) — los
+   hermanos semánticos `add_zone`/`fill_zones` ya eran inline. 2 tests
+   unit nuevos + 1 GUI nuevo (`integration_gui_slow`, gate del merge),
+   1/1 verde contra KiCad 10.0.4 real (fixture `despertador-routed`):
+   `zones_refilled == 1`, DRC limpio, sin `EXTERNAL_EDIT_DETECTED`
+   espurio post-save. Suite offline 408 passed, `ruff`/`mypy` limpios.
+   **Revisión independiente de Codex: APROBAR, 0 hallazgos.** Ver
+   `docs/historico/sesiones/34a-fix-1-reporte.md`.
+
+**34c** (docs de arquitectura para colaboradores externos) es la próxima
+sesión, ahora con la asimetría A1 ya resuelta. `F-V3-ZONE-FILL-CRASH` y
+el crash-loop de Freerouting quedan como candidatos a investigación
+intermedia si reaparecen antes del release; `delete_zone`/
+`add_keepout_zone` (A2/A3, P2, sin precedente empírico) siguen abiertas
+sin cambio de estado.
 
 ## Estado actual: Fase 3 — consolidación (histórico, cerrada sesión 29)
 

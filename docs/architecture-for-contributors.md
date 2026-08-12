@@ -141,7 +141,7 @@ not a term from the audit.
 |---|---|---|
 | **R** | Read-only. Reads the live board (IPC), a saved file, or runs `kicad-cli` for validation/export. Never mutates a design. | N/A |
 | **W-IPC** | Mutates the live board via IPC. Registers a snapshot with `mtimes=None` (deliberately — see ADR-0007) and does **not** call `save_board()` itself. | No, by design — caller must call `save_board` explicitly. |
-| **W-COMPOSITE** | Mutates via IPC, then unconditionally refills zones, enforces hole clearance, and saves, per the D-23.2 contract ([ADR-0012](adr/0012-route-board-persist-contract.md)). | Yes, always — and if the save fails, the tool reports a typed error rather than silently leaving disk stale. |
+| **W-COMPOSITE** | Mutates via IPC, then — under the tool's own trigger condition — refills zones, enforces hole clearance, and saves, per the D-23.2 contract ([ADR-0012](adr/0012-route-board-persist-contract.md)). For `fill_zones` and `add_zone(fill=True)` that trigger condition is "every call, no exceptions." For `route_board` it is not — see the callout below. | When the pipeline runs, always — and if the save fails, the tool reports a typed error rather than silently leaving disk stale. |
 | **W-SKIP** | Writes a `.kicad_sch` file directly via `kicad-skip`. No IPC involved — KiCad 10 has no schematic IPC API. | Yes, immediately (it's a file write). |
 
 `docs/analisis/auditoria-contratos-bridge.md` §1 also names a fifth,
@@ -155,6 +155,31 @@ tools don't fit any of the other four categories.
 A tool's category is about **what it does to the design and how it
 persists**, not about which Python file it lives in. `tools/pcb.py` alone
 hosts R, W-IPC, W-COMPOSITE, and Infra tools side by side.
+
+### `route_board`'s refill+enforce+save pipeline is conditional, not guaranteed
+
+`route_board` is classified W-COMPOSITE, and its docstring and
+[ADR-0012](adr/0012-route-board-persist-contract.md) do commit to the
+D-23.2 contract — but unlike `fill_zones` and `add_zone(fill=True)`, it
+does not run the refill+enforce+save block on every call. Verified against
+`src/kicad_mcp/tools/pcb.py` (`route_board`): that block
+(`_refill_enforce_and_save`) only runs when **all three** hold: `refill`
+is `True` (the default, but callers can pass `False`); the board has at
+least one existing zone (`zones_existentes > 0`); and the live editor was
+successfully reloaded to reflect the freshly-routed file
+(`reloaded is True` — which itself requires the target board to be the one
+open in KiCad's editor at call time). If the editor is closed, the project
+open in KiCad is a different one, `refill=False` was passed, or the
+post-route reload fails, the block is skipped — and `route_board` can
+still return success. In that case, ADR-0012's DRC-after-persistence
+guarantee is scoped to what the tool call itself did: the newly-routed
+copper *was* still written to disk (via an atomic file replace, not
+through this pipeline), but hole-clearance and zone-fill enforcement
+against that new copper were not, and the reported `err_post` was measured
+without them. `route_board`'s own response payload reports which case
+applied — this document doesn't restate that shape, just the branching it
+depends on. Treat "W-COMPOSITE" as route_board's *category*, not as a
+promise that every call ends with a refill.
 
 ### `add_zone` and `delete_tracks_bulk` are dual-mode
 
@@ -204,8 +229,9 @@ each as two separate rows for this reason.
   `set_footprint_ref`, `add_track`, `add_via`, `delete_track`, `delete_via`,
   `draw_board_outline`, `add_keepout_zone`, `delete_zone`, plus `add_zone`
   and `delete_tracks_bulk` in their W-IPC branch.
-- **W-COMPOSITE:** `route_board`, `fill_zones`, plus `add_zone` and
-  `delete_tracks_bulk` in their W-COMPOSITE branch.
+- **W-COMPOSITE:** `route_board` (conditionally — see the callout above),
+  `fill_zones`, plus `add_zone` and `delete_tracks_bulk` in their
+  W-COMPOSITE branch.
 - **W-SKIP:** all four of `tools/sch.py` — `add_symbol`, `set_value`,
   `set_footprint`, `connect_pins`.
 - **Infra:** `save_board`, `reload_board_from_disk`.
@@ -261,9 +287,11 @@ Two more ADRs worth knowing before touching this code: **ADR-0008**
 documents that `kipy` mutations must go through a property *setter*, not
 direct field assignment — assigning a field silently does nothing.
 **ADR-0012** is the D-23.2 persistence contract that defines what
-"W-COMPOSITE" means above (refill → enforce hole clearance → save,
-unconditionally, with a typed error on save failure) and is mandatory
-reading before touching `route_board`, `fill_zones`, or `add_zone`.
+"W-COMPOSITE" means above (refill → enforce hole clearance → save, with a
+typed error on save failure) and is mandatory reading before touching
+`route_board`, `fill_zones`, or `add_zone` — `route_board`'s version of
+that pipeline is conditional (see §2's callout), the other two run it on
+every call.
 
 ---
 

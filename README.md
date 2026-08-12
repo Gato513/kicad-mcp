@@ -148,6 +148,9 @@ verified — nothing here is a guess.
 - [`docs/adr/`](docs/adr/) — one architectural decision record per file
   (why KiCad 10, why stdio-only, why no database, the `route_board`
   persistence contract, etc.).
+- [`docs/architecture-for-contributors.md`](docs/architecture-for-contributors.md)
+  — start here if you're new: real process topology, tool taxonomy, and
+  how to navigate the ADRs/specs/session-report layers below.
 - [`docs/DECISIONES.md`](docs/DECISIONES.md) — index of ADRs plus
   informal decisions not yet promoted to one.
 - [`docs/investigacion/`](docs/investigacion/) — root-cause

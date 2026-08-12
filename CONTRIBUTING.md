@@ -54,7 +54,11 @@ practice.
 
 **Cross-check against current ADRs before finalizing a design.** Before
 committing to an approach for a write-tool change, check whether an
-existing [ADR](docs/adr/) already governs adjacent behavior. A rejected
+existing [ADR](docs/adr/) already governs adjacent behavior — and if
+you're not yet sure how the ADRs, `docs/DECISIONES.md`, and
+`docs/INDEX.md` relate to each other, start with
+[`docs/architecture-for-contributors.md`](docs/architecture-for-contributors.md),
+which maps that out. A rejected
 `delete_footprint` design (see
 [ADR-0013](docs/adr/0013-refs-duplicados-por-anotacion-no-borrado.md))
 pivoted to annotating duplicate references instead of deleting footprints

@@ -168,18 +168,25 @@ is `True` (the default, but callers can pass `False`); the board has at
 least one existing zone (`zones_existentes > 0`); and the live editor was
 successfully reloaded to reflect the freshly-routed file
 (`reloaded is True` — which itself requires the target board to be the one
-open in KiCad's editor at call time). If the editor is closed, the project
-open in KiCad is a different one, `refill=False` was passed, or the
-post-route reload fails, the block is skipped — and `route_board` can
-still return success. In that case, ADR-0012's DRC-after-persistence
-guarantee is scoped to what the tool call itself did: the newly-routed
-copper *was* still written to disk (via an atomic file replace, not
+open in KiCad's editor at call time).
+
+When the block is skipped, `route_board` treats the reason differently
+depending on *why*. If `refill=False` was passed, the editor is closed, or
+a different project is open in KiCad — three cases where skipping is the
+documented, expected behavior — the call still returns success; the
+newly-routed copper was written to disk (via an atomic file replace, not
 through this pipeline), but hole-clearance and zone-fill enforcement
-against that new copper were not, and the reported `err_post` was measured
-without them. `route_board`'s own response payload reports which case
-applied — this document doesn't restate that shape, just the branching it
-depends on. Treat "W-COMPOSITE" as route_board's *category*, not as a
-promise that every call ends with a refill.
+against it were not, and the reported `err_post` was measured without
+them. But if the editor *was* the right target and reload was attempted
+and failed, that's the one case the tool treats as a broken promise rather
+than an expected skip: it raises `POST_ROUTE_REFILL_SKIPPED` instead of
+returning success (`src/kicad_mcp/tools/pcb.py`, the
+`refill_broke_contract` branch) — the routing itself is still valid and on
+disk, but the tool does not claim the D-23.2 contract was honored.
+`route_board`'s own response/error payload reports which case applied —
+this document doesn't restate that shape, just the branching it depends
+on. Treat "W-COMPOSITE" as route_board's *category*, not as a promise that
+every successful call ends with a refill.
 
 ### `add_zone` and `delete_tracks_bulk` are dual-mode
 

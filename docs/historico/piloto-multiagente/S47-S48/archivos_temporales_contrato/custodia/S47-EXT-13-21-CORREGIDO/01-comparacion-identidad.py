@@ -12,6 +12,7 @@ Compara clusters-ext.json (re-derivado en esta sesión) contra:
 Exit 0 = igualdad completa. Cualquier otro exit = drift (DRIFT_UNIVERSO_S47).
 No escribe nada; solo lee. No modifica ningún archivo de entrada.
 """
+
 import json
 import sys
 from pathlib import Path
@@ -30,16 +31,28 @@ EXPECTED_COUNTS = {
 EXPECTED_1_12 = [
     ["_DELETE_TOLERANCE_MM", "_copper_candidate_dict", "_delete_copper", "_match_copper"],
     ["_audit_error"],
-    ["_bbox_distance_to_point", "_closest_board_edge", "_closest_point_copper_bbox",
-     "_copper_distance_to_bbox", "get_footprint_neighbors"],
+    [
+        "_bbox_distance_to_point",
+        "_closest_board_edge",
+        "_closest_point_copper_bbox",
+        "_copper_distance_to_bbox",
+        "get_footprint_neighbors",
+    ],
     ["_bbox_distance_to_point"],
     ["_copper_distance_mm", "_dist_point_segment"],
     ["_copper_in_bbox"],
     ["_copper_on_layer"],
     ["_derive_post_state", "_find_target", "_register_post_snapshot", "move_footprint"],
-    ["_dist_segment_to_pad", "_find_track_pad_collision", "_parse_pad_ref",
-     "_resolve_endpoint", "_resolve_pad_coord", "_rounded_rect_sdf",
-     "_track_params", "add_track"],
+    [
+        "_dist_segment_to_pad",
+        "_find_track_pad_collision",
+        "_parse_pad_ref",
+        "_resolve_endpoint",
+        "_resolve_pad_coord",
+        "_rounded_rect_sdf",
+        "_track_params",
+        "add_track",
+    ],
     ["_outline_params", "draw_board_outline"],
     ["_resolve_board"],
     ["_segment_intersects_bbox"],
@@ -80,13 +93,12 @@ if survivors_ext != survivors_anclado:
     errors.append("survivors: array re-derivado difiere del array anclado (orden o contenido)")
 
 if survivors_ext != EXPECTED_SURVIVORS:
-    for i, (got, exp) in enumerate(zip(survivors_ext, EXPECTED_SURVIVORS), 1):
+    for i, (got, exp) in enumerate(zip(survivors_ext, EXPECTED_SURVIVORS, strict=True), 1):
         if got != exp:
             errors.append(f"survivors[{i}]: esperado {exp}, obtenido {got}")
     if len(survivors_ext) != len(EXPECTED_SURVIVORS):
         errors.append(
-            f"survivors: longitud esperada {len(EXPECTED_SURVIVORS)}, "
-            f"obtenida {len(survivors_ext)}"
+            f"survivors: longitud esperada {len(EXPECTED_SURVIVORS)}, obtenida {len(survivors_ext)}"
         )
 
 if errors:
@@ -96,10 +108,14 @@ if errors:
     sys.exit(1)
 
 print("IDENTIDAD_CONFORME")
-print(f"N_universo_total={ext['N_universo_total']} "
-      f"N_excluidos_institucional={ext['N_excluidos_institucional']} "
-      f"N_excluidos_presup={ext['N_excluidos_presup']} "
-      f"N_supervivientes={ext['N_supervivientes']}")
-print("Posiciones 1-21 del array survivors coinciden exactamente con "
-      "enumeracion.md §5 (1-12) y contrato §2 (13-21), mismo orden.")
+print(
+    f"N_universo_total={ext['N_universo_total']} "
+    f"N_excluidos_institucional={ext['N_excluidos_institucional']} "
+    f"N_excluidos_presup={ext['N_excluidos_presup']} "
+    f"N_supervivientes={ext['N_supervivientes']}"
+)
+print(
+    "Posiciones 1-21 del array survivors coinciden exactamente con "
+    "enumeracion.md §5 (1-12) y contrato §2 (13-21), mismo orden."
+)
 sys.exit(0)

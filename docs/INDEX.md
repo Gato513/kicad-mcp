@@ -31,6 +31,7 @@ Eso alcanza para el 90% de las sesiones. Lo demás es "bajo demanda":
 | Tocar el encoder TOON o el delta | `docs/specs/toon-v1.md` (contrato F1 — nunca editar sin aprobación) |
 | Cuestionar o extender una decisión existente | `docs/DECISIONES.md` → el ADR puntual referenciado |
 | Entrar a un módulo que no conocés | `docs/arquitectura.md` |
+| Sos colaborador externo y necesitás onboarding en inglés | `docs/architecture-for-contributors.md` (opcional, no reemplaza lo de arriba) |
 | Toparte con un término de dominio EDA dudoso | `docs/glosario.md` |
 | Verificar límites técnicos de KiCad | `docs/specs/restricciones-kicad.md` |
 | Correr tests `integration_gui`/`integration_gui_slow` a mano | `docs/guias/pruebas-gui.md` |
@@ -52,6 +53,7 @@ Eso alcanza para el 90% de las sesiones. Lo demás es "bajo demanda":
 | `hoja-de-ruta-v5.md` | Dirección estratégica vigente | Humano/agente |
 | `docs/BACKLOG.md` | Pendientes priorizados | Humano/agente |
 | `docs/arquitectura.md` | Diseño del sistema v0.2, principios, riesgos de fondo | Estable, rara vez cambia |
+| `docs/architecture-for-contributors.md` | Onboarding en inglés para colaboradores externos: topología real (verificada contra código), taxonomía de tools, guía de ADRs | Humano/agente, ciclo 34c |
 | `docs/glosario.md` | Dominio EDA/KiCad | Estable |
 | `docs/componentes-pcb.md` | Referencia del PCB de prueba (202 comp.) | Estable |
 | `docs/guias/guia-paleta.md` | Protocolo humano: paleta de símbolos para `add_symbol` | Humano |

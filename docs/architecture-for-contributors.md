@@ -177,12 +177,16 @@ documented, expected behavior — the call still returns success; the
 newly-routed copper was written to disk (via an atomic file replace, not
 through this pipeline), but hole-clearance and zone-fill enforcement
 against it were not, and the reported `err_post` was measured without
-them. But if the editor *was* the right target and reload was attempted
-and failed, that's the one case the tool treats as a broken promise rather
-than an expected skip: it raises `POST_ROUTE_REFILL_SKIPPED` instead of
-returning success (`src/kicad_mcp/tools/pcb.py`, the
-`refill_broke_contract` branch) — the routing itself is still valid and on
-disk, but the tool does not claim the D-23.2 contract was honored.
+them. But if refill was requested *and* the board had at least one zone —
+the two conditions that make a refill a promise in the first place — and
+the reload of that correct target board then failed, that's the one case
+the tool treats as a broken promise rather than an expected skip: it
+raises `POST_ROUTE_REFILL_SKIPPED` instead of returning success
+(`src/kicad_mcp/tools/pcb.py`, the `refill_broke_contract` branch).
+Outside those two conditions there was no refill promise to break, so a
+failed reload on its own does not produce that error. The routing itself
+is still valid and on disk, but the tool does not claim the D-23.2
+contract was honored.
 `route_board`'s own response/error payload reports which case applied —
 this document doesn't restate that shape, just the branching it depends
 on. Treat "W-COMPOSITE" as route_board's *category*, not as a promise that

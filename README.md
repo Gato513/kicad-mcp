@@ -101,17 +101,21 @@ verified — nothing here is a guess.
   writeup: [`docs/analisis/auditoria-contratos-bridge.md`](docs/analisis/auditoria-contratos-bridge.md) §4.
 - **Most write tools don't save to disk by themselves.** Tools like
   `add_track`, `add_via`, `move_footprint` mutate the live, in-memory
-  board and expect the caller to invoke `save_board()` explicitly.
-  Only `route_board`, `fill_zones`, and `add_zone(fill=true)` guarantee
-  disk == memory when they return successfully — see
+  board and expect the caller to invoke `save_board()` explicitly. The
+  tools that guarantee disk == memory when they return successfully are
+  `route_board`, `fill_zones`, `add_zone(fill=true)`, and
+  `delete_tracks_bulk` when the board has copper zones — see
   [ADR-0012](docs/adr/0012-route-board-persist-contract.md).
-- **`delete_tracks_bulk` refills copper zones in memory but doesn't
-  persist or re-check hole clearance afterward** — call `fill_zones()`
-  yourself if the deletion touched a zone. `delete_zone` and
-  `add_keepout_zone` similarly don't recompute neighboring zone fills on
-  their own. Tracked as `A1`/`A2`/`A3` in
-  [`docs/analisis/auditoria-contratos-bridge.md`](docs/analisis/auditoria-contratos-bridge.md) §5.2;
-  `A1` (`delete_tracks_bulk`) has a fix already scheduled.
+- **`delete_tracks_bulk` behaves differently depending on the board.** If
+  the board contains at least one copper zone — a board-wide check, not a
+  geometric test of whether the deletion actually touched that zone — it
+  refills zones, re-enforces hole clearance and saves to disk before
+  returning, raising `POST_ZONE_PERSIST_FAILED` if that save fails rather
+  than succeeding silently. On a board with no copper zone it stays
+  in-memory like the tools above, and `save_board()` is the caller's job.
+  `delete_zone` and `add_keepout_zone` don't recompute neighboring zone
+  fills on their own — tracked as `A2`/`A3` in
+  [`docs/analisis/auditoria-contratos-bridge.md`](docs/analisis/auditoria-contratos-bridge.md) §5.2.
 - **Freerouting doesn't treat a GND copper plane as an exclusion zone for
   nets it doesn't own** — it only routes to the plane's own net, not
   around it. A specific same-layer variant of the resulting orphaned-via

@@ -17,7 +17,7 @@ Reglas transversales:
 
 | Tool | Descripción | Parámetros | Refresh | Errores posibles |
 |---|---|---|---|---|
-| `health` | Estado del servidor, KiCad, kicad-cli y proyecto activo | — | none | `KICAD_NOT_RUNNING`, `KICAD_CLI_MISSING`, `PROJECT_NOT_FOUND` |
+| `health` | Estado del servidor, KiCad, kicad-cli y proyecto activo | — | none | `KICAD_NOT_RUNNING`, `KICAD_CLI_MISSING`, `PROJECT_NOT_CONFIGURED`, `PROJECT_PATH_NOT_FOUND` |
 
 Notas de `health` (sesión 07 D-07.3): el sub-payload `kicad_ipc` reporta tres
 niveles independientes con estados discriminables — un `bool` colapsaría
@@ -59,6 +59,20 @@ Ejemplo con KiCad cerrado:
   "hint": "Abrí KiCad y habilitá el API server ..."
 }
 ```
+
+Notas de `project` (F-02, dogfooding 2): distingue dos causas de ausencia con
+hints distintos, antes colapsadas en un único `PROJECT_NOT_FOUND` genérico
+que decía "exportá la env var" incluso cuando ya estaba exportada:
+
+- `PROJECT_NOT_CONFIGURED`: `KICAD_MCP_PROJECT` no está exportada.
+- `PROJECT_PATH_NOT_FOUND`: `KICAD_MCP_PROJECT` está exportada pero el path
+  no existe o no es un directorio (config cruzada shell vs `mcpServers`, o
+  proyecto movido/borrado).
+
+`PROJECT_NOT_FOUND` (taxonomía general, §Taxonomía) sigue siendo el código
+que usan las demás tools cuando fallan al resolver el proyecto durante su
+propia ejecución — no cambia; esta distinción es específica del sub-payload
+`project` de `health`.
 
 ## Categoría `world`
 
@@ -984,6 +998,8 @@ catálogo para no prometer una superficie que no existe.
 | `KICAD_CLI_MISSING` | kicad-cli no está en PATH | No | Instrucción de instalación |
 | `KICAD_CLI_FAILED` | kicad-cli devolvió error | Depende | Incluir stderr resumido y saneado (≤ 200 chars) |
 | `PROJECT_NOT_FOUND` | No hay proyecto activo o la ruta no existe | No | Listar qué se buscó y dónde |
+| `PROJECT_NOT_CONFIGURED` | F-02. Específico de `health`: `KICAD_MCP_PROJECT` no está exportada | No | Instruir: exportar la env var con la ruta del proyecto activo |
+| `PROJECT_PATH_NOT_FOUND` | F-02. Específico de `health`: `KICAD_MCP_PROJECT` exportada pero el path no existe o no es un directorio | No | Instruir: corregir la env var — no repetir "exportá la variable", ya lo está |
 | `COMPONENT_NOT_FOUND` | Ref inexistente en el snapshot vigente | No | Refs similares por distancia de edición (máx 3) |
 | `NET_NOT_FOUND` | Net inexistente | No | Nets similares (máx 3) |
 | `SNAPSHOT_STALE` | `base_snap` expiró o fue invalidado | No | Instruir: pedir contexto completo, no reintentar el delta |

@@ -657,6 +657,19 @@ Mitigación del riesgo S4 aplicada: `tests/test_pcb_geometry_unit.py` cubre
 las 13 funciones con casos directos (32 tests). Suite offline completa
 verde, `ruff`/`mypy` limpios. Ver `docs/historico/sesiones/42-reporte.md`.
 
+**Hallazgo colateral (revisión Codex sobre el slice, no de esta
+caracterización): `_copper_on_layer` no reconoce capas internas de una vía
+pasante.** `CopperItem.via_layers` sólo guarda `(capa_inicio, capa_fin)` —
+para un board multicapa, una vía pasante real conecta también las capas
+internas entre esos dos extremos, pero `_copper_on_layer(via, "In1.Cu")`
+devuelve `False` aunque `docs/specs/tool-catalog.md:437` promete "una via
+pasante cuenta para cualquier capa de su span". Bug preexistente (AST
+idéntico desde antes de sesión 42, no introducido por el slice) que afecta
+potencialmente `get_tracks(layer=)` en boards con capas internas. No
+evaluado ni corregido acá — decisión de diseño (¿ampliar `via_layers` a
+todas las capas atravesadas, o cambiar la semántica del filtro?) fuera de
+alcance de un slice mecánico.
+
 **Estado de DT1 tras Slice 2:** ambos slices mecánicos identificados hasta
 ahora (encoders, geometría) están cerrados. Lo que resta en `tools/pcb.py`
 es el trío de helpers compartidos (no extraíble solo por LOC insuficiente,

@@ -56,9 +56,11 @@ diferencia estructural, el traslado fue literal.
 ## Verificación de acoplamiento externo
 
 Repetido el grep de la caracterización (§7) tras el movimiento: ningún
-archivo de `src/` ni `tests/` fuera de `pcb.py`/`pcb_geometry.py` importa
-ninguna de las 13 funciones por nombre. El re-export en `pcb.py` es
-defensivo, no load-bearing — igual que en el Slice 1.
+archivo de `src/` importa ninguna de las 13 funciones por nombre fuera de
+`pcb.py`/`pcb_geometry.py`. En `tests/`, el único importador nuevo es el
+propio `test_pcb_geometry_unit.py` agregado en esta sesión (mitigación S4,
+por diseño) — ningún test preexistente las nombraba. El re-export en
+`pcb.py` sigue siendo defensivo para todos los consumidores previos.
 
 ## Resultado de los gates locales
 
@@ -68,6 +70,38 @@ ruff format --check  → sin cambios
 mypy src/            → Success: no issues found in 36 source files
 pytest (offline)     → 442 passed, 78 deselected (410 base + 32 nuevos)
 ```
+
+## Revisión independiente (Codex) y corrección aplicada
+
+`codex review` (sandbox read-only) sobre el diff `11f4918..09dc321` verificó
+independientemente la equivalencia AST de las 13 funciones (`IDENTICAL`),
+los 13 re-exports uno-a-uno, la baja de `BBoxMm` en `pcb.py`, y los conteos
+documentales — todo `OK`. Encontró un `MAJOR` real: el test
+`TestCopperOnLayer.test_via_spans_layer` afirmaba
+`_copper_on_layer(via, "In1.Cu") is False` para una vía con
+`via_layers=("F.Cu", "B.Cu")`. Eso contradice el propio docstring de la
+función y `docs/specs/tool-catalog.md:437` ("una via pasante cuenta para
+cualquier capa de su span") — `via_layers` sólo guarda los dos extremos del
+span, no las capas internas que una vía pasante real atraviesa en un board
+multicapa. El bug de implementación es preexistente (AST idéntico al commit
+base, confirmado independientemente por Codex); lo que esta sesión
+introducía era un test que **consagraba ese bug como comportamiento
+esperado**. Corregido: se reemplazó esa aserción por dos tests que no
+afirman nada fuera de lo que `_copper_on_layer` garantiza hoy (coincide con
+cualquiera de sus dos extremos; la rama `via_layers is None` no matchea
+nada) — el gap real de capas internas queda anotado en `docs/BACKLOG.md`
+para una sesión futura, sin tocar `_copper_on_layer` acá (corregirlo
+excedería el alcance de "movimiento mecánico, cero cambio de
+comportamiento" de este slice).
+
+Dos observaciones `MINOR` adicionales, aceptadas como precisión de redacción
+sin cambio de código adicional: (a) "cero dependencia hacia `bridge`" se
+aclaró en el docstring de `pcb_geometry.py` como cero *acoplamiento
+funcional* — el módulo sí importa tipos de anotación (`BBoxMm`/
+`CopperItem`/`PadGeom`) de `bridge.ipc`, nunca símbolos de IPC; (b) la
+afirmación de "ningún test importa las 13 funciones" se acotó arriba a
+"ningún test preexistente" — el test de mitigación agregado esta sesión sí
+las importa, por diseño.
 
 ## Estado de DT1 tras esta sesión
 

@@ -2,9 +2,11 @@
 
 Extracción mecánica del cluster de geometría desde ``tools/pcb.py``
 (``docs/analisis/42-dt1-slice2-caracterizacion.md`` §4/§10): cero cambio de
-comportamiento, mismo criterio de cero I/O y cero dependencia hacia
-``bridge``/errores/mcp/audit que motivó la selección de este cluster (§5,
-gates S1/S8).
+comportamiento, mismo criterio de cero I/O y cero acoplamiento *funcional*
+hacia ``bridge``/errores/mcp/audit que motivó la selección de este cluster
+(§5, gates S1/S8). El único vínculo con ``bridge`` es el import de tipos de
+anotación (``BBoxMm``/``CopperItem``/``PadGeom``, dataclasses puras) — nunca
+una llamada IPC ni un símbolo de ``IpcBridge``/``BoardHandle``.
 
 ``tools/pcb.py`` re-exporta las trece funciones de este módulo para
 preservar su superficie privada previa. Ningún consumidor externo conocido

@@ -233,10 +233,16 @@ class TestCopperInBbox:
 
 
 class TestCopperOnLayer:
-    def test_via_spans_layer(self) -> None:
+    def test_via_matches_either_endpoint_of_its_span(self) -> None:
         via = _via(via_layers=("F.Cu", "B.Cu"))
         assert _copper_on_layer(via, "F.Cu") is True
-        assert _copper_on_layer(via, "In1.Cu") is False
+        assert _copper_on_layer(via, "B.Cu") is True
+
+    def test_via_without_via_layers_matches_nothing(self) -> None:
+        # Rama defensiva `item.via_layers is not None` — no alcanzable hoy en
+        # producción (toda vía trae via_layers), pero el tipo lo permite.
+        via = _via(via_layers=None)
+        assert _copper_on_layer(via, "F.Cu") is False
 
     def test_track_matches_own_layer_only(self) -> None:
         track = _track(layer="F.Cu")

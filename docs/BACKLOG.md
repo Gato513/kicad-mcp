@@ -628,6 +628,29 @@ cohesivo de varias funciones relacionadas, no un símbolo aislado) o un
 diseño de extracción distinto al evaluado. Decisión de diseño, exclusivamente
 humana.
 
+**Recaracterización sesión 42 (docs-only) — cluster propuesto, EJECUCIÓN
+NO AUTORIZADA:** `docs/analisis/42-dt1-slice2-caracterizacion.md` cambia la
+unidad de análisis de "símbolo aislado" a "cluster cohesivo", tal como pedía
+el párrafo anterior. Identifica por AST un subconjunto de **13 funciones de
+geometría pura / 252 LOC** (`_dist_point_segment` … `_find_track_pad_collision`,
+`pcb.py:253-437` + `pcb.py:760-848`) cuyas únicas dependencias externas son
+`math` y tipos de anotación — cero aristas hacia `bridge`, hacia el trío
+`_audit_error`/`_resolve_board`/`_similars`, ni hacia la taxonomía de
+errores. Excluye deliberadamente 3 funciones adyacentes
+(`_polygon_is_simple`, `_segments_intersect`, `_point_in_polygon`) por
+solapamiento con clusters institucionalmente excluidos (F-DT.1, familia de
+zonas y stitching). Cumple los gates S1/S2/S3/S5/S6/S7/S8 reconstruidos;
+declara un único punto débil real (S4 — ninguna de las 13 funciones está
+nombrada hoy en `tests/`, solo se ejercitan indirectamente) con mitigación
+propuesta (tests unitarios directos, triviales por ser funciones puras).
+También caracteriza y descarta, con motivo, el trío de helpers compartidos
+(fan-in demasiado alto para extraer solo, LOC insuficiente para extraer
+agrupado — el bucket genérico que ADR-0014 ya rechazó) y los 8 clusters
+institucionales (~1060 LOC, no refutados, arrastran ADR-0012/D-23.2).
+**Este documento no autoriza ejecución** — sigue pendiente decisión humana
+explícita sobre si aprobar esta unidad, priorizar otra, o no retomar DT1
+por ahora.
+
 ## DT3 — Geometría de dominio dentro de `bridge/` — ABIERTA
 
 **Estado:** abierta; no modificada por las sesiones 40–41.

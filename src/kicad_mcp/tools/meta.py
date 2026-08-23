@@ -21,17 +21,26 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
 
-def _resolve_project_root() -> Path | None:
-    """Devuelve la raíz del proyecto activo o ``None``.
+def _resolve_project_root() -> tuple[Path | None, ErrorCode | None]:
+    """Devuelve ``(root, None)`` o ``(None, causa)``.
 
     MVP: se toma de la env var ``KICAD_MCP_PROJECT`` si existe y apunta a un
     directorio; en fases futuras vendrá del cliente MCP (roots).
+
+    Distingue dos causas de ausencia (F-02, dogfooding 2): la env var no está
+    exportada (``PROJECT_NOT_CONFIGURED``) de la env var exportada pero
+    apuntando a un path que no existe/no es directorio
+    (``PROJECT_PATH_NOT_FOUND``) — antes de esta distinción, ``health()``
+    devolvía el mismo hint "exportá la env var" en ambos casos, engañoso
+    cuando la env var ya estaba exportada y solo apuntaba a un path viejo.
     """
     raw = os.environ.get("KICAD_MCP_PROJECT")
     if not raw:
-        return None
+        return None, ErrorCode.PROJECT_NOT_CONFIGURED
     path = Path(raw).expanduser()
-    return path if path.is_dir() else None
+    if not path.is_dir():
+        return None, ErrorCode.PROJECT_PATH_NOT_FOUND
+    return path, None
 
 
 def _cli_payload(status: KicadCliStatus) -> dict[str, Any]:
@@ -47,12 +56,21 @@ def _cli_payload(status: KicadCliStatus) -> dict[str, Any]:
     }
 
 
-def _project_payload(root: Path | None) -> dict[str, Any]:
+def _project_payload(root: Path | None, error: ErrorCode | None) -> dict[str, Any]:
     if root is None:
+        if error is ErrorCode.PROJECT_NOT_CONFIGURED:
+            return {
+                "status": "not_configured",
+                "code": ErrorCode.PROJECT_NOT_CONFIGURED.value,
+                "hint": "Exporta KICAD_MCP_PROJECT con la ruta del proyecto activo.",
+            }
         return {
-            "status": "not_configured",
-            "code": "PROJECT_NOT_FOUND",
-            "hint": "Exporta KICAD_MCP_PROJECT con la ruta del proyecto activo.",
+            "status": "path_not_found",
+            "code": ErrorCode.PROJECT_PATH_NOT_FOUND.value,
+            "hint": (
+                "KICAD_MCP_PROJECT está exportada pero el path no existe o no "
+                "es un directorio. Corregí la variable a la ruta real del proyecto."
+            ),
         }
     return {"status": "ok", "name": root.name}
 
@@ -149,12 +167,12 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
     def health() -> dict[str, Any]:
         with tool_call_timer() as timer:
             cli_status = probe_version()
-            project_root = _resolve_project_root()
+            project_root, project_error = _resolve_project_root()
             payload: dict[str, Any] = {
                 "server": {"status": "ok", "version": __version__},
                 "kicad_cli": _cli_payload(cli_status),
                 "kicad_ipc": _ipc_payload(bridge),
-                "project": _project_payload(project_root),
+                "project": _project_payload(project_root, project_error),
             }
         log_tool_call(
             tool_name="health",

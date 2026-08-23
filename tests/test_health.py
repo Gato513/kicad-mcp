@@ -60,7 +60,7 @@ async def test_health_reports_ok_when_kicad_cli_available(
     assert payload["kicad_cli"] == {"status": "ok", "version": "10.0.4"}
     assert payload["kicad_ipc"] == {"status": "ok", "version": "test-stub"}
     assert payload["project"]["status"] == "not_configured"
-    assert payload["project"]["code"] == "PROJECT_NOT_FOUND"
+    assert payload["project"]["code"] == "PROJECT_NOT_CONFIGURED"
 
 
 @pytest.mark.unit
@@ -133,6 +133,31 @@ async def test_health_reports_project_when_env_var_points_to_dir(
 
     payload = _parse_health(result)
     assert payload["project"] == {"status": "ok", "name": "proyecto_de_prueba"}
+
+
+@pytest.mark.unit
+async def test_health_reports_path_not_found_when_env_var_points_to_missing_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """F-02 (dogfooding 2): env var exportada pero apuntando a un path viejo/inexistente.
+
+    Debe distinguirse de "no configurado" — el hint de "exportá la env var"
+    es engañoso cuando la var ya está exportada, solo que mal apuntada.
+    """
+    missing = tmp_path / "no-existe"
+    fake = KicadCliStatus(available=True, version="10.0.4", raw_output="", error=None)
+    monkeypatch.setattr("kicad_mcp.tools.meta.probe_version", lambda **_: fake)
+    _stub_ipc_ok(monkeypatch)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(missing))
+
+    mcp = create_server()
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("health", {})
+
+    payload = _parse_health(result)
+    assert payload["project"]["status"] == "path_not_found"
+    assert payload["project"]["code"] == "PROJECT_PATH_NOT_FOUND"
+    assert "Corregí la variable" in payload["project"]["hint"]
 
 
 # --- health fino (sesión 07 T3, D-07.3) --------------------------------------

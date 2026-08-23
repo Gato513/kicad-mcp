@@ -160,6 +160,28 @@ async def test_health_reports_path_not_found_when_env_var_points_to_missing_dir(
     assert "Corregí la variable" in payload["project"]["hint"]
 
 
+@pytest.mark.unit
+async def test_health_reports_path_not_found_when_env_var_is_empty_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hallazgo Codex (PR #22): ``KICAD_MCP_PROJECT=""`` está exportada (no
+    ``None``) — no debe caer en ``PROJECT_NOT_CONFIGURED`` pese a ser falsy,
+    ni resolver a ``Path("").is_dir()`` (que da ``True`` sobre el cwd del
+    proceso y reportaría ``ok`` engañosamente)."""
+    fake = KicadCliStatus(available=True, version="10.0.4", raw_output="", error=None)
+    monkeypatch.setattr("kicad_mcp.tools.meta.probe_version", lambda **_: fake)
+    _stub_ipc_ok(monkeypatch)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", "")
+
+    mcp = create_server()
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("health", {})
+
+    payload = _parse_health(result)
+    assert payload["project"]["status"] == "path_not_found"
+    assert payload["project"]["code"] == "PROJECT_PATH_NOT_FOUND"
+
+
 # --- health fino (sesión 07 T3, D-07.3) --------------------------------------
 
 

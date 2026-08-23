@@ -28,17 +28,27 @@ def _resolve_project_root() -> tuple[Path | None, ErrorCode | None]:
     directorio; en fases futuras vendrá del cliente MCP (roots).
 
     Distingue dos causas de ausencia (F-02, dogfooding 2): la env var no está
-    exportada (``PROJECT_NOT_CONFIGURED``) de la env var exportada pero
-    apuntando a un path que no existe/no es directorio
-    (``PROJECT_PATH_NOT_FOUND``) — antes de esta distinción, ``health()``
-    devolvía el mismo hint "exportá la env var" en ambos casos, engañoso
-    cuando la env var ya estaba exportada y solo apuntaba a un path viejo.
+    exportada (``PROJECT_NOT_CONFIGURED``, ``raw is None``) de la env var
+    exportada pero inutilizable —vacía o apuntando a un path que no existe/no
+    es directorio— (``PROJECT_PATH_NOT_FOUND``) — antes de esta distinción,
+    ``health()`` devolvía el mismo hint "exportá la env var" en ambos casos,
+    engañoso cuando la env var ya estaba exportada y solo apuntaba a un path
+    viejo.
+
+    Revisión Codex (PR #22): exportar la var vacía (``KICAD_MCP_PROJECT=""``)
+    es "exportada" según ``os.environ`` (``raw == ""``, no ``None``), así que
+    NO puede caer en ``PROJECT_NOT_CONFIGURED`` pese a ser falsy — pero
+    tampoco puede delegarse a ``Path("").is_dir()``: en Python eso resuelve
+    al directorio de trabajo actual y devuelve ``True``, lo que reportaría
+    ``status: "ok"`` apuntando al cwd del proceso en vez de señalar el
+    problema. El ``or`` de abajo corta antes de evaluar ``path.is_dir()``
+    cuando ``raw`` es vacío, evitando ese caso.
     """
     raw = os.environ.get("KICAD_MCP_PROJECT")
-    if not raw:
+    if raw is None:
         return None, ErrorCode.PROJECT_NOT_CONFIGURED
     path = Path(raw).expanduser()
-    if not path.is_dir():
+    if not raw or not path.is_dir():
         return None, ErrorCode.PROJECT_PATH_NOT_FOUND
     return path, None
 

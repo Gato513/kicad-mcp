@@ -106,6 +106,77 @@ release, no "arreglar" desde `kicad-mcp`.
 `validation-suite/level-c/hackrf-one/working/.kicad-mcp/autoroute/freerouting.log`
 (no versionado — archivo de trabajo).
 
+### F-C4-01 — Freerouting se traba en re-ruteo incremental sobre cluster denso ya mayormente ruteado (`anavi-dev-mic`) — Bug upstream, no investigado, bloquea gate GUI 32d
+
+**Origen:** Ciclo C4, intento de ejecutar el gate GUI pendiente desde
+sesión 32d para el fix de stitching (ver entrada P1 "CERRADO
+PARCIALMENTE sesión 32d" más abajo). H1
+(`tests/test_pcb_session32d_stitching_gui_slow.py`) terminó en
+`KICAD_TIMEOUT` a los 638.91s contra KiCad 10.0.5 real.
+
+**Síntoma:** el fixture de H1 (copia de la salida ya ruteada de sesión
+31c con la conexión GND de `MK1.3` removida a propósito, para forzar el
+escenario "capas opuestas" que el fix de stitching debe resolver);
+`route_board()` sin argumentos entró en un estado sin progreso: score
+fijo en 969.16–969.19 con "2 unrouted" durante los 73 passes registrados
+(~10 min), motor de geometría fallando internamente en cada pass (`the
+maze search algorithm could not be created`,
+`ShapeSearchTree45Degree.complete_shape: cannot convert Simplex to
+IntOctagon`) sobre un net VECINO (`Net-(MK1-Pad2)`), no el pad huérfano
+que el test ejercita a propósito.
+
+**Diagnóstico parcial, no concluyente** (investigación completa:
+`docs/investigacion/c4-gate-gui-32d-h1-devmic-timeout.md`):
+- Descartado: segmento de 0.02mm "degenerado" en ese net — existe
+  idéntico, en coordenadas prácticamente iguales, en la corrida exitosa
+  de 31c (refutación por comparación directa contra el historial git).
+- Paradoja no resuelta: la MISMA geometría final, ruteada por 31c desde
+  0 tracks, completó en 184.82s sin errores (15/15 nets). El mismo
+  resultado, precargado como estado inicial con solo 1 conexión GND
+  faltante, se traba usando el presupuesto completo de 600s.
+- Hipótesis más plausible sin confirmación causal: `route_board`/
+  Freerouting trataría TODO el cobre preexistente (no solo el del net
+  dueño) como obstáculo fijo cuando el board llega ya mayormente
+  ruteado, lo que puede volver el remanente de un cluster denso
+  (`MK1`/`R1`/`R2`/`C1`/`C2`, ~10mm², 3 nets superpuestos) más difícil
+  de resolver que rutear todo junto desde cero con libertad completa.
+
+**Relación con F-V3-ROUTER-TIMEOUT-HARD (arriba):** misma familia de
+síntoma (motor de geometría interno de Freerouting 2.1.0 fallando/
+trabado sin converger, fuera del control de `kicad-mcp`), pero mecanismo
+y escala distintos — acá es un board CHICO (10 footprints) en modo de
+re-ruteo incremental sobre un board mayormente ya ruteado, no un board
+grande desde cero. Sugiere que la fragilidad del motor de geometría de
+Freerouting 2.1.0 no está acotada a "boards grandes" — el disparador
+real podría ser densidad de cobre preexistente en el corredor de
+búsqueda, independiente de la escala total del board.
+
+**Severidad:** no bloquea el flujo de ruteo-desde-cero (evidencia: mismo
+board, misma geometría final, exitoso en 31c). Bloquea específicamente:
+(a) el gate GUI 32d — la verificación end-to-end del fix de stitching
+H1/H2 sigue sin poder ejecutarse contra el motor real; (b) cualquier
+flujo futuro de "completar ruteo sobre un board ya mayormente ruteado"
+con clusters densos, patrón no cubierto hoy por ninguna validación de la
+Validation Suite.
+
+**Estado:** C4 permanece DETENIDO. No se reintentó H1 con `timeout_s`
+mayor — la falla interna del motor se repitió sin variación en los 73
+passes con el presupuesto completo ya consumido, sin evidencia a favor
+de que más tiempo lo resuelva. No se corrió H2. No se tocó el fixture ni
+`route_board`; contrato D-23.2 intacto (timeout ocurre antes de
+cualquier persist).
+
+**Próximo paso sugerido:** si aparece una 2ª instancia confirmada de
+este patrón específico (re-ruteo incremental sobre cluster denso
+trabando el motor), promover a investigación P4.0-style dedicada.
+Mientras tanto, el gate GUI 32d de sesión 32d queda formalmente
+bloqueado por esto — no por el fix de stitching en sí, cuyos 8 tests
+unitarios canario + guardrails siguen verdes.
+
+**Fuente:** Ciclo C4.
+`docs/investigacion/c4-gate-gui-32d-h1-devmic-timeout.md` (reporte
+completo de la investigación read-only).
+
 ### F-V2-REFILL-SILENCIOSO — `route_board(refill=true)` puede no persistir el refill sin ningún error visible — ✅ CERRADO sesión 32b
 
 **Origen:** sesión 32, segunda Validation Suite (Nivel B, ANAVI Macro Pad 12).
@@ -722,6 +793,10 @@ siguiente.
   cada proyecto en el PCB Editor de KiCad (protocolo manual, sin
   automatización posible en este MVP). Ver
   `docs/historico/sesiones/32d-reporte.md` §"Verificación pendiente".
+  **Intento Ciclo C4:** H1 detenido por `KICAD_TIMEOUT` — causa raíz NO
+  es el fix de stitching, sino el motor de Freerouting trabándose en el
+  net vecino al pad huérfano. Ver `F-C4-01` arriba en §P0. Gate GUI 32d
+  sigue pendiente de ejecución exitosa.
 
 ### Abierto — F-D5-01-B: estrangulamiento lateral en la misma capa (`anavi-macro-pad-12`)
 

@@ -1681,19 +1681,6 @@ def test_via_span_layer_names_normalizes_inverted_extremes() -> None:
     assert span == ("F.Cu", "In1.Cu", "B.Cu")
 
 
-@pytest.mark.unit
-def test_via_span_layer_names_missing_extreme_degrades_to_endpoints_without_raising() -> None:
-    """Defensivo, no alcanzable en producción (el drill de una via real
-    siempre referencia capas habilitadas del mismo board): si un extremo no
-    está en el stackup dado, degrada a los dos nombres de extremo — mismo
-    comportamiento que antes del fix, nunca una excepción."""
-    values = [_BoardLayer.BL_F_Cu, _BoardLayer.BL_B_Cu]
-
-    span = _via_span_layer_names(values, _BoardLayer.BL_F_Cu, _BoardLayer.BL_In1_Cu)
-
-    assert span == ("F.Cu", "In1.Cu")
-
-
 class _RaisingEnabledLayersRawBoard:
     """``raw`` fake cuyo ``get_enabled_layers`` no existe/falla — simula
     KiCad 9.0.0-9.0.4 contra ``Board.get_enabled_layers`` (versionadded
@@ -1806,13 +1793,13 @@ def test_kipy_copper_to_item_populates_via_span_layers_from_stackup() -> None:
 
 
 @pytest.mark.unit
-def test_kipy_copper_to_item_without_copper_values_leaves_span_none() -> None:
-    """Default ``()``: ningún llamador queda obligado a pasar el stackup —
+def test_kipy_copper_to_item_empty_copper_values_leaves_span_none() -> None:
+    """``copper_values=()`` (resultado sin vías, o stackup degradado):
     ``via_span_layers`` queda ``None``, comportamiento idéntico a antes del
     fix (``_copper_on_layer`` cae a ``via_layers``)."""
     via = _FakeVia(_BoardLayer.BL_F_Cu, _BoardLayer.BL_B_Cu)
 
-    item = _kipy_copper_to_item(via, "GND")
+    item = _kipy_copper_to_item(via, "GND", ())
 
     assert item.via_layers == ("F.Cu", "B.Cu")
     assert item.via_span_layers is None

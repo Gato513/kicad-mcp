@@ -739,7 +739,53 @@ tocar y verdes. `ruff`/`mypy` limpios. Test `integration_gui`
 de ejecución humana** — el protocolo GUI de este proyecto no tiene hoy
 ningún proyecto de referencia con capas internas habilitadas (mismo
 precedente que sesión 32d); hace `skip` explícito con esa razón si el
-board abierto tiene menos de 4 capas de cobre. Detalle completo:
+board abierto tiene menos de 4 capas de cobre.
+
+**Auditoría Codex #3 (sobre-ingeniería, sobre el código ya implementado y
+verificado, no sobre el plan) — APROBAR_CON_CAMBIOS, verificado hallazgo por
+hallazgo antes de aplicar nada:**
+- Aplicado: la rama defensiva de `_via_span_layer_names` para un extremo
+  ausente de `copper_values` era inalcanzable en producción (el drill de una
+  vía real siempre referencia capas del mismo board que produjo el
+  stackup) — eliminada junto a su test dedicado.
+- Aplicado: el default `copper_values: Sequence[int] = ()` de
+  `_kipy_copper_to_item` no lo usaba ningún llamador productivo (los tres
+  productores siempre pasan el valor resuelto) — ahora es obligatorio; el
+  test que sólo consagraba el default fue renombrado para pasar `()`
+  explícito (esa rama sí es real: resultado sin vías o stackup degradado).
+- Aplicado: se recortaron los docstrings más verbosos (`via_span_layers`,
+  `_safe_copper_layer_values`, `_via_span_layer_names`,
+  `log_copper_layer_stackup_unavailable`, `_copper_on_layer`) al nivel de
+  densidad de sus pares existentes en el archivo (`log_socket_glob_ambiguous`/
+  `log_ipc_retry`), y se corrigió una afirmación imprecisa en
+  `_copper_on_layer` ("board de 2 capas donde nunca se calculó" — en
+  realidad los tres productores sí resuelven el stackup en 2 capas cuando
+  hay una vía; `None` sólo ocurre por degradación o construcción manual).
+- **Rechazado, con razón explícita:** la recomendación principal de fusionar
+  `via_layers`/`via_span_layers` en un único campo. Auditoría #1 ya había
+  evaluado esta misma distinción como legítima (no redundancia): son datos
+  con disponibilidad distinta (`via_layers` siempre viene del drill de la
+  vía, sin costo extra; `via_span_layers` requiere una lectura de stackup
+  del board que puede degradar) y longitud distinta (2 vs N elementos).
+  Fusionarlos exige sobrecargar la semántica del campo único y tocar de
+  nuevo el encoder (`pcb_encoders.py:283`, formato F1) — riesgo de churn no
+  justificado por ahorrar un campo, en una función que ya pasó dos rondas
+  de auditoría previas sobre esta misma superficie.
+- **Rechazado:** la mayoría de los tests señalados como "redundantes"
+  (`test_via_with_span_still_matches_both_extremes`,
+  `test_kipy_copper_to_item_track_never_populates_via_span_layers`, el test
+  de interacción `include_vias=False` en el sitio destructivo) verifican
+  ramas de dispatch o interacciones con flags preexistentes que no son
+  mecánicamente idénticas a otro test ya existente — se mantienen.
+- Soporte de vías ciegas/enterradas en `_via_span_layer_names`, la
+  degradación KiCad 9.0-9.0.4, y el test `integration_gui` diferido: los
+  tres marcados **JUSTIFICADO** por la propia auditoría (frontera IPC real
+  con boards externos, riesgo de compat confirmado por versión de API, y
+  precedente de sesión 32d respectivamente) — sin cambios.
+
+Tras estos recortes: suite offline **467 passed** (-1 test eliminado, sin
+reemplazo, por ser el único que cubría la rama defensiva quitada). Goldens
+sin tocar y verdes. `ruff`/`mypy` limpios. Detalle completo:
 `docs/historico/sesiones/43-reporte.md`.
 
 **Estado de DT1 tras Slice 2:** ambos slices mecánicos identificados hasta

@@ -210,21 +210,16 @@ class CopperItem:
     size_mm: Mm | None = None  # via: diámetro
     drill_mm: Mm | None = None  # via
     via_layers: tuple[str, str] | None = None  # via: (capa_inicio, capa_fin)
-    # Sesión 43 (fix _copper_on_layer, docs/BACKLOG.md): capas de cobre que
-    # una via pasante REALMENTE atraviesa, según el stackup habilitado del
-    # board — a diferencia de ``via_layers`` (siempre el par de extremos, es
-    # lo que el formato de salida ``V ... F.Cu-B.Cu`` renderiza), esto es lo
-    # que ``_copper_on_layer`` necesita para el filtro ``layer=`` de
-    # ``get_tracks``/``delete_tracks_bulk``. Invariante (corregido tras
-    # auditoría de sesión 43, Codex): cuando no es ``None``,
-    # ``{via_span_layers[0], via_span_layers[-1]} == set(via_layers)`` —
-    # como CONJUNTO, no posicionalmente: ``via_span_layers`` siempre queda en
-    # orden físico ascendente del stackup, mientras que ``via_layers`` es
-    # ``(drill.start_layer, drill.end_layer)`` tal cual los reporta kipy, que
-    # no está garantizado ascendente. ``None`` cuando no se pudo resolver el
-    # stackup (compat KiCad 9.0-9.0.4, ver ``_safe_copper_layer_values``) —
-    # degrada a que ``_copper_on_layer`` matchee sólo los extremos vía
-    # ``via_layers``.
+    # Capas de cobre que una via REALMENTE atraviesa (stackup habilitado del
+    # board) — a diferencia de ``via_layers`` (siempre el par de extremos,
+    # formato de salida ``V ... F.Cu-B.Cu``), esto es lo que
+    # ``_copper_on_layer`` usa para el filtro ``layer=``. Invariante cuando
+    # no es ``None``: ``{via_span_layers[0], via_span_layers[-1]} ==
+    # set(via_layers)`` COMO CONJUNTO, no posicionalmente — ``via_layers`` es
+    # ``(drill.start_layer, drill.end_layer)`` tal cual los reporta kipy, no
+    # garantizado ascendente. ``None`` cuando no se pudo resolver el stackup
+    # (compat KiCad 9.0-9.0.4, ver ``_safe_copper_layer_values``): degrada a
+    # que ``_copper_on_layer`` matchee sólo los extremos vía ``via_layers``.
     via_span_layers: tuple[str, ...] | None = None
 
 
@@ -524,18 +519,18 @@ def _is_copper_item(it: Any) -> bool:
     return type(it).__name__ in ("Track", "ArcTrack", "Via")
 
 
-def _kipy_copper_to_item(it: Any, net_name: str, copper_values: Sequence[int] = ()) -> CopperItem:
+def _kipy_copper_to_item(it: Any, net_name: str, copper_values: Sequence[int]) -> CopperItem:
     """Convierte un ``Track``/``ArcTrack``/``Via`` de kipy a ``CopperItem``.
 
     Única fuente de la verdad de la conversión (D-16.1): la usan
     ``list_net_copper``, ``list_all_copper`` y ``get_copper_by_kiid`` por
     igual. Precondición: ``_is_copper_item(it)`` es ``True``.
 
-    ``copper_values`` (sesión 43, fix ``_copper_on_layer``): stackup de cobre
-    habilitado del board, para poblar ``via_span_layers`` en la rama ``Via``.
-    Default ``()`` — con stackup vacío, ``_via_span_layer_names`` degrada a
-    los dos extremos igual que antes de este fix; ningún llamador queda
-    obligado a pasarlo.
+    ``copper_values``: stackup de cobre habilitado del board, para poblar
+    ``via_span_layers`` en la rama ``Via``. Vacío (``()``) cuando el
+    resultado no tiene ninguna vía o la lectura del stackup degradó —
+    ``_via_span_layer_names`` no se invoca y ``via_span_layers`` queda
+    ``None``.
     """
     tname = type(it).__name__
     if tname == "Via":
@@ -621,20 +616,13 @@ def _copper_layer_values(raw_board: Any) -> list[int]:
 
 def _safe_copper_layer_values(raw_board: Any) -> list[int]:
     """``_copper_layer_values`` con degradación ante fallo de lectura del
-    stackup (sesión 43, fix ``_copper_on_layer``).
+    stackup.
 
-    ``Board.get_enabled_layers()`` es ``versionadded 0.5.0`` (KiCad 9.0.5+,
-    ver docstring de kipy) — F4 declara mínimo compatible 9.0. Antes de este
-    fix, ningún camino de LECTURA de cobre la llamaba (sólo la mutación
-    ``add_keepout_zone(layer="all")``, opt-in). Meterla en el camino de
-    ``list_net_copper``/``list_all_copper``/``get_copper_by_kiid`` no debe
-    romper una lectura que hoy funciona en 9.0.0-9.0.4: cualquier fallo se
-    loguea (regla 2, JSON estructurado) y degrada a ``[]`` — el llamador
-    entonces no puebla ``via_span_layers``, que es exactamente el
-    comportamiento de extremos (``via_layers``) previo a este fix. No es
-    ``except Exception: pass`` (regla 1): se loguea, y quien lo consume nunca
-    ve una promesa incumplida en silencio, sólo el filtro más estrecho que ya
-    tenía.
+    ``Board.get_enabled_layers()`` es ``versionadded 0.5.0`` (KiCad 9.0.5+) —
+    F4 declara mínimo compatible 9.0. Un fallo se loguea (regla 2, JSON
+    estructurado) y degrada a ``[]`` en vez de romper la lectura de cobre en
+    KiCad 9.0.0-9.0.4: no es ``except Exception: pass`` (regla 1), queda
+    observable en el log.
     """
     try:
         return _copper_layer_values(raw_board)
@@ -645,21 +633,14 @@ def _safe_copper_layer_values(raw_board: Any) -> list[int]:
 
 def _via_span_layer_names(copper_values: Sequence[int], start: int, end: int) -> tuple[str, ...]:
     """Nombres de las capas de cobre que una vía atraviesa entre ``start`` y
-    ``end`` (inclusive), según el stackup HABILITADO del board (sesión 43,
-    fix ``_copper_on_layer``, docs/BACKLOG.md).
+    ``end`` (inclusive), según el stackup habilitado del board.
 
     Los valores del enum ``BoardLayer`` están en orden físico de stackup
     (``BL_F_Cu`` < ``BL_In1_Cu`` < … < ``BL_In30_Cu`` < ``BL_B_Cu``), así que
     el span es el slice ordenado de ``copper_values`` entre ambos extremos.
-    Tolera extremos invertidos (normaliza con ``min``/``max``). Si algún
-    extremo no está en ``copper_values`` (defensivo, no alcanzable hoy en
-    producción — el drill de una vía real siempre referencia capas
-    habilitadas del mismo board), degrada a los dos nombres de extremo sin
-    lanzar: mismo comportamiento que antes de este fix.
+    Tolera extremos invertidos (normaliza con ``min``/``max``).
     """
     lo, hi = (start, end) if start <= end else (end, start)
-    if lo not in copper_values or hi not in copper_values:
-        return (_layer_int_to_str(start), _layer_int_to_str(end))
     ordered = sorted(copper_values)
     span = [v for v in ordered if lo <= v <= hi]
     return tuple(_layer_int_to_str(v) for v in span)

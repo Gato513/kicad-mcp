@@ -163,16 +163,20 @@ compartida entre los tres call sites, F1/F3 intactas.
   (F1 — el contrato ya describía la semántica correcta), `tests/golden/`
   (F1 — verificados verdes sin modificarse).
 
-## Tests (26 nuevos en total, ninguno de los preexistentes editado)
+## Tests (26 nuevos tras el segundo commit, 25 netos tras la auditoría de
+sobre-ingeniería — ninguno de los preexistentes a sesión 43 editado)
 
-- **`tests/test_ipc.py`** (17 nuevos): `_via_span_layer_names` (stackup de
-  2/4 capas, vía ciega/enterrada, extremos iguales/invertidos/ausente del
-  stackup); `_safe_copper_layer_values` (degrada y loguea ante fallo, con
-  `caplog`, + test de JSON válido con mensaje hostil — corrección #1 de la
-  segunda auditoría); `_kipy_copper_to_item` (puebla el span con stackup
-  dado, lo deja en `None` sin stackup, nunca lo puebla para un track);
-  canarios de conteo IPC en los tres productores, incluido el que faltaba
-  para `list_all_copper` sin vías (corrección #3).
+- **`tests/test_ipc.py`** (17 nuevos, 16 tras la tercera auditoría):
+  `_via_span_layer_names` (stackup de 2/4 capas, vía ciega/enterrada,
+  extremos iguales/invertidos — el caso de extremo ausente del stackup se
+  eliminó junto a la rama defensiva inalcanzable que protegía, hallazgo de
+  la auditoría de sobre-ingeniería); `_safe_copper_layer_values` (degrada y
+  loguea ante fallo, con `caplog`, + test de JSON válido con mensaje hostil
+  — corrección #1 de la segunda auditoría); `_kipy_copper_to_item` (puebla
+  el span con stackup dado, lo deja en `None` con `copper_values=()` ahora
+  obligatorio, nunca lo puebla para un track); canarios de conteo IPC en
+  los tres productores, incluido el que faltaba para `list_all_copper` sin
+  vías (corrección #3).
 - **`tests/test_pcb_geometry_unit.py`** (5 nuevos): el filtro con span
   (incluye capas internas), con span sigue matcheando extremos, sin span
   cae al comportamiento previo (canario de regresión), vía ciega/enterrada
@@ -196,24 +200,74 @@ compartida entre los tres call sites, F1/F3 intactas.
   escrita pero pendiente de ejecución humana"). No se declara verde un gate
   que no corrió.
 
+## Proceso: tercera auditoría, sobre sobre-ingeniería (commit final)
+
+Pedido explícito del humano: auditar el código YA implementado y ya
+corregido dos veces, esta vez buscando específicamente sobre-ingeniería
+(CLAUDE.md: no defender contra escenarios inalcanzables, no generalidad sin
+uso, no documentación desproporcionada) — no bugs de corrección, ya
+cubiertos. Veredicto: **APROBAR_CON_CAMBIOS**. Cada hallazgo se verificó
+contra el código real antes de aceptarlo:
+
+**Aplicados:**
+1. La rama defensiva de `_via_span_layer_names` para un extremo ausente de
+   `copper_values` era inalcanzable en producción — el propio docstring ya
+   lo admitía ("defensivo, no alcanzable hoy"). Eliminada junto a su test.
+2. El default `copper_values: Sequence[int] = ()` de `_kipy_copper_to_item`
+   no lo usaba ningún llamador productivo (los tres productores siempre
+   pasan el valor resuelto, verificado con grep). Ahora es obligatorio; el
+   test que sólo consagraba el default se ajustó para pasar `()` explícito
+   — esa rama (resultado sin vías / stackup degradado) sí es real.
+3. Se recortaron los docstrings de `via_span_layers`,
+   `_safe_copper_layer_values`, `_via_span_layer_names`,
+   `log_copper_layer_stackup_unavailable` y `_copper_on_layer` al nivel de
+   densidad de sus pares en el mismo archivo (comparados línea a línea
+   contra `log_socket_glob_ambiguous`/`log_ipc_retry`). De paso se corrigió
+   una afirmación imprecisa en `_copper_on_layer`: decía que
+   `via_span_layers=None` podía deberse a un "board de 2 capas donde nunca
+   se calculó" — falso, los productores sí calculan el stackup en 2 capas
+   si hay una vía; `None` sólo ocurre por degradación o construcción
+   manual en tests.
+
+**Rechazados, con razón explícita (no todo hallazgo de una auditoría se
+aplica ciegamente — precedente `codex-review-verificar-hallazgos`):**
+- La recomendación principal, fusionar `via_layers`/`via_span_layers` en un
+  único campo: la propia auditoría #1 (antes de implementar) ya había
+  evaluado esta distinción como legítima, no redundancia — son datos con
+  disponibilidad distinta (uno siempre disponible desde el drill, el otro
+  condicionado a una lectura de stackup que puede degradar) y longitud
+  distinta (2 vs N). Fusionarlos exigiría sobrecargar la semántica del
+  campo y tocar de nuevo el encoder del formato F1, con riesgo de churn no
+  justificado por ahorrar un campo en una superficie que ya pasó dos
+  rondas de auditoría.
+- La mayoría de los tests señalados como "redundantes" en realidad
+  ejercitan ramas de dispatch o interacciones con flags preexistentes
+  (`include_vias=False` sobre la nueva selección por capa interna,
+  dispatch de `Track` vs `Via` en `_kipy_copper_to_item`) que ningún otro
+  test cubre mecánicamente igual — se mantienen.
+- Soporte de vías ciegas/enterradas, la degradación KiCad 9.0-9.0.4, y el
+  test `integration_gui` diferido: los tres marcados **JUSTIFICADO** por la
+  propia auditoría — sin cambios.
+
 ## Verificación
 
 ```
-uv run ruff check src/ tests/     # limpio
-uv run ruff format --check ...    # limpio
-uv run mypy src/                  # Success: no issues found in 36 source files
-uv run pytest                     # 468 passed, 79 deselected
+uv run ruff check --fix && uv run ruff format   # limpio
+uv run mypy src/                                # Success: no issues found in 36 source files
+uv run pytest -m "not integration and not integration_gui and not integration_gui_slow"
+                                                 # 467 passed, 79 deselected
 ```
 
 Baseline previo a la sesión: 443 passed. +23 del primer commit (verificado
 con `git stash`/`--collect-only`: `test_ipc.py` 66→81,
 `test_pcb_geometry_unit.py` 33→38, `test_pcb_delete_bulk.py` 10→13) + 2 de
 la segunda auditoría (`test_ipc.py`: JSON hostil + skip de `list_all_copper`
-sin vía) = 468, exacto. `git diff` de la segunda ronda confirma que ningún
-test preexistente del primer commit fue tocado (sólo se reescribió el test
-`include_vias=False`, ya nuevo de este mismo commit, para hacerlo
-discriminante). Goldens (`test_pcb_encoders_golden.py`) verdes sin
-modificarse; `tests/golden/` sin cambios en disco.
+sin vía) = 468. La tercera auditoría eliminó 1 test (la rama defensiva
+inalcanzable, sin reemplazo) → **467 passed** final. `git diff` de la
+tercera ronda toca sólo `ipc.py`, `logging_config.py`, `pcb_geometry.py` y
+`test_ipc.py` — ningún test preexistente a sesión 43 fue tocado, F1 intacto
+(`git diff --stat -- docs/specs/ tests/golden/` vacío). Goldens
+(`test_pcb_encoders_golden.py`) verdes sin modificarse.
 
 ## Sin ADR
 

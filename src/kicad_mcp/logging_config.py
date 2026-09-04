@@ -97,18 +97,14 @@ def log_socket_glob_ambiguous(chosen: str, count: int) -> None:
 
 
 def log_copper_layer_stackup_unavailable(error: str) -> None:
-    """Warning: fallo al resolver el stackup de cobre del board (sesión 43,
-    fix ``_copper_on_layer``, ``docs/BACKLOG.md``).
+    """Warning: fallo al resolver el stackup de cobre del board.
 
     ``tool_name="copper_layer_stackup_unavailable"`` es el canal fijo para
     grep/filter. Dispara cuando ``Board.get_enabled_layers()`` falla —
     típicamente compat KiCad 9.0-9.0.4 (``versionadded 0.5.0``, KiCad
-    9.0.5+; F4 declara mínimo 9.0). Degradación deliberada (no
-    ``except Exception: pass``, regla 1): quien la consume
-    (``_safe_copper_layer_values``) cae a ``[]``, o sea el comportamiento de
-    extremos previo al fix. ``json.dumps`` (no interpolación manual) evita
-    que un mensaje de excepción con comillas/saltos de línea produzca JSON
-    inválido.
+    9.0.5+; F4 declara mínimo 9.0). ``json.dumps`` (no interpolación manual)
+    evita que un mensaje de excepción con comillas/saltos de línea produzca
+    JSON inválido.
     """
     _LOGGER.warning(
         json.dumps(

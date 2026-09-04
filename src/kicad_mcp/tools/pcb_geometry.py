@@ -202,16 +202,11 @@ def _copper_in_bbox(item: CopperItem, bbox: tuple[float, float, float, float]) -
 
 def _copper_on_layer(item: CopperItem, layer: str) -> bool:
     """``True`` si ``item`` vive en ``layer`` (D-16.1). Una via pasante cuenta
-    para cualquier capa de su span (``tool-catalog.md``: "una via pasante
-    cuenta para cualquier capa de su span"), no sólo sus dos extremos.
-
-    Sesión 43 (fix, ``docs/BACKLOG.md``): ``via_span_layers`` trae el span
-    real (todas las capas atravesadas, resuelto por el bridge contra el
-    stackup habilitado del board) cuando está disponible; si no
-    (``None`` — board de 2 capas donde nunca se calculó, o degradación por
-    fallo de lectura del stackup en KiCad 9.0-9.0.4), cae al comportamiento
-    previo: matchear sólo los dos extremos de ``via_layers``. En un board de
-    2 capas ambos caminos dan el mismo resultado.
+    para cualquier capa de su span (``tool-catalog.md``), no sólo sus dos
+    extremos: ``via_span_layers`` trae ese span real cuando el bridge pudo
+    resolver el stackup; si no (``None`` — degradación en KiCad 9.0-9.0.4,
+    ver ``_safe_copper_layer_values``), cae a matchear sólo los extremos de
+    ``via_layers``.
     """
     if item.kind == "via":
         if item.via_span_layers is not None:

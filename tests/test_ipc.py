@@ -1699,8 +1699,13 @@ class _RaisingEnabledLayersRawBoard:
     KiCad 9.0.0-9.0.4 contra ``Board.get_enabled_layers`` (versionadded
     0.5.0, KiCad 9.0.5+)."""
 
+    def __init__(
+        self, message: str = "get_enabled_layers no soportado por esta versión de KiCad"
+    ) -> None:
+        self._message = message
+
     def get_enabled_layers(self) -> list[int]:
-        raise RuntimeError("get_enabled_layers no soportado por esta versión de KiCad")
+        raise RuntimeError(self._message)
 
 
 @pytest.mark.unit
@@ -1719,6 +1724,29 @@ def test_safe_copper_layer_values_degrades_and_logs_on_failure(
 
     assert result == []
     assert any("copper_layer_stackup_unavailable" in r.message for r in caplog.records)
+
+
+@pytest.mark.unit
+def test_safe_copper_layer_values_log_is_valid_json_with_hostile_error_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regresión (auditoría de sesión 43, Codex): el log debe ser JSON válido
+    incluso si el mensaje de la excepción trae comillas o saltos de línea —
+    ``log_copper_layer_stackup_unavailable`` usa ``json.dumps`` (regla 2), no
+    interpolación manual de string, que producía JSON roto con mensajes
+    hostiles (reproducido con ``RuntimeError('bad \"quote\" and\\nnewline')``
+    antes de este fix: ``json.loads`` fallaba)."""
+    import json
+    import logging
+
+    hostile = 'bad "quote" and\nnewline'
+    with caplog.at_level(logging.WARNING, logger="kicad_mcp"):
+        _safe_copper_layer_values(_RaisingEnabledLayersRawBoard(hostile))
+
+    records = [r for r in caplog.records if "copper_layer_stackup_unavailable" in r.message]
+    assert len(records) == 1
+    parsed = json.loads(records[0].message)
+    assert parsed == {"tool_name": "copper_layer_stackup_unavailable", "error": hostile}
 
 
 class _Vec2:
@@ -1887,6 +1915,20 @@ def test_list_all_copper_resolves_stackup_once_when_result_has_a_via() -> None:
     assert raw_board.get_enabled_layers_calls == 1
     via_items = [it for it in items if it.kind == "via"]
     assert via_items and via_items[0].via_span_layers == ("F.Cu", "In1.Cu", "B.Cu")
+
+
+@pytest.mark.unit
+def test_list_all_copper_skips_stackup_lookup_when_no_via_in_result() -> None:
+    """Faltaba el análogo de ``test_list_net_copper_skips_stackup_lookup_...``
+    para ``list_all_copper`` (auditoría de sesión 43, Codex: el reporte
+    afirmaba esta cobertura sin que el test existiera)."""
+    raw_board = _ProducerRawBoard([_FakeTrack("T1")])
+    board = BoardHandle(_raw=raw_board)
+    bridge = IpcBridge()
+
+    bridge.list_all_copper(board)
+
+    assert raw_board.get_enabled_layers_calls == 0
 
 
 @pytest.mark.unit

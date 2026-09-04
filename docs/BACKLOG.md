@@ -702,21 +702,39 @@ funciona en esas versiones.
 
 **Sin ADR** — mismo criterio que el fix de bbox Edge.Cuts de sesión 31b:
 implementa un contrato ya documentado (`tool-catalog.md:437`) sin cambiar
-ninguna superficie externa. Auditado por Codex antes de implementar
-(`APROBAR_CON_CAMBIOS`, 3 hallazgos MAJOR corregidos: la tesis de "no-op
-estricto" era falsa —el fix agrega un request IPC nuevo—, `delete_tracks_bulk`
-no estaba protegido por `dry_run`/`include_vias` por defecto como decía el
-plan original, y la cobertura de tests propuesta inicialmente era
-insuficiente).
+ninguna superficie externa. Auditado por Codex DOS VECES: antes de
+implementar (`APROBAR_CON_CAMBIOS`, 3 hallazgos MAJOR sobre el plan
+corregidos antes de escribir código: la tesis de "no-op estricto" era
+falsa —el fix agrega un request IPC nuevo—, `delete_tracks_bulk` no estaba
+protegido por `dry_run`/`include_vias` por defecto como decía el plan
+original, y la cobertura de tests propuesta inicialmente era
+insuficiente); y de nuevo sobre el CÓDIGO YA IMPLEMENTADO
+(`APROBAR_CON_CAMBIOS`, 3 hallazgos reales que el plan no podía haber
+anticipado, los tres corregidos): (1) MAJOR — el log de degradación
+interpolaba `str(exc)` en un JSON armado a mano en vez de usar
+`json.dumps` (ya establecido en `logging_config.py` para casos idénticos:
+`log_socket_glob_ambiguous`/`log_ipc_retry`), produciendo JSON inválido
+con mensajes de excepción hostiles (comillas/saltos de línea) — corregido
+con `log_copper_layer_stackup_unavailable` nuevo, mismo patrón que sus
+hermanos; (2) MINOR — el invariante documentado de `via_span_layers`
+afirmaba coincidencia posicional con `via_layers`, falsa si
+`drill.start_layer > drill.end_layer` (kipy no garantiza el orden) —
+corregido a igualdad de conjunto; (3) MINOR — faltaba el canario de "cero
+IPC sin vía" para `list_all_copper`, el test `include_vias=False` de
+`delete_tracks_bulk` pasaba igual con el bug sin corregir (no
+discriminaba), y el test GUI elegía una vía a ciegas asumiendo pasante —
+los tres corregidos.
 
-**Verificación:** 23 tests unit nuevos (`test_ipc.py` +15: helper puro +
-degradación + plumbing de `_kipy_copper_to_item` + canarios de conteo de
-IPC en los tres productores; `test_pcb_geometry_unit.py` +5: filtro con/sin
-span + invariante extremos; `test_pcb_delete_bulk.py` +3: los tres modos del
-sitio destructivo), sin editar ninguno de los tests preexistentes. Suite
-offline **466 passed** (443 previos + 23 nuevos de estos tres archivos + 1
-archivo GUI nuevo deseleccionado por marker). Goldens sin tocar y verdes.
-`ruff`/`mypy` limpios. Test `integration_gui`
+**Verificación:** 26 tests unit nuevos en total (`test_ipc.py` +17: helper
+puro + degradación con test de JSON válido ante mensaje hostil + plumbing
+de `_kipy_copper_to_item` + canarios de conteo de IPC en los tres
+productores; `test_pcb_geometry_unit.py` +5: filtro con/sin span +
+invariante extremos como conjunto; `test_pcb_delete_bulk.py` +3, uno
+reescrito para ser autocontenido: los tres modos del sitio destructivo),
+sin editar ninguno de los tests preexistentes de antes de esta sesión.
+Suite offline **468 passed** (443 previos + 26 nuevos de estos tres
+archivos + 1 archivo GUI nuevo deseleccionado por marker). Goldens sin
+tocar y verdes. `ruff`/`mypy` limpios. Test `integration_gui`
 (`tests/test_pcb_session43_multilayer_via_span_gui.py`) **escrito, pendiente
 de ejecución humana** — el protocolo GUI de este proyecto no tiene hoy
 ningún proyecto de referencia con capas internas habilitadas (mismo

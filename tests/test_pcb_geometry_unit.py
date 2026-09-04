@@ -283,14 +283,17 @@ class TestCopperOnLayer:
         assert _copper_on_layer(via, "B.Cu") is False
         assert _copper_on_layer(via, "In1.Cu") is True
 
-    def test_span_extremes_invariant_matches_via_layers(self) -> None:
-        """Invariante documentado en ``CopperItem.via_span_layers``: cuando el
-        span se conoce, su primer y último elemento coinciden con
-        ``via_layers``."""
-        via_layers = ("F.Cu", "B.Cu")
+    def test_span_extremes_invariant_matches_via_layers_as_a_set(self) -> None:
+        """Invariante documentado en ``CopperItem.via_span_layers`` (corregido
+        tras auditoría de sesión 43, Codex): cuando el span se conoce, sus
+        extremos coinciden con ``via_layers`` COMO CONJUNTO, no
+        posicionalmente — ``via_span_layers`` siempre queda ascendente en el
+        stackup, pero ``via_layers`` es ``(start_layer, end_layer)`` tal cual
+        los reporta kipy, que puede venir invertido."""
+        via_layers = ("B.Cu", "F.Cu")  # orden invertido, tal cual podría venir del drill
         via = _via(via_layers=via_layers, via_span_layers=("F.Cu", "In1.Cu", "In2.Cu", "B.Cu"))
         assert via.via_span_layers is not None
-        assert (via.via_span_layers[0], via.via_span_layers[-1]) == via_layers
+        assert {via.via_span_layers[0], via.via_span_layers[-1]} == set(via_layers)
 
 
 class TestRoundedRectSdf:

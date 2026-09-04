@@ -69,6 +69,63 @@ degradar con log ante fallo de lectura del stackup (preservar compat 9.0),
 y escribir-y-diferir el test de integración multicapa (sin fixture
 disponible en el protocolo GUI de este proyecto).
 
+## Proceso: segunda auditoría, después de implementar (commit `3f175f8`)
+
+Por pedido explícito del humano, tras el primer commit se corrió una SEGUNDA
+auditoría de Codex — esta vez sobre el código ya implementado (`git diff
+11f4918..3f175f8`), no sobre el plan. Objetivo: confirmar que las 3
+correcciones MAJOR de la primera auditoría se implementaron tal como se
+prometió, y encontrar bugs de la implementación misma que el plan no podía
+haber anticipado. Veredicto: **APROBAR_CON_CAMBIOS**, con hallazgos reales
+que no estaban en el plan:
+
+1. **MAJOR, confirmado y corregido.** `_safe_copper_layer_values` interpolaba
+   `str(exc)` directamente en un literal JSON armado a mano
+   (`'{"tool_name":...,"error":"%s"}' % str(exc)`) — un mensaje de excepción
+   con comillas o saltos de línea produce JSON inválido. Reproducido:
+   `RuntimeError('bad "quote" and\nnewline')` rompía `json.loads()`. Peor:
+   el codebase YA tenía el patrón correcto (`logging_config.py`,
+   `log_socket_glob_ambiguous`/`log_ipc_retry`, ambos con `json.dumps(...,
+   separators=(",", ":"), ensure_ascii=False)`, ya importados en
+   `bridge/ipc.py`) y el fix lo pasó por alto, copiando en cambio el patrón
+   más frágil de `pcb.py:243`. **Corregido:** nuevo
+   `log_copper_layer_stackup_unavailable(error: str)` en `logging_config.py`,
+   mismo patrón exacto que sus dos hermanos; `_safe_copper_layer_values`
+   ahora lo llama. Test nuevo que reproduce el mensaje hostil y valida con
+   `json.loads()` real, no sólo `in r.message`.
+2. **MINOR, confirmado y corregido.** El invariante documentado en
+   `CopperItem.via_span_layers` decía que sus extremos coinciden
+   POSICIONALMENTE con `via_layers` — falso si `drill.start_layer >
+   drill.end_layer` (kipy no garantiza el orden), porque
+   `_via_span_layer_names` siempre normaliza a orden físico ascendente
+   mientras `via_layers` es el par crudo `(start, end)` tal cual lo reporta
+   el drill. No afecta el filtro (que sólo consulta pertenencia), sólo la
+   documentación y un test. **Corregido:** el invariante ahora se documenta
+   y testea como igualdad de CONJUNTO
+   (`{span[0], span[-1]} == set(via_layers)`), no de posición.
+3. **MINOR, confirmado y corregido (cobertura).**
+   - Faltaba el análogo de "cero llamadas IPC sin vía" para
+     `list_all_copper` — sólo `list_net_copper` lo tenía. El reporte de
+     sesión afirmaba esa cobertura sin que el test existiera. Agregado.
+   - El test `include_vias=False` de `test_pcb_delete_bulk.py` pasaba
+     igual con el bug SIN corregir (el filtro de capa ya excluía la vía por
+     su cuenta, así que `include_vias=False` nunca llegaba a ejercitarse) —
+     no discriminaba nada. Corregido: el test ahora primero prueba, con la
+     misma geometría e `include_vias=True` (default), que el filtro
+     corregido SÍ selecciona la vía — sin esa aserción de control, un fallo
+     de la aserción principal sería indistinguible del bug original.
+   - El test GUI elegía `vias[0]` a ciegas asumiendo que toda vía es
+     pasante — rompible si el board de referencia tuviera una vía ciega/
+     enterrada cuyo span no llega a la capa elegida. Corregido: busca la
+     primera vía cuyo span normalizado realmente cubre la capa interna
+     objetivo, y hace `skip` explícito si ninguna la cubre.
+
+Confirmado sin cambios: `_via_span_layer_names` (extremos normales, iguales,
+invertidos, ausentes — sin off-by-one), los tres productores resolviendo el
+stackup exactamente una vez cuando corresponde y nunca por ítem,
+`_copper_on_layer` preservando el fallback exacto en 2 capas, la semántica
+compartida entre los tres call sites, F1/F3 intactas.
+
 ## Cambios
 
 - **`src/kicad_mcp/bridge/ipc.py`:**
@@ -82,8 +139,10 @@ disponible en el protocolo GUI de este proyecto).
     producción).
   - `_safe_copper_layer_values(raw_board)` — envoltorio de
     `_copper_layer_values` con degradación ante fallo (compat KiCad
-    9.0–9.0.4): loguea (`logging.getLogger("kicad_mcp").warning`, JSON
-    estructurado, regla 2) y devuelve `[]` en vez de propagar.
+    9.0–9.0.4): loguea vía `log_copper_layer_stackup_unavailable`
+    (`logging_config.py`, JSON real con `json.dumps`, regla 2 — ver
+    corrección #1 de la segunda auditoría abajo) y devuelve `[]` en vez de
+    propagar.
   - `_kipy_copper_to_item` gana `copper_values: Sequence[int] = ()` y
     puebla `via_span_layers` sólo en la rama `Via`. Default vacío ⇒
     comportamiento idéntico al previo (ningún llamador queda obligado).
@@ -96,36 +155,46 @@ disponible en el protocolo GUI de este proyecto).
   (`via_layers`, sólo extremos). Semántica uniforme automática en los tres
   call sites (`get_tracks`, `delete_tracks_bulk`, guardrail #5 de
   stitching) porque los tres comparten esta única función.
+- **`src/kicad_mcp/logging_config.py`:** `log_copper_layer_stackup_unavailable`
+  nuevo — mismo patrón exacto que `log_socket_glob_ambiguous`/`log_ipc_retry`
+  (`json.dumps(..., separators=(",", ":"), ensure_ascii=False)`).
 - **Sin cambios:** `tools/pcb_encoders.py` (sigue leyendo `via_layers`, el
   formato `V ... F.Cu-B.Cu` queda idéntico), `docs/specs/tool-catalog.md`
   (F1 — el contrato ya describía la semántica correcta), `tests/golden/`
   (F1 — verificados verdes sin modificarse).
 
-## Tests (24 nuevos, ninguno de los preexistentes editado)
+## Tests (26 nuevos en total, ninguno de los preexistentes editado)
 
-- **`tests/test_ipc.py`** (15 nuevos): `_via_span_layer_names` (stackup de
+- **`tests/test_ipc.py`** (17 nuevos): `_via_span_layer_names` (stackup de
   2/4 capas, vía ciega/enterrada, extremos iguales/invertidos/ausente del
   stackup); `_safe_copper_layer_values` (degrada y loguea ante fallo, con
-  `caplog`); `_kipy_copper_to_item` (puebla el span con stackup dado, lo
-  deja en `None` sin stackup, nunca lo puebla para un track); canarios de
-  conteo IPC en los tres productores (exactamente una resolución de
-  stackup cuando hay vía, cero cuando no).
+  `caplog`, + test de JSON válido con mensaje hostil — corrección #1 de la
+  segunda auditoría); `_kipy_copper_to_item` (puebla el span con stackup
+  dado, lo deja en `None` sin stackup, nunca lo puebla para un track);
+  canarios de conteo IPC en los tres productores, incluido el que faltaba
+  para `list_all_copper` sin vías (corrección #3).
 - **`tests/test_pcb_geometry_unit.py`** (5 nuevos): el filtro con span
   (incluye capas internas), con span sigue matcheando extremos, sin span
   cae al comportamiento previo (canario de regresión), vía ciega/enterrada
-  no matchea capas externas, invariante extremos-vs-span.
-- **`tests/test_pcb_delete_bulk.py`** (3 nuevos): el sitio destructivo en
-  sus tres modos — `dry_run` (reporta sin mutar), borrado real (el KIID de
-  la vía llega a `remove_many_by_kiid`), `include_vias=False` (sigue
-  excluyéndola). Cierra una brecha de cobertura preexistente: ningún test
-  de este archivo ejercitaba el filtro `layer=` antes de esta sesión.
+  no matchea capas externas, invariante extremos-vs-span como conjunto
+  (corregido de "posicional" — corrección #2).
+- **`tests/test_pcb_delete_bulk.py`** (3 nuevos, uno reescrito para ser
+  autocontenido): el sitio destructivo en sus tres modos — `dry_run`
+  (reporta sin mutar), borrado real (el KIID de la vía llega a
+  `remove_many_by_kiid`), `include_vias=False` con control de que el
+  filtro SÍ selecciona la vía por defecto (corrección #3 — la versión
+  original pasaba igual con el bug sin corregir). Cierra una brecha de
+  cobertura preexistente: ningún test de este archivo ejercitaba el filtro
+  `layer=` antes de esta sesión.
 - **`tests/test_pcb_session43_multilayer_via_span_gui.py`** (nuevo,
   `integration_gui`): **escrito, ejecución pendiente del humano.** El
   protocolo GUI de este proyecto no tiene hoy ningún proyecto de referencia
   con capas internas habilitadas — hace `skip` explícito con esa razón si
-  el board abierto tiene menos de 4 capas de cobre. Mismo precedente que
-  sesión 32d ("verificación end-to-end escrita pero pendiente de ejecución
-  humana"). No se declara verde un gate que no corrió.
+  el board abierto tiene menos de 4 capas de cobre. Busca una vía cuyo span
+  realmente cubra la capa interna elegida (corrección #3, no `vias[0]` a
+  ciegas). Mismo precedente que sesión 32d ("verificación end-to-end
+  escrita pero pendiente de ejecución humana"). No se declara verde un gate
+  que no corrió.
 
 ## Verificación
 
@@ -133,18 +202,18 @@ disponible en el protocolo GUI de este proyecto).
 uv run ruff check src/ tests/     # limpio
 uv run ruff format --check ...    # limpio
 uv run mypy src/                  # Success: no issues found in 36 source files
-uv run pytest                     # 466 passed, 79 deselected
+uv run pytest                     # 468 passed, 79 deselected
 ```
 
-Baseline previo: 443 passed. Suma exacta de nuevos en los tres archivos
-offline tocados, verificada con `git stash`/`--collect-only` antes y
-después del cambio (`test_ipc.py` 66→81, `test_pcb_geometry_unit.py`
-33→38, `test_pcb_delete_bulk.py` 10→13): **+23** → 466, coincide exacto con
-el resultado real de la suite completa. `git diff` confirma que ningún test
-preexistente fue tocado: una sola línea modificada en los tres archivos (un
-reformateo de firma de factory por un parámetro nuevo), cero aserciones
-eliminadas. Goldens (`test_pcb_encoders_golden.py`) verdes sin modificarse;
-`tests/golden/` sin cambios en disco.
+Baseline previo a la sesión: 443 passed. +23 del primer commit (verificado
+con `git stash`/`--collect-only`: `test_ipc.py` 66→81,
+`test_pcb_geometry_unit.py` 33→38, `test_pcb_delete_bulk.py` 10→13) + 2 de
+la segunda auditoría (`test_ipc.py`: JSON hostil + skip de `list_all_copper`
+sin vía) = 468, exacto. `git diff` de la segunda ronda confirma que ningún
+test preexistente del primer commit fue tocado (sólo se reescribió el test
+`include_vias=False`, ya nuevo de este mismo commit, para hacerlo
+discriminante). Goldens (`test_pcb_encoders_golden.py`) verdes sin
+modificarse; `tests/golden/` sin cambios en disco.
 
 ## Sin ADR
 

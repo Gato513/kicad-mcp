@@ -58,9 +58,10 @@ def _server():  # type: ignore[no-untyped-def]
     return create_server()
 
 
-def _internal_copper_layer_name(raw_board: object) -> str | None:
-    """Nombre de una capa de cobre INTERNA (ni F.Cu ni B.Cu) habilitada del
-    board, o ``None`` si el board no tiene ninguna (típicamente 2 capas).
+def _internal_copper_layer(raw_board: object) -> tuple[int, str] | None:
+    """``(valor_enum, nombre)`` de una capa de cobre INTERNA (ni F.Cu ni
+    B.Cu) habilitada del board, o ``None`` si el board no tiene ninguna
+    (típicamente 2 capas).
     """
     from kipy.proto.board.board_types_pb2 import BoardLayer
 
@@ -74,7 +75,26 @@ def _internal_copper_layer_name(raw_board: object) -> str | None:
     # Cualquier capa que no sea el primer ni el último valor del stackup
     # ordenado es interna (F.Cu/B.Cu son siempre los extremos del enum).
     internal = copper_values[1]
-    return str(BoardLayer.Name(internal)).removeprefix("BL_").replace("_", ".")
+    name = str(BoardLayer.Name(internal)).removeprefix("BL_").replace("_", ".")
+    return internal, name
+
+
+def _find_via_spanning_layer(vias: list[object], target_layer_value: int) -> str | None:
+    """KIID de la primera via cuyo span (extremos normalizados del drill)
+    cubre ``target_layer_value``, o ``None`` si ninguna lo hace.
+
+    NO asume que toda via es pasante (auditoría de sesión 43, Codex: elegir
+    ``vias[0]`` a ciegas rompe el test si el board tiene una via ciega/
+    enterrada cuyo span no llega a la capa elegida) — el MVP de
+    ``kicad-mcp`` asume pasantes por diseño (``bridge/ipc.py``), pero un
+    board real preparado a mano para este fixture podría no respetarlo.
+    """
+    for via in vias:
+        drill = via.padstack.drill  # type: ignore[attr-defined]
+        lo, hi = sorted((int(drill.start_layer), int(drill.end_layer)))
+        if lo <= target_layer_value <= hi:
+            return str(via.id.value)  # type: ignore[attr-defined]
+    return None
 
 
 @pytest.mark.integration_gui
@@ -90,8 +110,8 @@ async def test_get_tracks_layer_filter_includes_through_via_on_internal_layer() 
         pytest.skip("no hay board abierto en KiCad")
 
     raw = board.raw
-    internal_layer_name = _internal_copper_layer_name(raw)
-    if internal_layer_name is None:
+    internal_layer = _internal_copper_layer(raw)
+    if internal_layer is None:
         pytest.skip(
             "proyecto sin capas internas de cobre habilitadas (< "
             f"{_MIN_COPPER_LAYERS_FOR_INTERNAL_CASE}); el caso que este fix "
@@ -100,14 +120,17 @@ async def test_get_tracks_layer_filter_includes_through_via_on_internal_layer() 
             "protocolo GUI de este proyecto no tiene hoy un proyecto de "
             "referencia multicapa — preparar uno para ejecutar este test."
         )
+    internal_layer_value, internal_layer_name = internal_layer
 
     vias = list(raw.get_vias())
     if not vias:
         pytest.skip("board sin ninguna via — no hay caso para ejercitar")
-    # El MVP asume toda via pasante (bridge/ipc.py, docstring de add_via /
-    # enforce_hole_clearance): cualquier via existente cruza el stackup
-    # completo, así que la primera alcanza.
-    target_kiid = str(vias[0].id.value)
+    target_kiid = _find_via_spanning_layer(vias, internal_layer_value)
+    if target_kiid is None:
+        pytest.skip(
+            f"ninguna via del board atraviesa {internal_layer_name!r} — "
+            "preparar el fixture con al menos una via pasante F.Cu-B.Cu"
+        )
 
     mcp = _server()
     async with create_connected_server_and_client_session(mcp._mcp_server) as client:

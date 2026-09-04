@@ -418,13 +418,38 @@ async def test_delete_tracks_bulk_layer_filter_include_vias_false_still_excludes
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """``include_vias=False`` sigue siendo la válvula que protege el borrado
-    masivo de vías por capa, incluso con el filtro corregido."""
+    masivo de vías por capa, incluso con el filtro corregido.
+
+    Autocontenido (auditoría de sesión 43, Codex: la versión anterior de
+    este test pasaba igual con el bug SIN corregir, porque el filtro de
+    capa ya excluía la vía por su cuenta — ``include_vias=False`` nunca
+    llegaba a ejercitarse). Este test primero prueba, con la MISMA
+    geometría y ``include_vias=True`` (default), que el filtro corregido SÍ
+    selecciona la vía (``vias_deleted == 1``) — sin esa aserción, un fallo
+    de ``include_vias=False`` de más abajo sería indistinguible del bug
+    original.
+    """
     project = _make_project(tmp_path)
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
-    copper = {
-        "GND": [_via("V1", "GND", 20.0, 20.0, via_span_layers=("F.Cu", "In1.Cu", "B.Cu"))],
-    }
-    bridge = _FakeBridge(nets=["GND"], copper=copper)
+
+    def _fresh_copper() -> dict[str, list[CopperItem]]:
+        return {
+            "GND": [_via("V1", "GND", 20.0, 20.0, via_span_layers=("F.Cu", "In1.Cu", "B.Cu"))],
+        }
+
+    bridge_default = _FakeBridge(nets=["GND"], copper=_fresh_copper())
+    mcp_default = _make_server(bridge_default)
+    async with create_connected_server_and_client_session(mcp_default._mcp_server) as client:
+        control = await client.call_tool(
+            "delete_tracks_bulk", {"net": "GND", "layer": "In1.Cu", "dry_run": True}
+        )
+    assert not control.isError, _text(control)
+    assert _json(control)["vias_deleted"] == 1, (
+        "control: el filtro de capa debe seleccionar la via ANTES de "
+        "aplicar include_vias — si esto falla, el test de abajo no discrimina nada"
+    )
+
+    bridge = _FakeBridge(nets=["GND"], copper=_fresh_copper())
     mcp = _make_server(bridge)
     async with create_connected_server_and_client_session(mcp._mcp_server) as client:
         result = await client.call_tool(

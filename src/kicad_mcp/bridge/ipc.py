@@ -31,7 +31,11 @@ from pathlib import Path
 from typing import Any, NewType, Protocol, TypeVar
 
 from ..errors import ErrorCode, KicadMcpError
-from ..logging_config import log_ipc_retry, log_socket_glob_ambiguous
+from ..logging_config import (
+    log_copper_layer_stackup_unavailable,
+    log_ipc_retry,
+    log_socket_glob_ambiguous,
+)
 
 _T = TypeVar("_T")
 
@@ -211,11 +215,16 @@ class CopperItem:
     # board — a diferencia de ``via_layers`` (siempre el par de extremos, es
     # lo que el formato de salida ``V ... F.Cu-B.Cu`` renderiza), esto es lo
     # que ``_copper_on_layer`` necesita para el filtro ``layer=`` de
-    # ``get_tracks``/``delete_tracks_bulk``. Invariante: cuando no es
-    # ``None``, ``via_span_layers[0]``/``[-1]`` == los dos elementos de
-    # ``via_layers``. ``None`` cuando no se pudo resolver el stackup (compat
-    # KiCad 9.0-9.0.4, ver ``_safe_copper_layer_values``) — degrada a que
-    # ``_copper_on_layer`` matchee sólo los extremos vía ``via_layers``.
+    # ``get_tracks``/``delete_tracks_bulk``. Invariante (corregido tras
+    # auditoría de sesión 43, Codex): cuando no es ``None``,
+    # ``{via_span_layers[0], via_span_layers[-1]} == set(via_layers)`` —
+    # como CONJUNTO, no posicionalmente: ``via_span_layers`` siempre queda en
+    # orden físico ascendente del stackup, mientras que ``via_layers`` es
+    # ``(drill.start_layer, drill.end_layer)`` tal cual los reporta kipy, que
+    # no está garantizado ascendente. ``None`` cuando no se pudo resolver el
+    # stackup (compat KiCad 9.0-9.0.4, ver ``_safe_copper_layer_values``) —
+    # degrada a que ``_copper_on_layer`` matchee sólo los extremos vía
+    # ``via_layers``.
     via_span_layers: tuple[str, ...] | None = None
 
 
@@ -630,12 +639,7 @@ def _safe_copper_layer_values(raw_board: Any) -> list[int]:
     try:
         return _copper_layer_values(raw_board)
     except Exception as exc:  # degradación deliberada, ver docstring
-        import logging
-
-        logging.getLogger("kicad_mcp").warning(
-            '{"tool_name":"copper_layer_stackup_unavailable","error":"%s"}',
-            str(exc),
-        )
+        log_copper_layer_stackup_unavailable(str(exc))
         return []
 
 

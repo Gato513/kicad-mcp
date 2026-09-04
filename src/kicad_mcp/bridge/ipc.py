@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -206,6 +206,17 @@ class CopperItem:
     size_mm: Mm | None = None  # via: diámetro
     drill_mm: Mm | None = None  # via
     via_layers: tuple[str, str] | None = None  # via: (capa_inicio, capa_fin)
+    # Sesión 43 (fix _copper_on_layer, docs/BACKLOG.md): capas de cobre que
+    # una via pasante REALMENTE atraviesa, según el stackup habilitado del
+    # board — a diferencia de ``via_layers`` (siempre el par de extremos, es
+    # lo que el formato de salida ``V ... F.Cu-B.Cu`` renderiza), esto es lo
+    # que ``_copper_on_layer`` necesita para el filtro ``layer=`` de
+    # ``get_tracks``/``delete_tracks_bulk``. Invariante: cuando no es
+    # ``None``, ``via_span_layers[0]``/``[-1]`` == los dos elementos de
+    # ``via_layers``. ``None`` cuando no se pudo resolver el stackup (compat
+    # KiCad 9.0-9.0.4, ver ``_safe_copper_layer_values``) — degrada a que
+    # ``_copper_on_layer`` matchee sólo los extremos vía ``via_layers``.
+    via_span_layers: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -504,17 +515,27 @@ def _is_copper_item(it: Any) -> bool:
     return type(it).__name__ in ("Track", "ArcTrack", "Via")
 
 
-def _kipy_copper_to_item(it: Any, net_name: str) -> CopperItem:
+def _kipy_copper_to_item(it: Any, net_name: str, copper_values: Sequence[int] = ()) -> CopperItem:
     """Convierte un ``Track``/``ArcTrack``/``Via`` de kipy a ``CopperItem``.
 
     Única fuente de la verdad de la conversión (D-16.1): la usan
     ``list_net_copper``, ``list_all_copper`` y ``get_copper_by_kiid`` por
     igual. Precondición: ``_is_copper_item(it)`` es ``True``.
+
+    ``copper_values`` (sesión 43, fix ``_copper_on_layer``): stackup de cobre
+    habilitado del board, para poblar ``via_span_layers`` en la rama ``Via``.
+    Default ``()`` — con stackup vacío, ``_via_span_layer_names`` degrada a
+    los dos extremos igual que antes de este fix; ningún llamador queda
+    obligado a pasarlo.
     """
     tname = type(it).__name__
     if tname == "Via":
         p = it.position
         drill = it.padstack.drill
+        via_layers = (
+            _layer_int_to_str(drill.start_layer),
+            _layer_int_to_str(drill.end_layer),
+        )
         return CopperItem(
             kind="via",
             kiid=str(it.id.value),
@@ -528,9 +549,11 @@ def _kipy_copper_to_item(it: Any, net_name: str) -> CopperItem:
             mid_y_mm=None,
             size_mm=nm_to_mm(Nm(int(it.diameter))),
             drill_mm=nm_to_mm(Nm(int(it.drill_diameter))),
-            via_layers=(
-                _layer_int_to_str(drill.start_layer),
-                _layer_int_to_str(drill.end_layer),
+            via_layers=via_layers,
+            via_span_layers=(
+                _via_span_layer_names(copper_values, drill.start_layer, drill.end_layer)
+                if copper_values
+                else None
             ),
         )
     s = it.start
@@ -585,6 +608,57 @@ def _copper_layer_values(raw_board: Any) -> list[int]:
         if str(BoardLayer.Name(layer_value)).endswith("_Cu"):
             out.append(layer_value)
     return out
+
+
+def _safe_copper_layer_values(raw_board: Any) -> list[int]:
+    """``_copper_layer_values`` con degradación ante fallo de lectura del
+    stackup (sesión 43, fix ``_copper_on_layer``).
+
+    ``Board.get_enabled_layers()`` es ``versionadded 0.5.0`` (KiCad 9.0.5+,
+    ver docstring de kipy) — F4 declara mínimo compatible 9.0. Antes de este
+    fix, ningún camino de LECTURA de cobre la llamaba (sólo la mutación
+    ``add_keepout_zone(layer="all")``, opt-in). Meterla en el camino de
+    ``list_net_copper``/``list_all_copper``/``get_copper_by_kiid`` no debe
+    romper una lectura que hoy funciona en 9.0.0-9.0.4: cualquier fallo se
+    loguea (regla 2, JSON estructurado) y degrada a ``[]`` — el llamador
+    entonces no puebla ``via_span_layers``, que es exactamente el
+    comportamiento de extremos (``via_layers``) previo a este fix. No es
+    ``except Exception: pass`` (regla 1): se loguea, y quien lo consume nunca
+    ve una promesa incumplida en silencio, sólo el filtro más estrecho que ya
+    tenía.
+    """
+    try:
+        return _copper_layer_values(raw_board)
+    except Exception as exc:  # degradación deliberada, ver docstring
+        import logging
+
+        logging.getLogger("kicad_mcp").warning(
+            '{"tool_name":"copper_layer_stackup_unavailable","error":"%s"}',
+            str(exc),
+        )
+        return []
+
+
+def _via_span_layer_names(copper_values: Sequence[int], start: int, end: int) -> tuple[str, ...]:
+    """Nombres de las capas de cobre que una vía atraviesa entre ``start`` y
+    ``end`` (inclusive), según el stackup HABILITADO del board (sesión 43,
+    fix ``_copper_on_layer``, docs/BACKLOG.md).
+
+    Los valores del enum ``BoardLayer`` están en orden físico de stackup
+    (``BL_F_Cu`` < ``BL_In1_Cu`` < … < ``BL_In30_Cu`` < ``BL_B_Cu``), así que
+    el span es el slice ordenado de ``copper_values`` entre ambos extremos.
+    Tolera extremos invertidos (normaliza con ``min``/``max``). Si algún
+    extremo no está en ``copper_values`` (defensivo, no alcanzable hoy en
+    producción — el drill de una vía real siempre referencia capas
+    habilitadas del mismo board), degrada a los dos nombres de extremo sin
+    lanzar: mismo comportamiento que antes de este fix.
+    """
+    lo, hi = (start, end) if start <= end else (end, start)
+    if lo not in copper_values or hi not in copper_values:
+        return (_layer_int_to_str(start), _layer_int_to_str(end))
+    ordered = sorted(copper_values)
+    span = [v for v in ordered if lo <= v <= hi]
+    return tuple(_layer_int_to_str(v) for v in span)
 
 
 def _zone_layer_value(layer: str) -> int:
@@ -1731,7 +1805,16 @@ class IpcBridge:
                 items = raw_board.get_items_by_net(
                     net_obj, [OT.KOT_PCB_TRACE, OT.KOT_PCB_ARC, OT.KOT_PCB_VIA]
                 )
-                return tuple(_kipy_copper_to_item(it, net) for it in items if _is_copper_item(it))
+                copper_items = [it for it in items if _is_copper_item(it)]
+                # Sesión 43 (fix _copper_on_layer): stackup sólo si hay al
+                # menos una via — un listado de sólo tracks no paga el IPC
+                # extra de get_enabled_layers().
+                copper_values = (
+                    _safe_copper_layer_values(raw_board)
+                    if any(type(it).__name__ == "Via" for it in copper_items)
+                    else ()
+                )
+                return tuple(_kipy_copper_to_item(it, net, copper_values) for it in copper_items)
 
             return self._run_supervised_read("list_net_copper", _do)
 
@@ -1754,13 +1837,18 @@ class IpcBridge:
                 items = raw_board.get_items(
                     types=[OT.KOT_PCB_TRACE, OT.KOT_PCB_ARC, OT.KOT_PCB_VIA]
                 )
+                copper_items = [it for it in items if _is_copper_item(it)]
+                # Sesión 43 (fix _copper_on_layer): idem list_net_copper.
+                copper_values = (
+                    _safe_copper_layer_values(raw_board)
+                    if any(type(it).__name__ == "Via" for it in copper_items)
+                    else ()
+                )
                 out: list[CopperItem] = []
-                for it in items:
-                    if not _is_copper_item(it):
-                        continue
+                for it in copper_items:
                     net = it.net
                     net_name = str(net.name) if net is not None and net.name else ""
-                    out.append(_kipy_copper_to_item(it, net_name))
+                    out.append(_kipy_copper_to_item(it, net_name, copper_values))
                 return tuple(out)
 
             return self._run_supervised_read("list_all_copper", _do)
@@ -1787,7 +1875,13 @@ class IpcBridge:
                 it = items[0]
                 net = it.net
                 net_name = str(net.name) if net is not None and net.name else ""
-                return _kipy_copper_to_item(it, net_name)
+                # Sesión 43 (fix _copper_on_layer): stackup sólo si el KIID
+                # resuelve a una via — el caso típico (track/arc) no paga el
+                # IPC extra.
+                copper_values = (
+                    _safe_copper_layer_values(raw_board) if type(it).__name__ == "Via" else ()
+                )
+                return _kipy_copper_to_item(it, net_name, copper_values)
 
             return self._run_supervised_read("get_copper_by_kiid", _do)
 

@@ -29,8 +29,11 @@ from kicad_mcp.bridge.ipc import (
     Nm,
     _bbox_with_margin,
     _edge_cuts_bbox_nm,
+    _kipy_copper_to_item,
     _resolve_kicad_socket,
+    _safe_copper_layer_values,
     _verify_created_net_or_revert,
+    _via_span_layer_names,
     mm_to_nm,
     nm_to_mm,
 )
@@ -1604,6 +1607,310 @@ def test_register_all_creates_single_bridge_when_none_injected(
     register_all(mcp)
 
     assert len(instantiations) == 1, "register_all debe crear exactamente un IpcBridge"
+
+
+# --- Sesión 43: fix _copper_on_layer / via_span_layers ------------------------
+#
+# docs/BACKLOG.md "Hallazgo colateral" (revisión Codex sobre DT1 Slice 2,
+# sesión 42): _copper_on_layer no reconocía las capas internas de una via
+# pasante en boards multicapa. El fix resuelve el span real contra el
+# stackup habilitado del board en el bridge (pcb_geometry.py se mantiene sin
+# acoplamiento a bridge/kipy).
+
+
+@pytest.mark.unit
+def test_via_span_layer_names_two_layer_stackup_matches_via_layers_extremes() -> None:
+    """Canario de regresión: stackup de 2 capas -> el span calculado es
+    idéntico al par de extremos que ``via_layers`` ya reportaba antes del
+    fix. Es la propiedad que protege D3-D7/Validation Suite A-B/goldens."""
+    values = [_BoardLayer.BL_F_Cu, _BoardLayer.BL_B_Cu]
+
+    span = _via_span_layer_names(values, _BoardLayer.BL_F_Cu, _BoardLayer.BL_B_Cu)
+
+    assert span == ("F.Cu", "B.Cu")
+
+
+@pytest.mark.unit
+def test_via_span_layer_names_four_layer_stackup_includes_internal_layers() -> None:
+    """El bug real: una via F.Cu->B.Cu en un board de 4 capas debe incluir
+    In1.Cu/In2.Cu en su span, no sólo los extremos."""
+    values = [
+        _BoardLayer.BL_F_Cu,
+        _BoardLayer.BL_In1_Cu,
+        _BoardLayer.BL_In2_Cu,
+        _BoardLayer.BL_B_Cu,
+    ]
+
+    span = _via_span_layer_names(values, _BoardLayer.BL_F_Cu, _BoardLayer.BL_B_Cu)
+
+    assert span == ("F.Cu", "In1.Cu", "In2.Cu", "B.Cu")
+
+
+@pytest.mark.unit
+def test_via_span_layer_names_blind_buried_via_spans_only_its_internal_range() -> None:
+    """Via ciega/enterrada In1.Cu<->In2.Cu: el span no debe incluir F.Cu/B.Cu."""
+    values = [
+        _BoardLayer.BL_F_Cu,
+        _BoardLayer.BL_In1_Cu,
+        _BoardLayer.BL_In2_Cu,
+        _BoardLayer.BL_B_Cu,
+    ]
+
+    span = _via_span_layer_names(values, _BoardLayer.BL_In1_Cu, _BoardLayer.BL_In2_Cu)
+
+    assert span == ("In1.Cu", "In2.Cu")
+
+
+@pytest.mark.unit
+def test_via_span_layer_names_equal_extremes_collapse_to_single_layer() -> None:
+    """Extremos iguales (patrón de test_pcb_session32d_orphan_pads_stitching_canary.py):
+    el span es una sola capa, no un par repetido."""
+    values = [_BoardLayer.BL_F_Cu, _BoardLayer.BL_B_Cu]
+
+    span = _via_span_layer_names(values, _BoardLayer.BL_F_Cu, _BoardLayer.BL_F_Cu)
+
+    assert span == ("F.Cu",)
+
+
+@pytest.mark.unit
+def test_via_span_layer_names_normalizes_inverted_extremes() -> None:
+    values = [_BoardLayer.BL_F_Cu, _BoardLayer.BL_In1_Cu, _BoardLayer.BL_B_Cu]
+
+    span = _via_span_layer_names(values, _BoardLayer.BL_B_Cu, _BoardLayer.BL_F_Cu)
+
+    assert span == ("F.Cu", "In1.Cu", "B.Cu")
+
+
+@pytest.mark.unit
+def test_via_span_layer_names_missing_extreme_degrades_to_endpoints_without_raising() -> None:
+    """Defensivo, no alcanzable en producción (el drill de una via real
+    siempre referencia capas habilitadas del mismo board): si un extremo no
+    está en el stackup dado, degrada a los dos nombres de extremo — mismo
+    comportamiento que antes del fix, nunca una excepción."""
+    values = [_BoardLayer.BL_F_Cu, _BoardLayer.BL_B_Cu]
+
+    span = _via_span_layer_names(values, _BoardLayer.BL_F_Cu, _BoardLayer.BL_In1_Cu)
+
+    assert span == ("F.Cu", "In1.Cu")
+
+
+class _RaisingEnabledLayersRawBoard:
+    """``raw`` fake cuyo ``get_enabled_layers`` no existe/falla — simula
+    KiCad 9.0.0-9.0.4 contra ``Board.get_enabled_layers`` (versionadded
+    0.5.0, KiCad 9.0.5+)."""
+
+    def get_enabled_layers(self) -> list[int]:
+        raise RuntimeError("get_enabled_layers no soportado por esta versión de KiCad")
+
+
+@pytest.mark.unit
+def test_safe_copper_layer_values_degrades_and_logs_on_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Compat KiCad 9.0-9.0.4: un fallo de ``get_enabled_layers`` no debe
+    reventar la lectura de cobre — degrada a ``[]`` (el llamador no puebla
+    ``via_span_layers``, cae al comportamiento de extremos previo al fix) y
+    lo deja observable en el log (CLAUDE.md regla 1: no es
+    ``except Exception: pass``)."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="kicad_mcp"):
+        result = _safe_copper_layer_values(_RaisingEnabledLayersRawBoard())
+
+    assert result == []
+    assert any("copper_layer_stackup_unavailable" in r.message for r in caplog.records)
+
+
+class _Vec2:
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+
+class _Id:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+
+class _Drill:
+    def __init__(self, start_layer: int, end_layer: int) -> None:
+        self.start_layer = start_layer
+        self.end_layer = end_layer
+
+
+class _Padstack:
+    def __init__(self, start_layer: int, end_layer: int) -> None:
+        self.drill = _Drill(start_layer, end_layer)
+
+
+class _FakeVia:
+    """``_kipy_copper_to_item`` despacha por ``type(it).__name__`` — un
+    ``__name__ = "Via"`` en el CUERPO de la clase no alcanza (queda oculto
+    por el descriptor de ``type``, verificado); hay que renombrar la clase
+    ya construida, mismo mecanismo que ``_KipyApiErrorNotFound.__qualname__``
+    más arriba en este archivo."""
+
+    def __init__(self, start_layer: int, end_layer: int, kiid: str = "V1") -> None:
+        self.position = _Vec2(1_000_000, 2_000_000)
+        self.padstack = _Padstack(start_layer, end_layer)
+        self.diameter = 800_000
+        self.drill_diameter = 400_000
+        self.id = _Id(kiid)
+        self.net: Any = None  # get_copper_by_kiid/list_all_copper siempre leen it.net
+
+
+_FakeVia.__name__ = "Via"
+
+
+@pytest.mark.unit
+def test_kipy_copper_to_item_populates_via_span_layers_from_stackup() -> None:
+    via = _FakeVia(_BoardLayer.BL_F_Cu, _BoardLayer.BL_B_Cu)
+    copper_values = [
+        _BoardLayer.BL_F_Cu,
+        _BoardLayer.BL_In1_Cu,
+        _BoardLayer.BL_B_Cu,
+    ]
+
+    item = _kipy_copper_to_item(via, "GND", copper_values)
+
+    assert item.via_layers == ("F.Cu", "B.Cu")
+    assert item.via_span_layers == ("F.Cu", "In1.Cu", "B.Cu")
+
+
+@pytest.mark.unit
+def test_kipy_copper_to_item_without_copper_values_leaves_span_none() -> None:
+    """Default ``()``: ningún llamador queda obligado a pasar el stackup —
+    ``via_span_layers`` queda ``None``, comportamiento idéntico a antes del
+    fix (``_copper_on_layer`` cae a ``via_layers``)."""
+    via = _FakeVia(_BoardLayer.BL_F_Cu, _BoardLayer.BL_B_Cu)
+
+    item = _kipy_copper_to_item(via, "GND")
+
+    assert item.via_layers == ("F.Cu", "B.Cu")
+    assert item.via_span_layers is None
+
+
+class _FakeTrack:
+    def __init__(self, kiid: str = "T1") -> None:
+        self.id = _Id(kiid)
+        self.net = None
+        self.start = _Vec2(0, 0)
+        self.end = _Vec2(1_000_000, 0)
+        self.layer = _BoardLayer.BL_F_Cu
+        self.width = 250_000
+
+
+_FakeTrack.__name__ = "Track"
+
+
+@pytest.mark.unit
+def test_kipy_copper_to_item_track_never_populates_via_span_layers() -> None:
+    track = _FakeTrack()
+
+    item = _kipy_copper_to_item(track, "GND", [_BoardLayer.BL_F_Cu, _BoardLayer.BL_B_Cu])
+
+    assert item.via_span_layers is None
+    assert item.via_layers is None
+
+
+class _NetOrNone:
+    def __init__(self, name: str | None) -> None:
+        self.name = name
+
+
+class _ProducerRawBoard:
+    """``raw`` fake para ejercitar ``list_net_copper``/``list_all_copper``/
+    ``get_copper_by_kiid`` end-to-end, contando cuántas veces se resuelve el
+    stackup (hallazgo 6 de la auditoría de sesión 43: una vez por llamada,
+    nunca por ítem; cero si no hay ninguna via en el resultado)."""
+
+    def __init__(self, items: list[Any], net_name: str = "GND") -> None:
+        self._items = items
+        self._net_name = net_name
+        self.get_enabled_layers_calls = 0
+
+    def get_nets(self) -> list[Any]:
+        net = _NetOrNone(self._net_name)
+        return [net]
+
+    def get_items_by_net(self, net_obj: Any, types: Any) -> list[Any]:
+        return self._items
+
+    def get_items(self, types: Any) -> list[Any]:
+        for it in self._items:
+            it.net = _NetOrNone(self._net_name)
+        return self._items
+
+    def get_items_by_id(self, kiids: list[Any]) -> list[Any]:
+        wanted = {k.value for k in kiids}
+        return [it for it in self._items if it.id.value in wanted]
+
+    def get_enabled_layers(self) -> list[int]:
+        self.get_enabled_layers_calls += 1
+        return [_BoardLayer.BL_F_Cu, _BoardLayer.BL_In1_Cu, _BoardLayer.BL_B_Cu]
+
+
+@pytest.mark.unit
+def test_list_net_copper_resolves_stackup_once_when_result_has_a_via() -> None:
+    via = _FakeVia(_BoardLayer.BL_F_Cu, _BoardLayer.BL_B_Cu)
+    raw_board = _ProducerRawBoard([_FakeTrack("T1"), via])
+    board = BoardHandle(_raw=raw_board)
+    bridge = IpcBridge()
+
+    items = bridge.list_net_copper(board, "GND")
+
+    assert raw_board.get_enabled_layers_calls == 1
+    via_items = [it for it in items if it.kind == "via"]
+    assert via_items and via_items[0].via_span_layers == ("F.Cu", "In1.Cu", "B.Cu")
+
+
+@pytest.mark.unit
+def test_list_net_copper_skips_stackup_lookup_when_no_via_in_result() -> None:
+    raw_board = _ProducerRawBoard([_FakeTrack("T1")])
+    board = BoardHandle(_raw=raw_board)
+    bridge = IpcBridge()
+
+    bridge.list_net_copper(board, "GND")
+
+    assert raw_board.get_enabled_layers_calls == 0
+
+
+@pytest.mark.unit
+def test_list_all_copper_resolves_stackup_once_when_result_has_a_via() -> None:
+    via = _FakeVia(_BoardLayer.BL_F_Cu, _BoardLayer.BL_B_Cu)
+    raw_board = _ProducerRawBoard([_FakeTrack("T1"), via])
+    board = BoardHandle(_raw=raw_board)
+    bridge = IpcBridge()
+
+    items = bridge.list_all_copper(board)
+
+    assert raw_board.get_enabled_layers_calls == 1
+    via_items = [it for it in items if it.kind == "via"]
+    assert via_items and via_items[0].via_span_layers == ("F.Cu", "In1.Cu", "B.Cu")
+
+
+@pytest.mark.unit
+def test_get_copper_by_kiid_resolves_stackup_only_when_item_is_a_via() -> None:
+    raw_board = _ProducerRawBoard([_FakeVia(_BoardLayer.BL_F_Cu, _BoardLayer.BL_B_Cu, "V1")])
+    board = BoardHandle(_raw=raw_board)
+    bridge = IpcBridge()
+
+    item = bridge.get_copper_by_kiid(board, "V1")
+
+    assert raw_board.get_enabled_layers_calls == 1
+    assert item is not None
+    assert item.via_span_layers == ("F.Cu", "In1.Cu", "B.Cu")
+
+
+@pytest.mark.unit
+def test_get_copper_by_kiid_skips_stackup_lookup_for_a_track() -> None:
+    raw_board = _ProducerRawBoard([_FakeTrack("T1")])
+    board = BoardHandle(_raw=raw_board)
+    bridge = IpcBridge()
+
+    bridge.get_copper_by_kiid(board, "T1")
+
+    assert raw_board.get_enabled_layers_calls == 0
 
 
 # --- integration_gui (requiere KiCad abierto) ---------------------------------

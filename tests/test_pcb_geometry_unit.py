@@ -86,6 +86,7 @@ def _via(
     x: float = 5.0,
     y: float = 5.0,
     via_layers: tuple[str, str] | None = ("F.Cu", "B.Cu"),
+    via_span_layers: tuple[str, ...] | None = None,
 ) -> CopperItem:
     return CopperItem(
         kind="via",
@@ -99,6 +100,7 @@ def _via(
         mid_x_mm=None,
         mid_y_mm=None,
         via_layers=via_layers,
+        via_span_layers=via_span_layers,
     )
 
 
@@ -248,6 +250,47 @@ class TestCopperOnLayer:
         track = _track(layer="F.Cu")
         assert _copper_on_layer(track, "F.Cu") is True
         assert _copper_on_layer(track, "B.Cu") is False
+
+    # Sesión 43 (fix, docs/BACKLOG.md "Hallazgo colateral" de sesión 42):
+    # con via_span_layers poblado, el filtro reconoce las capas internas de
+    # una via pasante — antes del fix, `_copper_on_layer(via, "In1.Cu")`
+    # devolvía False pese a que la via físicamente atraviesa esa capa.
+    def test_via_with_span_matches_internal_layers(self) -> None:
+        via = _via(
+            via_layers=("F.Cu", "B.Cu"),
+            via_span_layers=("F.Cu", "In1.Cu", "In2.Cu", "B.Cu"),
+        )
+        assert _copper_on_layer(via, "In1.Cu") is True
+        assert _copper_on_layer(via, "In2.Cu") is True
+
+    def test_via_with_span_still_matches_both_extremes(self) -> None:
+        via = _via(via_layers=("F.Cu", "B.Cu"), via_span_layers=("F.Cu", "In1.Cu", "B.Cu"))
+        assert _copper_on_layer(via, "F.Cu") is True
+        assert _copper_on_layer(via, "B.Cu") is True
+
+    def test_via_without_span_falls_back_to_via_layers_extremes(self) -> None:
+        """Canario del fallback: ``via_span_layers=None`` (board de 2 capas
+        donde nunca se calculó, o degradación por fallo de lectura del
+        stackup) preserva el comportamiento previo al fix, byte a byte."""
+        via = _via(via_layers=("F.Cu", "B.Cu"), via_span_layers=None)
+        assert _copper_on_layer(via, "F.Cu") is True
+        assert _copper_on_layer(via, "B.Cu") is True
+        assert _copper_on_layer(via, "In1.Cu") is False
+
+    def test_blind_buried_via_span_does_not_match_outer_layers(self) -> None:
+        via = _via(via_layers=("In1.Cu", "In2.Cu"), via_span_layers=("In1.Cu", "In2.Cu"))
+        assert _copper_on_layer(via, "F.Cu") is False
+        assert _copper_on_layer(via, "B.Cu") is False
+        assert _copper_on_layer(via, "In1.Cu") is True
+
+    def test_span_extremes_invariant_matches_via_layers(self) -> None:
+        """Invariante documentado en ``CopperItem.via_span_layers``: cuando el
+        span se conoce, su primer y último elemento coinciden con
+        ``via_layers``."""
+        via_layers = ("F.Cu", "B.Cu")
+        via = _via(via_layers=via_layers, via_span_layers=("F.Cu", "In1.Cu", "In2.Cu", "B.Cu"))
+        assert via.via_span_layers is not None
+        assert (via.via_span_layers[0], via.via_span_layers[-1]) == via_layers
 
 
 class TestRoundedRectSdf:

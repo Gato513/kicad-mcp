@@ -659,16 +659,70 @@ verde, `ruff`/`mypy` limpios. Ver `docs/historico/sesiones/42-reporte.md`.
 
 **Hallazgo colateral (revisión Codex sobre el slice, no de esta
 caracterización): `_copper_on_layer` no reconoce capas internas de una vía
-pasante.** `CopperItem.via_layers` sólo guarda `(capa_inicio, capa_fin)` —
-para un board multicapa, una vía pasante real conecta también las capas
-internas entre esos dos extremos, pero `_copper_on_layer(via, "In1.Cu")`
-devuelve `False` aunque `docs/specs/tool-catalog.md:437` promete "una via
-pasante cuenta para cualquier capa de su span". Bug preexistente (AST
-idéntico desde antes de sesión 42, no introducido por el slice) que afecta
-potencialmente `get_tracks(layer=)` en boards con capas internas. No
-evaluado ni corregido acá — decisión de diseño (¿ampliar `via_layers` a
-todas las capas atravesadas, o cambiar la semántica del filtro?) fuera de
-alcance de un slice mecánico.
+pasante — ✅ CERRADO sesión 43.** `CopperItem.via_layers` sólo guarda
+`(capa_inicio, capa_fin)` — para un board multicapa, una vía pasante real
+conecta también las capas internas entre esos dos extremos, pero
+`_copper_on_layer(via, "In1.Cu")` devolvía `False` aunque
+`docs/specs/tool-catalog.md:437` promete "una via pasante cuenta para
+cualquier capa de su span". Bug preexistente (AST idéntico desde antes de
+sesión 42, no introducido por el slice).
+
+**Decisión de diseño tomada:** poblar el span real desde el bridge, dejar
+el filtro puro. `pcb_geometry.py` (geometría pura, sin acoplamiento a
+`bridge` desde el Slice 2) no debía ganar ese acoplamiento — así que el
+stackup del board se resuelve donde ya vive (`bridge/ipc.py`) y viaja como
+dato nuevo en `CopperItem.via_span_layers: tuple[str, ...] | None` (default
+`None`). `via_layers` queda intacto (sigue siendo el par de extremos que
+el encoder renderiza en la línea `V ... F.Cu-B.Cu`, formato F1). Helper
+puro nuevo `_via_span_layer_names` (slice ordenado del stackup habilitado
+entre los dos extremos, reusando `_copper_layer_values` ya existente para
+`add_keepout_zone`); `_kipy_copper_to_item` y los tres productores
+(`list_net_copper`/`list_all_copper`/`get_copper_by_kiid`) lo pueblan **una
+vez por llamada, sólo si el resultado contiene al menos una vía**.
+`_copper_on_layer` prioriza `via_span_layers` si está disponible y cae al
+comportamiento de extremos (`via_layers`) si no — en un board de 2 capas
+ambos caminos dan el mismo resultado (selección y encoding idénticos), así
+que D3-D7/Validation Suite A-B/goldens no cambian.
+
+**Semántica uniforme en los tres call sites** (`get_tracks`,
+`delete_tracks_bulk`, el guardrail #5 de stitching): los tres comparten
+`_copper_on_layer`, así que corregirla una vez alcanza para los tres. Decisión
+explícita del humano dado que `delete_tracks_bulk(layer=<capa interna>)` pasa
+de borrar 0 vías a borrarlas por defecto (`include_vias=True`,
+`dry_run=False` son los defaults — no hay red automática, sólo las válvulas
+*opt-in* ya existentes).
+
+**Compatibilidad KiCad 9.0-9.0.4 (riesgo no anticipado en la caracterización
+original, hallado durante el fix):** `Board.get_enabled_layers()` es
+`versionadded 0.5.0` (KiCad 9.0.5+), y F4 declara mínimo compatible 9.0.
+`_safe_copper_layer_values` degrada con log estructurado ante cualquier
+fallo de esa lectura (no `except Exception: pass` — CLAUDE.md regla 1) en
+vez de romper una lectura de `get_tracks`/`delete_tracks_bulk` que hoy
+funciona en esas versiones.
+
+**Sin ADR** — mismo criterio que el fix de bbox Edge.Cuts de sesión 31b:
+implementa un contrato ya documentado (`tool-catalog.md:437`) sin cambiar
+ninguna superficie externa. Auditado por Codex antes de implementar
+(`APROBAR_CON_CAMBIOS`, 3 hallazgos MAJOR corregidos: la tesis de "no-op
+estricto" era falsa —el fix agrega un request IPC nuevo—, `delete_tracks_bulk`
+no estaba protegido por `dry_run`/`include_vias` por defecto como decía el
+plan original, y la cobertura de tests propuesta inicialmente era
+insuficiente).
+
+**Verificación:** 23 tests unit nuevos (`test_ipc.py` +15: helper puro +
+degradación + plumbing de `_kipy_copper_to_item` + canarios de conteo de
+IPC en los tres productores; `test_pcb_geometry_unit.py` +5: filtro con/sin
+span + invariante extremos; `test_pcb_delete_bulk.py` +3: los tres modos del
+sitio destructivo), sin editar ninguno de los tests preexistentes. Suite
+offline **466 passed** (443 previos + 23 nuevos de estos tres archivos + 1
+archivo GUI nuevo deseleccionado por marker). Goldens sin tocar y verdes.
+`ruff`/`mypy` limpios. Test `integration_gui`
+(`tests/test_pcb_session43_multilayer_via_span_gui.py`) **escrito, pendiente
+de ejecución humana** — el protocolo GUI de este proyecto no tiene hoy
+ningún proyecto de referencia con capas internas habilitadas (mismo
+precedente que sesión 32d); hace `skip` explícito con esa razón si el
+board abierto tiene menos de 4 capas de cobre. Detalle completo:
+`docs/historico/sesiones/43-reporte.md`.
 
 **Estado de DT1 tras Slice 2:** ambos slices mecánicos identificados hasta
 ahora (encoders, geometría) están cerrados. Lo que resta en `tools/pcb.py`

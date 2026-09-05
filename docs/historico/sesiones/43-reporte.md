@@ -329,8 +329,39 @@ Editor y `KICAD_MCP_PROJECT` apuntando al directorio (no al `.kicad_pcb` —
 `_resolve_root_pcb` espera un directorio), `uv run pytest -m integration_gui
 tests/test_pcb_session43_multilayer_via_span_gui.py -v` dio **1 passed**:
 `get_tracks(layer="In1.Cu")` incluyó la vía pasante F.Cu-B.Cu, confirmando
-el fix de `_copper_on_layer` end-to-end vía IPC, no sólo en unit tests. El
-fix de sesión 43 queda verificado por completo.
+el fix de `_copper_on_layer` end-to-end vía IPC, no sólo en unit tests.
+
+**2ª auditoría Codex, sobre el diseño del test ya ejecutado (2026-09-05):**
+pedida explícitamente para criticar si el test/fixture eran el diseño más
+adecuado, no sólo si pasaban. Veredicto `APROBAR_CON_CAMBIOS`, un hallazgo
+MAJOR verificado con evidencia propia antes y después del reporte: el test
+sólo aserteaba que la vía apareciera al filtrar por la capa interna, nunca
+que un ítem de OTRA capa quedara excluido — el filtro real en
+`get_tracks` es literalmente `items = tuple(it for it in items if
+_copper_on_layer(it, layer))` (`src/kicad_mcp/tools/pcb.py:1546`/`:1643`),
+así que una regresión que rompiera esa comprehension (p. ej. devolver todo
+sin filtrar) habría pasado el test igual. Se agregó
+`_find_segment_kiid_on_layer` y una aserción negativa: el segmento de
+F.Cu debe estar AUSENTE de `get_tracks(layer="In1.Cu")`. Re-ejecutado
+contra el mismo fixture real: **1 passed**.
+
+Dos hallazgos MINOR aceptados parcialmente: (1) las condiciones
+estructurales post-preflight (`vias` vacío, ninguna vía atraviesa la capa)
+pasaron de `pytest.skip` a `pytest.fail` — ya no son "board genérico
+incompatible" sino invariantes del fixture dedicado, y silenciarlas con
+skip ocultaría una corrupción futura del fixture. (2) Extender la prueba a
+también verificar `In2.Cu` (vía sola, ambos segmentos ausentes) se
+descartó deliberadamente: el propio reporte de Codex señala que
+`tests/test_pcb_geometry_unit.py:249-258` ya cubre ambas capas offline —
+agregarlo al test GUI (el único de ejecución humana manual) sumaba
+complejidad sin cerrar un gap real. El hallazgo MINOR sobre el oráculo de
+`_find_via_spanning_layer` (replica el mismo criterio `lo<=v<=hi` que
+produción) se descartó: Codex mismo concluye que no trivializa la prueba
+porque el resto del pipeline (`list_all_copper` → `_kipy_copper_to_item` →
+`via_span_layers` → `_copper_on_layer` → encoder) sigue intacto.
+
+El fix de sesión 43 queda verificado por completo, con el test end-to-end
+reforzado tras revisión independiente.
 
 ## Pendiente para una sesión futura
 

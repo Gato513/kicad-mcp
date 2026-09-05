@@ -809,7 +809,19 @@ confuso contra el board equivocado. Protocolo documentado en
 `docs/guias/pruebas-gui.md` §Fixture `007_pcb_multicapa`. **Ejecutado
 (2026-09-05) contra KiCad real con el fixture abierto: 1 passed** — el fix
 de `_copper_on_layer` de sesión 43 queda verificado end-to-end, no sólo en
-unit tests. Detalle en `docs/historico/sesiones/43-reporte.md`.
+unit tests.
+
+**2ª auditoría Codex sobre el test ya ejecutado — hallazgo MAJOR real,
+corregido.** El test original sólo aserteaba *inclusión* de la vía al
+filtrar por la capa interna, nunca *exclusión* de cobre de otra capa —
+verificado con evidencia propia que el filtro de `get_tracks`
+(`src/kicad_mcp/tools/pcb.py:1546`/`:1643`) es una comprehension simple
+sobre `_copper_on_layer`; una regresión que la rompiera (p. ej. devolver
+todo sin filtrar) habría pasado el test igual. Se agregó la aserción
+negativa (segmento F.Cu ausente de `get_tracks(layer="In1.Cu")`) y se
+convirtieron los `skip` post-preflight en `fail` (son invariantes del
+fixture dedicado, no casos de "board genérico"). Re-ejecutado: **1
+passed**. Detalle completo en `docs/historico/sesiones/43-reporte.md`.
 
 **Estado de DT1 tras Slice 2:** ambos slices mecánicos identificados hasta
 ahora (encoders, geometría) están cerrados. Lo que resta en `tools/pcb.py`

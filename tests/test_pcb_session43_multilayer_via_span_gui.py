@@ -21,6 +21,18 @@ guard de skip explícito (precedente: sesión 32d,
 escrita pero pendiente de ejecución humana") y no se declaró verde hasta
 correr efectivamente contra ese proyecto.
 
+**2ª auditoría Codex (post-ejecución):** el test original sólo aserteaba
+*inclusión* de la via al filtrar por la capa interna — un ``get_tracks``
+que ignorase el filtro por completo (devolviendo todo el cobre sin
+filtrar) habría pasado igual, porque el KIID de la via seguiría en el
+texto. Se agregó la aserción simétrica: el segmento de F.Cu (que NO
+atraviesa la capa interna filtrada) debe quedar AUSENTE del mismo listado.
+Verificado con evidencia propia (no sólo el reporte de Codex): el filtro
+de capa en ``get_tracks`` es literalmente
+``items = tuple(it for it in items if _copper_on_layer(it, layer))``
+(``src/kicad_mcp/tools/pcb.py:1546``/``:1643``) — sin la aserción negativa,
+una regresión que rompiera esa comprehension no se habría detectado.
+
 Es de SOLO LECTURA (``get_tracks``, sin mutación) — no requiere una copia
 descartable del fixture, pero sí requiere que ``KICAD_MCP_PROJECT`` apunte al
 proyecto multicapa ya abierto en el PCB Editor (ver
@@ -124,6 +136,25 @@ def _find_via_spanning_layer(vias: list[object], target_layer_value: int) -> str
     return None
 
 
+def _find_segment_kiid_on_layer(tracks: list[object], layer_value: int) -> str | None:
+    """KIID del primer segmento/arco (nunca una via) ubicado exactamente en
+    ``layer_value``, o ``None`` si no hay ninguno.
+
+    Segunda auditoría Codex de sesión 43: sin esto, el test sólo probaba
+    que la via apareciera al filtrar por una capa interna, pero no que un
+    ítem de OTRA capa quedara excluido — un ``get_tracks(layer=...)`` roto
+    que ignorase el filtro por completo (devolviendo todo el cobre del
+    board) pasaría igual, porque el KIID de la via seguiría estando en el
+    texto.
+    """
+    for t in tracks:
+        if type(t).__name__ == "Via":
+            continue
+        if int(t.layer) == layer_value:  # type: ignore[attr-defined]
+            return str(t.id.value)  # type: ignore[attr-defined]
+    return None
+
+
 @pytest.mark.integration_gui
 async def test_get_tracks_layer_filter_includes_through_via_on_internal_layer() -> None:
     """``get_tracks(layer=<capa interna>)`` debe incluir una via pasante
@@ -149,14 +180,29 @@ async def test_get_tracks_layer_filter_includes_through_via_on_internal_layer() 
         )
     internal_layer_value, internal_layer_name = internal_layer
 
+    # A partir de acá el preflight ya confirmó que estamos contra el board
+    # esperado (``007_pcb_multicapa`` según el protocolo) — estas ya no son
+    # condiciones de "board genérico incompatible" sino invariantes propias
+    # del fixture: si fallan, el fixture está corrupto/modificado y el test
+    # debe fallar fuerte, no saltarse en silencio (2ª auditoría Codex).
     vias = list(raw.get_vias())
     if not vias:
-        pytest.skip("board sin ninguna via — no hay caso para ejercitar")
+        pytest.fail("board sin ninguna via — fixture 007_pcb_multicapa corrupto o modificado")
     target_kiid = _find_via_spanning_layer(vias, internal_layer_value)
     if target_kiid is None:
-        pytest.skip(
+        pytest.fail(
             f"ninguna via del board atraviesa {internal_layer_name!r} — "
-            "preparar el fixture con al menos una via pasante F.Cu-B.Cu"
+            "fixture 007_pcb_multicapa corrupto o modificado"
+        )
+
+    from kipy.proto.board.board_types_pb2 import BoardLayer
+
+    tracks = list(raw.get_tracks())
+    excluded_kiid = _find_segment_kiid_on_layer(tracks, BoardLayer.BL_F_Cu)
+    if excluded_kiid is None:
+        pytest.fail(
+            "el fixture no tiene ningún segmento en F.Cu — no hay caso negativo "
+            "que ejercitar (fixture 007_pcb_multicapa corrupto o modificado)"
         )
 
     mcp = _server()
@@ -169,4 +215,10 @@ async def test_get_tracks_layer_filter_includes_through_via_on_internal_layer() 
     assert target_kiid in text, (
         f"get_tracks(layer={internal_layer_name!r}) no incluyó la via pasante "
         f"{target_kiid} — regresión del fix de sesión 43 (_copper_on_layer)"
+    )
+    assert excluded_kiid not in text, (
+        f"get_tracks(layer={internal_layer_name!r}) incluyó el segmento "
+        f"{excluded_kiid} de F.Cu — el filtro de capa no está excluyendo cobre "
+        "ajeno (el fix de sesión 43 sólo se probaba por inclusión, nunca por "
+        "exclusión; hallazgo de la 2ª auditoría Codex)"
     )

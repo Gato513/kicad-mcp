@@ -323,14 +323,17 @@ de skip se corrigieron para no repetir la premisa falsa. Protocolo de
 apertura documentado en `docs/guias/pruebas-gui.md` §Fixture
 `007_pcb_multicapa`, en paralelo a la sección de `despertador-routed`.
 
-**El test sigue pendiente de ejecución humana** — este trabajo lo hizo
-ejecutable (antes era imposible de correr sin fallar), no lo declaró verde.
+**Ejecutado contra KiCad real (2026-09-05):** con el proyecto
+`/tmp/multicapa-test` (copia de `007_pcb_multicapa`) abierto en el PCB
+Editor y `KICAD_MCP_PROJECT` apuntando al directorio (no al `.kicad_pcb` —
+`_resolve_root_pcb` espera un directorio), `uv run pytest -m integration_gui
+tests/test_pcb_session43_multilayer_via_span_gui.py -v` dio **1 passed**:
+`get_tracks(layer="In1.Cu")` incluyó la vía pasante F.Cu-B.Cu, confirmando
+el fix de `_copper_on_layer` end-to-end vía IPC, no sólo en unit tests. El
+fix de sesión 43 queda verificado por completo.
 
 ## Pendiente para una sesión futura
 
-- Ejecutar `tests/test_pcb_session43_multilayer_via_span_gui.py` contra
-  `tests/fixtures/007_pcb_multicapa/` siguiendo el protocolo de
-  `docs/guias/pruebas-gui.md` — requiere un humano con KiCad abierto.
 - El BACKLOG de sesión 42 anotaba además un candidato de campo separado
   (`kiid` sin sanitizar en los encoders ad hoc, `P1-2`) — no tocado en esta
   sesión, sigue abierto sin sesión asignada.

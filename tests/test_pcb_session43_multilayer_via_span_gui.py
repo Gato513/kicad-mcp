@@ -10,17 +10,16 @@ pasantes que físicamente atraviesan esa capa, incumpliendo el contrato de
 de su span"). El fix resuelve el span real contra el stackup habilitado del
 board (``IpcBridge._via_span_layer_names``, ``bridge/ipc.py``).
 
-**Verificación PENDIENTE de ejecución humana.** Requiere un proyecto de 4+
-capas de cobre abierto en el PCB Editor — ``tests/fixtures/007_pcb_multicapa``
-(sesión 43-fixture) es el fixture preparado para esto: chico y determinístico
-(una vía pasante + 2 segmentos), a diferencia de ``004_real`` (también 4
-capas, pero 808 vías — ``get_tracks`` no trunca, así que ese board excede el
-presupuesto de tokens y el test fallaría en vez de saltarse). Ver
-``docs/guias/pruebas-gui.md``. Este test se escribe con guard de skip
-explícito (precedente: sesión 32d,
+**Verificado contra KiCad real (2026-09-05): 1 passed.** Corrido con
+``tests/fixtures/007_pcb_multicapa`` (sesión 43-fixture) — chico y
+determinístico (una vía pasante + 2 segmentos), a diferencia de ``004_real``
+(también 4 capas, pero 808 vías — ``get_tracks`` no trunca, así que ese
+board excede el presupuesto de tokens y el test fallaría en vez de
+saltarse). Ver ``docs/guias/pruebas-gui.md``. Este test se escribió con
+guard de skip explícito (precedente: sesión 32d,
 ``test_pcb_session32d_stitching_gui_slow.py``, "verificación end-to-end
-escrita pero pendiente de ejecución humana") — NO se declara verde sin haber
-corrido contra ese proyecto.
+escrita pero pendiente de ejecución humana") y no se declaró verde hasta
+correr efectivamente contra ese proyecto.
 
 Es de SOLO LECTURA (``get_tracks``, sin mutación) — no requiere una copia
 descartable del fixture, pero sí requiere que ``KICAD_MCP_PROJECT`` apunte al

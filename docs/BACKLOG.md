@@ -806,9 +806,10 @@ fallaría con error en vez de saltarse. Se creó
 `test_pcb_session27_zone_persist_gui.py`) para hacer `skip` accionable si el
 board abierto no coincide con `KICAD_MCP_PROJECT`, en vez de fallar
 confuso contra el board equivocado. Protocolo documentado en
-`docs/guias/pruebas-gui.md` §Fixture `007_pcb_multicapa`. El test **sigue
-pendiente de ejecución humana** — sólo se automatizó que sea ejecutable,
-no se declaró verde.
+`docs/guias/pruebas-gui.md` §Fixture `007_pcb_multicapa`. **Ejecutado
+(2026-09-05) contra KiCad real con el fixture abierto: 1 passed** — el fix
+de `_copper_on_layer` de sesión 43 queda verificado end-to-end, no sólo en
+unit tests. Detalle en `docs/historico/sesiones/43-reporte.md`.
 
 **Estado de DT1 tras Slice 2:** ambos slices mecánicos identificados hasta
 ahora (encoders, geometría) están cerrados. Lo que resta en `tools/pcb.py`

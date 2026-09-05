@@ -235,6 +235,7 @@ cada ciclo; no se institucionalizan en este archivo.
 ## 14. Enlaces de autoridad primaria
 
 - Flujo operativo: `docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md`.
+- Revisión doble opcional (excepción §13 del flujo): `docs/proceso/JUICIO-CRUZADO-CODEX-v1.md`.
 - Fronteras F1–F5: `docs/adr/0000-fronteras-inviolables.md`.
 - Gates G1–G5: `docs/adr/0003-gates-de-autonomia.md`.
 - Ejecutor Claude Code: `CLAUDE.md`.

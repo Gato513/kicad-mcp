@@ -45,6 +45,7 @@ Eso alcanza para el 90% de las sesiones. Lo demás es "bajo demanda":
 |---|---|---|
 | `AGENTS.md` | Contrato transversal de coordinación multiagente: roles, autoridad, independencia, handoffs | Humano, tras cada sesión que cambie reglas de coordinación |
 | `docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md` | Único protocolo operativo vigente de coordinación multiagente | Humano, cuando cambie el flujo operativo |
+| `docs/proceso/JUICIO-CRUZADO-CODEX-v1.md` | Variante intensiva opcional de la revisión independiente (dos jueces Codex ciegos, excepción §13 del flujo) | Humano, cuando cambie el protocolo |
 | `CLAUDE.md` | Contrato del ejecutor Claude Code | Humano, tras cada sesión que cambie reglas |
 | `README.md` | Punto de entrada, quickstart, mapa de estructura | Humano/agente al DoD |
 | `docs/CONTEXT.md` | Visión consolidada del sistema y riesgos | Humano |
@@ -68,6 +69,7 @@ Coordinación multiagente vigente:
 
 - `AGENTS.md` — autoridad institucional.
 - `docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md` — protocolo operativo.
+- `docs/proceso/JUICIO-CRUZADO-CODEX-v1.md` — variante opcional de doble juicio, sólo por pedido explícito sobre unidades de riesgo alto.
 
 ## `docs/historico/` — evidencia del proceso, no operativo
 

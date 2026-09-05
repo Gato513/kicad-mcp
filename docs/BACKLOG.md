@@ -555,33 +555,60 @@ intacto por diseño).
   - Ver `docs/historico/sesiones/38-reporte.md` para el detalle con traza al
     código de cada veredicto.
 
-## P1-2 — `kiid` sin sanitizar en los encoders ad hoc — Abierto, sin sesión asignada
+## P1-2 — `kiid` sin sanitizar en los encoders ad hoc — ✅ CERRADO sesión 44, REFUTADO CON EVIDENCIA
 
 **Origen:** decisión #4 de sesión 36, verificado y promovido a entrada propia
 en sesión 38 (el resto de esa decisión se cerró en la misma sesión, ver
 `P1-1` arriba).
 
-**Ubicación actual:** `it.kiid` en `_encode_tracks` y `z.kiid` en
+**Ubicación auditada:** `it.kiid` en `_encode_tracks` y `z.kiid` en
 `_encode_zones`, ambos en `tools/pcb_encoders.py` y re-exportados desde
 `tools/pcb.py`. Ambos vienen de
 `str(it.id.value)`/`str(z.id.value)` (`bridge/ipc.py`) — el KIID nativo de
-KiCad, no texto arbitrario de archivo, pero tampoco garantizado libre de
-caracteres estructurales por contrato (D-16.2/D-16.3 no lo especifican).
+KiCad, no texto arbitrario de archivo.
 
-**Por qué no es un fix mecánico:** `kiid` es un identificador de
-**round-trip** — el agente lo recibe de `get_tracks`/`get_zones` y lo
-devuelve tal cual a `delete_track(id=...)`, `get_copper_by_kiid`, etc.
-Aplicarle `_sanitize`/`_sanitize_space_delimited` (que truncan a 40 chars y
-reemplazan caracteres) mutilaría el id y rompería esa resolución — el
-consumidor recibiría un id que ya no identifica nada. El fix correcto, si
-hace falta uno, es de otra naturaleza (ej. rechazar/loguear un ítem con
-`kiid` sospechoso en vez de sanitizarlo, o documentar la garantía de KiCad de
-que el KIID nunca contiene esos caracteres y cerrar el candidato como
-refutado con esa evidencia) — decisión de diseño, no mecánica.
+**Veredicto: refutado, no requiere sanitización.** Dos piezas de evidencia
+independientes, la segunda ejecutada porque una garantía documental sola no
+alcanza cuando el origen es un archivo editable a mano:
 
-**Advertencia para quien la tome:** DT1 Slice 1 trasladó mecánicamente esos
-sitios en sesión 41 sin cambiar `kiid`; P1-2 permanece abierto y requiere una
-decisión de diseño separada.
+1. **Contrato de kipy (upstream, no de este repo):** `base_types_pb2.pyi`
+   (`kipy/proto/common/types/base_types_pb2.pyi:276-290`) declara el tipo
+   `KIID` — usado uniformemente para tracks, vías, zonas, footprints y pads,
+   no sólo para las dos superficies auditadas — con el comentario textual
+   *"The KIID's value in standard UUID format, stored as a string for easy
+   portability"*. Un UUID estándar sólo usa `[0-9a-fA-F-]`: nunca un espacio
+   ni `|`, los dos delimitadores de las tres gramáticas ad hoc.
+2. **Verificación empírica propia (offline, vía `pcbnew`, mismo motor de
+   carga que usa el IPC):** se tomó `tests/fixtures/007_pcb_multicapa` en
+   `/tmp` (nunca se tocó el fixture commiteado) y se reemplazó el `(uuid
+   ...)` de la vía por una cadena maliciosa con espacio, `|` y tab. Al
+   cargar con `pcbnew.LoadBoard()`, el uuid inyectado **no sobrevive**: KiCad
+   lo descarta al parsear y genera uno nuevo, válido, al azar
+   (`cc200f04-593b-4f1c-a25e-c62b244a64f8`). Control: el mismo experimento
+   con un uuid bien formado (el original del fixture,
+   `5e4b1000-0000-4000-8000-000000000004`) sí se preserva exacto — confirma
+   que el comportamiento es rechazo de formato inválido, no reemplazo
+   incondicional. Conclusión: ni siquiera un `.kicad_pcb` editado a mano de
+   forma adversarial puede lograr que un `kiid` con caracteres estructurales
+   llegue al object model en memoria que expone el IPC — el string
+   malicioso muere en el parser de KiCad, antes de que `kicad-mcp` lo vea.
+
+Para un ítem creado por `kicad-mcp` (`add_via`, `add_track`, `add_zone`) el
+argumento es aún más directo: el KIID lo genera KiCad internamente
+(`KIID()` por defecto), nunca se deriva de texto de archivo.
+
+**Por qué no aplicaba un fix mecánico (razonamiento original, preservado):**
+`kiid` es un identificador de round-trip — el agente lo recibe de
+`get_tracks`/`get_zones` y lo devuelve tal cual a `delete_track(id=...)`,
+`get_copper_by_kiid`, etc. `_sanitize`/`_sanitize_space_delimited` (truncan a
+40 chars, reemplazan caracteres) lo habrían mutilado, rompiendo esa
+resolución sin necesidad — la evidencia de arriba confirma que nunca hacía
+falta.
+
+**Sin cambio de código.** DT1 Slice 1 (sesión 41) trasladó `kiid` mecánicamente
+sin sanitizarlo; esta sesión confirma que esa decisión era correcta y cierra
+el candidato. Detalle completo del experimento en
+`docs/historico/sesiones/44-reporte.md`.
 
 ## DT1 — Partición de `tools/pcb.py` — ABIERTA
 

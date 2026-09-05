@@ -393,6 +393,48 @@ async def test_move_footprint_rejects_out_of_bounds(
 
 
 @pytest.mark.unit
+async def test_move_footprint_rejects_external_disk_edit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Sesión 45 (BACKLOG P3, hallazgo auditoría 34a): ``move_footprint`` era
+    la única tool W-IPC de PCB sin ``check_no_external_disk_edit`` (P3.2) —
+    mutaba el vivo aunque el ``.kicad_pcb`` hubiera sido editado fuera del
+    agente entre el snapshot registrado y esta llamada. Asimetría sin motivo
+    de dominio (ADR-0014), no un caso deliberado como los de Familia B/C.
+    Mismo patrón offline que ``test_draw_board_outline_rejects_external_disk_edit``
+    (asimetría A7, sesión 34a)."""
+    from kicad_mcp.snapshots import collect_project_mtimes, get_default_store
+    from kicad_mcp.toon.schema import NormalizedState
+
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    pcb = project / "proj.kicad_pcb"
+    sch = project / "proj.kicad_sch"
+    get_default_store().register(
+        NormalizedState(kind="pcb", snap=0, components=()), collect_project_mtimes(sch)
+    )
+    # Edición externa silenciosa del .kicad_pcb — nadie de este proceso la registró.
+    st = pcb.stat()
+    os.utime(pcb, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
+
+    bridge = _FakeBridge(
+        refs=["U1"],
+        nets=["GND"],
+        bbox=BBoxMm(Mm(0), Mm(0), Mm(100), Mm(100)),
+    )
+    mcp = _make_server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "move_footprint", {"ref": "U1", "x_mm": 50.0, "y_mm": 50.0}
+        )
+    assert result.isError
+    text = _text(result)
+    assert "EXTERNAL_EDIT_DETECTED" in text
+    assert bridge.moves == []  # el guard bloqueó ANTES de tocar IPC
+
+
+@pytest.mark.unit
 async def test_add_track_reports_net_not_found_with_similars(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

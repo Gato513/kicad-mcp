@@ -139,12 +139,12 @@ comparten `_delete_copper`): `move_footprint`, `set_footprint_ref`,
 
 | Tool | Flag | Motivo |
 |---|---|---|
-| `move_footprint` | `disk_check=False` | Única W-IPC de PCB que hoy NO llama `check_no_external_disk_edit` (SÍ llama `_guard_live_stale`). Asimetría preexistente, documentada en `snapshots/validation.py:57-70`. El flag la vuelve explícita en el sitio de registro — el objetivo declarado de DT2 — en vez de "ausencia silenciosa" como hasta ahora. |
+| ~~`move_footprint`~~ | ~~`disk_check=False`~~ | **Cerrado sesión 45** (candidato P3 del BACKLOG, hallazgo auditoría 34a): era la única W-IPC de PCB que no llamaba `check_no_external_disk_edit` (sí llamaba `_guard_live_stale`), sin motivo de dominio que lo justificara — sólo un hueco de scoping original de P3.2 (sesión 18). El flag se quitó; `move_footprint` es ahora Familia A pura, igual que `add_zone`/`add_keepout_zone`/`fill_zones`/`delete_zone`. Ver `snapshots/validation.py:57-70` y `docs/historico/sesiones/45-reporte.md`. |
 | `delete_track`, `delete_via` | `base_snap_check=False` | En `_delete_copper` (núcleo compartido) la validación `INVALID_PARAMS` de id-vs-coords corre ANTES de `_check_base_snap`. Hoistear el check al decorador externo cambiaría, para una llamada que mezcla `id` con `net`/coordenadas y además pasa un `base_snap` vencido, el código de error emitido de `INVALID_PARAMS` a `SNAPSHOT_STALE` — cambio de F3, prohibido sin ADR aparte. `_check_base_snap` se queda dentro de `_delete_copper`, después de la validación de forma. |
 
-En `add_zone`/`add_keepout_zone`/`fill_zones`/`delete_zone` el orden
-relativo entre las tres guardas y el resto del cuerpo se preserva sin
-flags — son Familia A pura.
+En `add_zone`/`add_keepout_zone`/`fill_zones`/`delete_zone` (y, desde
+sesión 45, `move_footprint`) el orden relativo entre las tres guardas y el
+resto del cuerpo se preserva sin flags — son Familia A pura.
 
 ### Latencia y logging — sin cambio observable
 

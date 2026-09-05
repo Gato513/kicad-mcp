@@ -667,7 +667,7 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
         name="move_footprint",
         description="Mueve un footprint del PCB a (x_mm, y_mm)",
     )
-    @mutating_tool("move_footprint", disk_check=False)  # asimetría real, ver ADR-0014
+    @mutating_tool("move_footprint")  # asimetría con disk_check cerrada sesión 45, ver ADR-0014
     def move_footprint(ref: str, x_mm: float, y_mm: float, base_snap: int | None = None) -> str:
         with tool_call_timer() as timer:
             root = _project_root()

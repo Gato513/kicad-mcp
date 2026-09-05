@@ -1231,15 +1231,10 @@ Nice-to-have, para después de convergencia de Fase 3 (Fase 4).
 - Contador agregado de `post_fallback` en `health()` para monitoreo pasivo de
   la derivación local (propuesto en `historico/analisis/ANALISIS-ESTADO-Y-BACKLOG.md`
   §C3, nunca implementado, 0 fallbacks observados hasta ahora).
-- **P3 — `move_footprint` sin `check_no_external_disk_edit()`** (hallazgo
-  auditoría 34a): a diferencia de `add_track`/`add_via`/`set_footprint_ref`/
-  `delete_tracks_bulk`, `move_footprint` sólo llama `_guard_live_stale()`
-  (D-14.1), no la red P3.2 independiente de `base_snap`. Inconsistencia
-  menor — `_guard_live_stale()` sigue cubriendo el caso principal (ruteo
-  pendiente de recarga). Candidato trivial (misma familia que A7, fix
-  sesión 34a) para una futura pasada de limpieza de consistencia; no
-  amerita sesión propia. Ver `docs/analisis/auditoria-contratos-bridge.md`
-  §3 (ficha `move_footprint`).
+- ~~**P3 — `move_footprint` sin `check_no_external_disk_edit()`**~~ — ✅
+  CERRADO sesión 45 (quitado `disk_check=False` de `@mutating_tool`, sin
+  motivo de dominio que lo justificara). Detalle:
+  `docs/historico/sesiones/45-reporte.md`.
 - **P2 — `delete_zone`/`add_keepout_zone` no recalculan fills vecinos**
   (hallazgos A2/A3, auditoría 34a, nuevos — sin precedente previo en
   BACKLOG): ninguna de las dos corre `refill_zones()` tras mutar geometría

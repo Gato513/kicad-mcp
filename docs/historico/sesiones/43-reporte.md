@@ -276,11 +276,61 @@ contrato ya documentado (`tool-catalog.md:437`) sin cambiar ninguna
 superficie externa observable — "aclaración de comportamiento" (DoD #4).
 `tool-catalog.md` no requiere actualización.
 
+## Proceso: fixture de 4 capas para el test GUI diferido
+
+El pendiente original de esta sesión era "ejecutar el test contra un
+proyecto KiCad real de 4+ capas — requiere preparar ese proyecto de
+referencia, ausente hoy del protocolo GUI". Esa premisa era **falsa**:
+`tests/fixtures/004_real/video.kicad_pcb` —el proyecto de referencia que el
+protocolo GUI ya usa— es de 4 capas con 808 vías pasantes. El bloqueo real,
+descubierto al investigar antes de crear nada: `get_tracks` no trunca
+(`src/kicad_mcp/tools/pcb.py:1551-1559`, lanza `CONTEXT_BUDGET_IMPOSSIBLE`
+si el listado excede el presupuesto), así que contra `004_real` el test
+fallaría con error en vez de saltarse — un board multicapa real, pero
+inútil para este caso puntual.
+
+Se creó `tests/fixtures/007_pcb_multicapa/` — PCB sintética mínima escrita a
+mano (formato KiCad 10, `version 20260206`/`generator_version "10.0"`,
+verificado contra el `kicad-cli` 10.0.5 instalado y contra los fixtures
+`005_pcb_limpio`/`006_pcb_refs_duplicados` ya commiteados en ese mismo
+formato): 4 capas de cobre (F.Cu/In1.Cu/In2.Cu/B.Cu), una vía pasante
+F.Cu-B.Cu sobre el net GND, un segmento en F.Cu (debe quedar excluido por el
+filtro `layer="In1.Cu"`) y uno en In1.Cu (debe quedar incluido), conectados
+a través de la vía. 128 líneas, 4KB — sin footprints, sin `.kicad_sch`
+(el camino IPC del PCB Editor no lo necesita, confirmado por precedente de
+`005`/`006`), sin `.kicad_prl` (estado local de UI, KiCad lo genera solo).
+`.kicad_pro` basado en la plantilla en blanco de KiCad
+(`/usr/share/kicad/template/kicad.kicad_pro`).
+
+Validado en dos capas independientes antes de commitear:
+1. `kicad-cli pcb drc --severity-all`: 0 errores, 0 unconnected items (sólo
+   2 warnings `track_dangling` en los extremos abiertos de los stubs, sin
+   pad — esperado).
+2. Cargado con el módulo `pcbnew` de KiCad 10 (mismo motor que abre el
+   archivo real): `GetCopperLayerCount()==4`, capas habilitadas
+   `[F.Cu, B.Cu, In1.Cu, In2.Cu]`, vía `F.Cu→B.Cu` en net `GND` — la
+   estructura exacta que el test necesita.
+
+`tests/test_pcb_session43_multilayer_via_span_gui.py` ganó un preflight
+(`_preflight_same_board_open`, mismo patrón que
+`test_pcb_session27_zone_persist_gui.py:90-101`): compara el board
+realmente abierto en KiCad contra `KICAD_MCP_PROJECT` y hace `skip`
+accionable si difieren — necesario porque ahora hay dos proyectos GUI
+multicapa en juego (`004_real` de la suite general, `007_pcb_multicapa`
+de este test) y correr contra el equivocado antes daba un error confuso de
+presupuesto en vez de un skip claro. El docstring del módulo y los mensajes
+de skip se corrigieron para no repetir la premisa falsa. Protocolo de
+apertura documentado en `docs/guias/pruebas-gui.md` §Fixture
+`007_pcb_multicapa`, en paralelo a la sección de `despertador-routed`.
+
+**El test sigue pendiente de ejecución humana** — este trabajo lo hizo
+ejecutable (antes era imposible de correr sin fallar), no lo declaró verde.
+
 ## Pendiente para una sesión futura
 
-- Ejecutar `tests/test_pcb_session43_multilayer_via_span_gui.py` contra un
-  proyecto KiCad real de 4+ capas de cobre con al menos una vía — requiere
-  preparar ese proyecto de referencia, ausente hoy del protocolo GUI.
+- Ejecutar `tests/test_pcb_session43_multilayer_via_span_gui.py` contra
+  `tests/fixtures/007_pcb_multicapa/` siguiendo el protocolo de
+  `docs/guias/pruebas-gui.md` — requiere un humano con KiCad abierto.
 - El BACKLOG de sesión 42 anotaba además un candidato de campo separado
   (`kiid` sin sanitizar en los encoders ad hoc, `P1-2`) — no tocado en esta
   sesión, sigue abierto sin sesión asignada.

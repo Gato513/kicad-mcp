@@ -10,31 +10,37 @@ pasantes que físicamente atraviesan esa capa, incumpliendo el contrato de
 de su span"). El fix resuelve el span real contra el stackup habilitado del
 board (``IpcBridge._via_span_layer_names``, ``bridge/ipc.py``).
 
-**Verificación PENDIENTE de ejecución humana.** El protocolo GUI de este
-proyecto (``docs/guias/pruebas-gui.md``) no tiene, hoy, ningún proyecto de
-referencia con capas internas habilitadas — todos los fixtures/proyectos de
-la Validation Suite usados hasta sesión 42 son de 2 capas, donde este fix es
-un no-op por construcción (ver "Costo y compatibilidad" en el reporte de
-sesión 43). Este test se escribe con guard de skip explícito por esa razón
-(precedente: sesión 32d, ``test_pcb_session32d_stitching_gui_slow.py``,
-"verificación end-to-end escrita pero pendiente de ejecución humana") — NO
-se declara verde sin haber corrido contra un proyecto real de 4+ capas de
-cobre con al menos una via.
+**Verificación PENDIENTE de ejecución humana.** Requiere un proyecto de 4+
+capas de cobre abierto en el PCB Editor — ``tests/fixtures/007_pcb_multicapa``
+(sesión 43-fixture) es el fixture preparado para esto: chico y determinístico
+(una vía pasante + 2 segmentos), a diferencia de ``004_real`` (también 4
+capas, pero 808 vías — ``get_tracks`` no trunca, así que ese board excede el
+presupuesto de tokens y el test fallaría en vez de saltarse). Ver
+``docs/guias/pruebas-gui.md``. Este test se escribe con guard de skip
+explícito (precedente: sesión 32d,
+``test_pcb_session32d_stitching_gui_slow.py``, "verificación end-to-end
+escrita pero pendiente de ejecución humana") — NO se declara verde sin haber
+corrido contra ese proyecto.
 
 Es de SOLO LECTURA (``get_tracks``, sin mutación) — no requiere una copia
-descartable del fixture, pero sí requiere que ``KICAD_MCP_PROJECT`` apunte a
-un proyecto multicapa ya abierto en el PCB Editor (ver ``docs/pruebas-gui.md``).
+descartable del fixture, pero sí requiere que ``KICAD_MCP_PROJECT`` apunte al
+proyecto multicapa ya abierto en el PCB Editor (ver
+``docs/guias/pruebas-gui.md``); un preflight verifica que el board abierto
+coincida con ese proyecto, para no confundirse con el board de la suite
+``integration_gui`` general (``004_real``).
 """
 
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult, TextContent
 
 from kicad_mcp.bridge.ipc import IpcBridge
+from kicad_mcp.tools.world import _resolve_root_pcb
 
 _MIN_COPPER_LAYERS_FOR_INTERNAL_CASE = 4
 
@@ -44,6 +50,28 @@ def _guard() -> None:
         pytest.skip("KICAD_MCP_GUI_TEST != 1; ver docs/pruebas-gui.md")
     if not os.environ.get("KICAD_MCP_PROJECT"):
         pytest.skip("KICAD_MCP_PROJECT no definida; apuntar al proyecto abierto")
+
+
+def _preflight_same_board_open(pcb_path: Path) -> IpcBridge:
+    """Mismo patrón que ``test_pcb_session27_zone_persist_gui.py``: evita que
+    este test corra en silencio contra el board equivocado si hay más de un
+    proyecto GUI en juego (p. ej. ``004_real`` de la suite ``integration_gui``
+    general vs. este fixture chico) — sin esto, un ``get_tracks`` contra un
+    board grande falla con ``CONTEXT_BUDGET_IMPOSSIBLE`` en vez de un skip
+    accionable.
+    """
+    bridge = IpcBridge()
+    board = bridge.get_open_board()
+    if board is None:
+        pytest.skip("no hay PCB Editor abierto en KiCad")
+    open_path = bridge.get_open_board_path(board)
+    if open_path is None or open_path.resolve() != pcb_path.resolve():
+        pytest.skip(
+            f"KICAD_MCP_PROJECT ({pcb_path}) no coincide con el board abierto "
+            f"en KiCad ({open_path}) — abrí ESE proyecto en KiCad antes de "
+            "correr este test."
+        )
+    return bridge
 
 
 def _text(result: CallToolResult) -> str:
@@ -104,10 +132,10 @@ async def test_get_tracks_layer_filter_includes_through_via_on_internal_layer() 
     ``_copper_on_layer`` no reconocía antes del fix de sesión 43.
     """
     _guard()
-    bridge = IpcBridge()
+    pcb_path = _resolve_root_pcb()
+    bridge = _preflight_same_board_open(pcb_path)
     board = bridge.get_open_board()
-    if board is None:
-        pytest.skip("no hay board abierto en KiCad")
+    assert board is not None  # _preflight_same_board_open ya lo garantizó
 
     raw = board.raw
     internal_layer = _internal_copper_layer(raw)

@@ -314,3 +314,42 @@ verdad — no trivialmente como contra un board vacío.
 
 Al terminar: cerrar KiCad y borrar `/tmp/despertador-routed-test` — el
 fixture original queda intacto (nunca se muta in-place).
+
+## Fixture `007_pcb_multicapa` (sesión 43)
+
+`tests/fixtures/007_pcb_multicapa/` es una PCB sintética mínima escrita a
+mano: 4 capas de cobre (F.Cu, In1.Cu, In2.Cu, B.Cu), una vía pasante
+F.Cu-B.Cu sobre el net GND y dos segmentos cortos (uno en F.Cu, uno en
+In1.Cu). Existe para `test_pcb_session43_multilayer_via_span_gui.py`
+(fix `_copper_on_layer`: una vía pasante debe contar como presente en las
+capas internas que atraviesa) — **no usar `004_real`** para este test aunque
+también sea de 4 capas: tiene 808 vías, y `get_tracks` no trunca (lanza
+`CONTEXT_BUDGET_IMPOSSIBLE` en vez de devolver un listado parcial). Ver
+`tests/fixtures/007_pcb_multicapa/SOURCE.md`.
+
+**Protocolo (mismo patrón genérico de §Protocolo arriba, con este fixture en
+vez de `004_real` — y en una sesión de KiCad separada, ya que un solo KiCad
+tiene un solo board abierto por vez):**
+
+```bash
+cp -r tests/fixtures/007_pcb_multicapa /tmp/multicapa-test
+```
+
+Abrir `/tmp/multicapa-test/multicapa.kicad_pro` en KiCad (PCB Editor,
+recordar abrir también la PCB desde el project manager). En terminal:
+
+```bash
+export KICAD_MCP_GUI_TEST=1
+export KICAD_MCP_PROJECT=/tmp/multicapa-test
+export KICAD_API_SOCKET="ipc:///tmp/kicad/api.sock"   # si hace falta
+uv run pytest -m integration_gui tests/test_pcb_session43_multilayer_via_span_gui.py -v
+```
+
+El test tiene preflight (`_preflight_same_board_open`, mismo patrón que
+`test_pcb_session27_zone_persist_gui.py`): si `KICAD_MCP_PROJECT` no
+coincide con el board realmente abierto en KiCad, hace `skip` con mensaje
+accionable en vez de fallar con `CONTEXT_BUDGET_IMPOSSIBLE` contra otro
+proyecto.
+
+Al terminar: cerrar KiCad y borrar `/tmp/multicapa-test` — el fixture
+original queda intacto.

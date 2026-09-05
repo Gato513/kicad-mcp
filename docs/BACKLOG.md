@@ -785,8 +785,30 @@ hallazgo antes de aplicar nada:**
 
 Tras estos recortes: suite offline **467 passed** (-1 test eliminado, sin
 reemplazo, por ser el único que cubría la rama defensiva quitada). Goldens
-sin tocar y verdes. `ruff`/`mypy` limpios. Detalle completo:
-`docs/historico/sesiones/43-reporte.md`.
+sin tocar y verdes. `ruff`/`mypy` limpios.
+
+**Fixture `007_pcb_multicapa` preparado — corrección de una premisa falsa.**
+Esta misma entrada afirmaba que "el protocolo GUI de este proyecto no tiene
+hoy ningún proyecto de referencia con capas internas habilitadas". **Es
+falso:** `tests/fixtures/004_real/video.kicad_pcb` —el proyecto de
+referencia que el protocolo GUI ya usa— es de 4 capas de cobre con 808 vías
+pasantes; `validation-suite/level-c/hackrf-one/` también. El bloqueo real
+era otro: `get_tracks` no trunca (`src/kicad_mcp/tools/pcb.py:1551-1559`,
+`CONTEXT_BUDGET_IMPOSSIBLE`), así que contra un board con 808 vías el test
+fallaría con error en vez de saltarse. Se creó
+`tests/fixtures/007_pcb_multicapa/` (PCB sintética mínima escrita a mano:
+4 capas, 1 vía pasante F.Cu-B.Cu, 2 segmentos — 128 líneas, 4KB, contra los
+159822/5,5MB de `004_real`), validada con `kicad-cli pcb drc` (0 errores,
+0 unconnected items) y cargada con el módulo `pcbnew` de KiCad 10
+(`GetCopperLayerCount()==4`, capas y vía correctas). El test
+(`tests/test_pcb_session43_multilayer_via_span_gui.py`) ganó un preflight
+(`_preflight_same_board_open`, mismo patrón que
+`test_pcb_session27_zone_persist_gui.py`) para hacer `skip` accionable si el
+board abierto no coincide con `KICAD_MCP_PROJECT`, en vez de fallar
+confuso contra el board equivocado. Protocolo documentado en
+`docs/guias/pruebas-gui.md` §Fixture `007_pcb_multicapa`. El test **sigue
+pendiente de ejecución humana** — sólo se automatizó que sea ejecutable,
+no se declaró verde.
 
 **Estado de DT1 tras Slice 2:** ambos slices mecánicos identificados hasta
 ahora (encoders, geometría) están cerrados. Lo que resta en `tools/pcb.py`

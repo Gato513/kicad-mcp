@@ -125,6 +125,30 @@ Reglas obligatorias:
 El detalle operativo vive en
 `docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md`.
 
+### Recordatorio de auditoría (obligación del Escritor)
+
+La regla 4 no corre sola: Claude Code debe recordarle a Gato correr la
+auditoría de Codex (revisión simple, flujo v2 §5) antes de dar un ciclo por
+cerrado, si la unidad lo amerita y todavía no pasó por esa revisión. No la
+corre unilateralmente sin avisar — la recuerda y Gato decide, salvo que ya
+esté establecido que corre por defecto.
+
+Corresponde recordarla siempre que:
+
+| # | Disparador |
+|---|---|
+| 1 | Cualquier cambio a `src/` (código de producción), sin importar el tamaño. |
+| 2 | Un test nuevo o modificado con lógica real (no un rename, no un ajuste de import). |
+| 3 | Un documento nuevo que se vuelve contenido normativo, o un cambio sustantivo (no editorial) a uno ya existente (`docs/proceso/`, `docs/adr/`, `AGENTS.md`, `CLAUDE.md`). |
+| 4 | Cierre de un ítem `P0`/`P1`/`P2` de `docs/BACKLOG.md` con un fix real de código. |
+| 5 | Cambios a `docs/specs/tool-catalog.md`, códigos de error, o cualquier superficie que F3 protege. |
+| 6 | Un plan de riesgo `R2` (§8) a punto de aprobarse, ANTES de implementar — no sólo auditar el resultado. Cuando ChatGPT (Auditor previo) no está disponible en el ciclo, esto reasigna a Codex la auditoría previa de la regla 1 para esa unidad concreta, declarándolo expresamente (reasignación permitida por §2); sigue contando como la única auditoría previa que la regla 1 permite, no una adicional. |
+
+No corresponde (alcanza con muestreo, flujo v2 §8): exploración read-only,
+reportes de sesión, cierres de una línea en el BACKLOG, typos, o una unidad
+que ya recibió la revisión posterior de Codex (§6 regla 4) sin cambios
+posteriores.
+
 ## 7. Ramas preautorizadas
 
 Si hay incertidumbre técnica, Claude puede autorizar en una misma propuesta:

@@ -236,6 +236,8 @@ cada ciclo; no se institucionalizan en este archivo.
 
 - Flujo operativo: `docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md`.
 - Revisión doble opcional (excepción §13 del flujo): `docs/proceso/JUICIO-CRUZADO-CODEX-v1.md`.
+- Triage de hallazgos y criterio de fix: `docs/proceso/TRIAGE-SISTEMICO-DE-HALLAZGOS-v1.md`.
+- Delegación a subagentes (disciplina del Escritor, no rol nuevo): `docs/proceso/DELEGACION-A-SUBAGENTES-v1.md`.
 - Fronteras F1–F5: `docs/adr/0000-fronteras-inviolables.md`.
 - Gates G1–G5: `docs/adr/0003-gates-de-autonomia.md`.
 - Ejecutor Claude Code: `CLAUDE.md`.

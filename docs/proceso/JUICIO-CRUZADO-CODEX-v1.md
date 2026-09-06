@@ -46,12 +46,17 @@ de Codex y eso es lo correcto, no una carencia.
 
 ## 3. Roles durante el juicio
 
-| Rol | Agente | Qué puede |
-|---|---|---|
-| Autoridad | Gato | Activa, fija presupuesto, resuelve contradicción y `BLOQUEAR`. |
-| Juez A | `mcp__codex__codex`, modelo M1 | Emite un veredicto sobre la unidad congelada. |
-| Juez B | `mcp__codex__codex`, modelo M2 | Íd., sin ver nada del Juez A. |
-| Orquestador | Claude Code | Congela, lanza, transcribe, empareja hallazgos y verifica. |
+| Rol de este documento | Rol de `AGENTS.md` §2 | Agente | Qué puede |
+|---|---|---|---|
+| Autoridad | Autoridad | Gato | Activa, fija presupuesto, resuelve contradicción y `BLOQUEAR`. |
+| Juez A | Revisor independiente (instancia 1) | `mcp__codex__codex`, modelo M1 | Emite un veredicto sobre la unidad congelada. |
+| Juez B | Revisor independiente (instancia 2) | `mcp__codex__codex`, modelo M2 | Íd., sin ver nada del Juez A. |
+| Orquestador | Escritor | Claude Code | Congela, lanza, transcribe, empareja hallazgos y verifica. |
+
+"Juez A/B" y "Orquestador" son nombres de función dentro de ESTE protocolo,
+no roles nuevos: la columna derecha es el mapeo obligatorio a los roles ya
+existentes de `AGENTS.md` §2. Ningún rol de `AGENTS.md` se duplica ni se
+reemplaza — el Revisor independiente simplemente corre dos veces.
 
 Claude Code **no es un tercer juez**. Produjo la unidad, así que por
 `AGENTS.md` §4 no puede emitir su aprobación independiente. Su reconciliación
@@ -251,9 +256,9 @@ ni ningún estado importado.
 
 Máxima severidad, y no "acuerdo necesario para actuar", es deliberado: si un
 solo juez ve un `MAJOR` y el veredicto compuesto fuera `APROBAR`, el juicio
-doble sería más permisivo que la revisión simple del §5, donde ese mismo
-`MAJOR` habría disparado la reparación única. Un control adicional no puede
-debilitar el control que reemplaza.
+doble sería más permisivo que la revisión ordinaria de un solo Codex (flujo
+v2 §§5-7), donde ese mismo `MAJOR` habría disparado la reparación única
+(§7). Un control adicional no puede debilitar el control que reemplaza.
 
 Escalan a Gato, además de todo `BLOQUEAR`:
 
@@ -348,10 +353,13 @@ Si las salidas literales son largas, van a `docs/historico/auditorias/` como
 artefacto propio y el reporte de sesión las referencia por ruta. No se
 reempaquetan (`AGENTS.md` §13).
 
-`docs/BACKLOG.md` **no** registra corridas. Recibe únicamente lo que sobrevive
-al cierre y sigue siendo trabajo pendiente: una `SOSPECHA` no decidida, un
-`MINOR` que aporta valor, una deuda declarada — con su origen y la sesión. Es
-la regla de mantenimiento que el propio BACKLOG fija.
+`docs/BACKLOG.md` **no** registra corridas. `SOSPECHA`/`CONFIRMADO`/
+`VERIFICADO`/`REFUTADO` son vocabulario de ESTE documento, no de
+`docs/BACKLOG.md`. Lo único que se traslada ahí, si sobrevive al cierre y
+sigue siendo trabajo pendiente (una sospecha no decidida, un `MINOR` que
+aporta valor, una deuda declarada), se agrega con el formato que la regla
+de mantenimiento real de `docs/BACKLOG.md` exige: origen y sesión, como una
+entrada nueva — no como una corrida de juicio cruzado.
 
 ## 15. Prohibiciones
 
@@ -379,7 +387,7 @@ ROL / PRODUCTOR: Claude Code (orquestador del juicio cruzado)
 BASE + UNIDAD EXACTA:
 RESULTADO:
 EVIDENCIA / TESTS:
-HALLAZGOS + VEREDICTO: veredicto compuesto + CONFIRMADO/SOSPECHA/REFUTADO
+HALLAZGOS + VEREDICTO: veredicto compuesto + reconciliación (CONFIRMADO/SOSPECHA/CONTRADICCIÓN, §8) + verificación (VERIFICADO/REFUTADO/NO_DECIDIBLE, §9)
 PENDIENTE + DESTINATARIO SIGUIENTE:
 ```
 

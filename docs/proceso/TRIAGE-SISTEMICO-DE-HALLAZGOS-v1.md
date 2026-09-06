@@ -52,18 +52,26 @@ Se clasifica por **causa raíz**, no por síntoma.
 | `CAPACIDAD_FALTANTE` | No es un defecto: es una función que nunca existió. | No entra por la puerta de "bug". Va a `docs/BACKLOG.md` con su prioridad; nunca a la reparación acotada de un `MAJOR` (`AGENTS.md` §9). |
 | `SIN_CLASIFICAR` | Todavía no hay evidencia para clasificar. | Estado válido y temporal. Se registra como tal; no se fuerza una clase para poder avanzar. |
 
-Criterio de identidad para `CLUSTER` y `DUPLICADO`: rige el mismo del §8 de
-`JUICIO-CRUZADO-CODEX-v1.md`. Dos hallazgos son el mismo sólo si coinciden en
-ubicación **y** en mecanismo. La redacción distinta no importa; el mecanismo
-distinto sí.
+Criterio de identidad, distinto para cada clase — no es el mismo criterio
+para las dos:
+
+- **`DUPLICADO`** (es el MISMO hallazgo, ya registrado): rige el criterio del
+  §8 de `JUICIO-CRUZADO-CODEX-v1.md` sin cambios — misma ubicación **y**
+  mismo mecanismo. Ahí las dos condiciones son correctas porque se está
+  preguntando si dos reportes describen un único defecto.
+- **`CLUSTER`** (son VARIOS hallazgos con una causa común): exige mecanismo de
+  causa raíz verificado en común; la ubicación puede diferir. Exigir también
+  "misma ubicación" haría imposible por definición el caso que este clúster
+  existe para nombrar — ver el ejemplo siguiente.
 
 Un clúster propuesto antes de aislar la causa es una hipótesis de clúster, y
 se trata como tal (§4). Precedente calibrado: F-D5-01 / F-V1c-01 /
-F-V2-VIA-HUERFANA se agruparon por "síndrome de fondo" cuando la propia
-entrada del BACKLOG anotaba que la instancia 3 era a nivel de pad y la
-instancia 2 a nivel de vía. La agrupación quedó confirmada recién en la
-sesión 32c, cuando la investigación aisló un mecanismo común
-(D-32c.2) — no antes.
+F-V2-VIA-HUERFANA se agruparon pese a estar en **ubicaciones distintas** —la
+propia entrada del BACKLOG anotaba que la instancia 3 era a nivel de pad y la
+instancia 2 a nivel de vía— porque compartían mecanismo de causa raíz. La
+agrupación quedó confirmada recién en la sesión 32c, cuando la investigación
+aisló ese mecanismo común (D-32c.2) — no antes, y no por coincidir en
+ubicación.
 
 Contraste explícito: N hallazgos con el mismo síntoma y mecanismos distintos
 son N hallazgos `AISLADO`, no un clúster.
@@ -202,20 +210,26 @@ con el conteo antes y después.
 
 ## 9. Efecto sobre `docs/BACKLOG.md`
 
-`docs/BACKLOG.md` ya tiene su propia regla de mantenimiento y su propio
-trigger de promoción por repetición. Este documento no los cambia; los precisa
-en tres puntos.
+`docs/BACKLOG.md` tiene una regla de mantenimiento general (cómo cerrar un
+ítem, cómo abrir uno nuevo desde una fricción — con origen y sesión) y, por
+separado, un precedente de promoción por repetición aplicado una vez
+(F-D5-01: un criterio numérico — "3ª instancia en régimen distinto"—
+definido ad hoc para esa investigación puntual, no una política general
+declarada para cualquier ítem del BACKLOG). Este documento no inventa un
+mecanismo nuevo: generaliza ese precedente en un criterio aplicable a
+cualquier hallazgo, y precisa la regla de mantenimiento en tres puntos.
 
-| Ya vigente en el BACKLOG | Precisión que agrega este criterio |
+| Ya vigente en el BACKLOG | Qué agrega/generaliza este criterio |
 |---|---|
-| Un candidato repetido se promueve con evidencia; el trigger se declara al abrir el ítem. | La instancia N+1 sólo cuenta si comparte **causa raíz** (§3), no sólo síntoma. Si el mecanismo difiere y todavía no hay causa común aislada, se anota como hipótesis de clúster, no como instancia cumplida. |
-| Un candidato refutado se cierra con evidencia, sin fix. | El cierre declara qué evidencia lo reabriría — es la línea "sin trigger de reapertura" que ya usan F-D5-01 y F-D6-01. |
-| Al cerrar un ítem se lo mueve a una nota de una línea en el reporte de la sesión que lo cerró. | Sin cambios. Un `CLUSTER` cerrado es **una** nota, no N. |
+| Precedente F-D5-01: un candidato repetido puede promoverse con evidencia, con un criterio numérico definido para esa investigación. | Generaliza: la instancia N+1 sólo cuenta si comparte **causa raíz** (§3), no sólo síntoma — con cualquier hallazgo, no sólo con el patrón de F-D5-01. Si el mecanismo difiere y todavía no hay causa común aislada, se anota como hipótesis de clúster, no como instancia cumplida. |
+| Un candidato refutado se cierra con evidencia, sin fix (precedente F-D5-01/F-D6-01). | Generaliza: el cierre declara qué evidencia lo reabriría, para cualquier hallazgo refutado, no sólo esos dos. |
+| Regla de mantenimiento real: al cerrar un ítem se lo mueve a una nota de una línea en el reporte de la sesión que lo cerró. | Sin cambios — es la regla ya vigente. Un `CLUSTER` cerrado es **una** nota, no N. |
 
-El mismo trigger explícito de F-D5-01 sirvió en las dos direcciones: cerró el
+El mismo criterio de F-D5-01 sirvió en las dos direcciones: cerró el
 ítem en sesión 29 al quedar en 1/3, y sostuvo la promoción a P1 investigación
-cuando se confirmó la 3ª instancia. Ese es el comportamiento buscado; no hace
-falta inventar un mecanismo nuevo.
+cuando se confirmó la 3ª instancia. Ese es el comportamiento que este
+documento generaliza — no hace falta inventar un mecanismo nuevo, sólo
+declararlo aplicable más allá del caso que lo originó.
 
 Un `CAPACIDAD_FALTANTE` entra al BACKLOG con prioridad propia y nunca por la
 vía de la reparación acotada de un `MAJOR`.

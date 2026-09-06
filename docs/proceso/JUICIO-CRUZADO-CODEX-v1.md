@@ -44,6 +44,20 @@ No se activa por iniciativa del Escritor, por `R0`, por `R1` ordinario, ni
 (`AGENTS.md` §8, flujo v2 §8): un `R1` ordinario se revisa con una sola pasada
 de Codex y eso es lo correcto, no una carencia.
 
+### Señalamiento proactivo (obligación del Escritor)
+
+No activarlo por iniciativa propia no exime de avisar. Cuando Claude Code
+identifica, durante el trabajo normal, una unidad que cumple el criterio de
+riesgo de la tabla de arriba (`R2`, o `R1` de riesgo alto según la
+definición de este documento), debe señalarlo a Gato en el momento en que
+lo detecta — con la razón concreta, no genérica ("toca F1-F5 porque X",
+"borra Y de forma irreversible", no "podría ser riesgoso") — y sugerir la
+activación del juicio cruzado **sólo si a su criterio está genuinamente
+justificado**, no como oferta reflexiva ante cualquier cambio de riesgo
+`R1` ordinario. La decisión de activar sigue siendo de Gato (§2, condición
+de pedido); esto sólo obliga a ofrecerle la información y la sugerencia a
+tiempo para decidir.
+
 ## 3. Roles durante el juicio
 
 | Rol de este documento | Rol de `AGENTS.md` §2 | Agente | Qué puede |

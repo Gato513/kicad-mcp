@@ -610,7 +610,7 @@ sin sanitizarlo; esta sesión confirma que esa decisión era correcta y cierra
 el candidato. Detalle completo del experimento en
 `docs/historico/sesiones/44-reporte.md`.
 
-## DT1 — Partición de `tools/pcb.py` — ABIERTA
+## DT1 — Partición de `tools/pcb.py` — ✅ CERRADA sesión 48 (estado actual), reapertura condicional
 
 La caracterización de sesión 40 (`docs/analisis/40-dt1-caracterizacion.md`)
 autorizó un primer slice mecánico y reversible. **DT1 Slice 1 — encoders ad
@@ -857,6 +857,31 @@ ver arriba) y los 8 clusters institucionales de zonas/stitching (excluidos
 por F-DT.1, arrastran ADR-0012/D-23.2). Retomar DT1 más allá de este punto
 requiere decisión humana explícita sobre si levantar la exclusión de
 F-DT.1 o cerrar DT1 con el estado actual.
+
+**Decisión (sesión 48): DT1 CERRADA con el estado actual (Slice 1 + Slice
+2, ~500 LOC extraídas de forma mecánica y reversible). No se levanta
+F-DT.1.**
+
+Motivo: los 8 clusters institucionales que F-DT.1 protege cargan
+directamente el contrato ADR-0012/D-23.2 (persistencia disco==memoria==
+`err_post` de `route_board`/`fill_zones`/`add_zone`), y `route_board` en
+particular ya tiene veto vigente desde sesión 40 (I-4) por fragilidad de
+mocks (4 tests parchean `run_drc`/`run_autoroute` como atributos del
+módulo — moverlo los rompe en silencio, verde falso). Además, ahora mismo
+hay un P0 abierto y no resuelto en exactamente esa superficie
+(`F-V3-ZONE-FILL-CRASH`, ver P0 arriba — causa raíz aún no encontrada).
+Refactorizar código bajo investigación activa de un crash reproducible en
+el contrato de persistencia más crítico del proyecto viola el mismo
+criterio de bajo-riesgo/reversibilidad que ya limitó los slices ejecutados
+a geometría pura y encoders sin acoplamiento a `bridge`. `hoja-de-ruta-v5.md`
+tampoco habilita preparación de release (y con ella, limpieza estructural)
+hasta cerrar las 3 validaciones de la Validation Suite — abrir este frente
+ahora está mal secuenciado.
+
+**Condición de reapertura explícita:** revisar F-DT.1 sólo después de que
+`F-V3-ZONE-FILL-CRASH` (P0) tenga causa raíz y esté cerrado. Aun entonces,
+tratar el levantamiento de F-DT.1 como decisión de ADR explícita —no como
+slice mecánico— dado el acoplamiento a D-23.2.
 
 ## DT3 — Geometría de dominio dentro de `bridge/` — ABIERTA
 

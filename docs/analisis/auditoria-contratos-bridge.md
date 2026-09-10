@@ -649,6 +649,22 @@ resuelto para su propio dominio.
 
 ## §4 — F-V3-ZONE-FILL-CRASH: clasificación acotada
 
+> **Parcialmente superada por sesión 48** (`docs/BACKLOG.md`, entrada
+> F-V3-ZONE-FILL-CRASH): la hipótesis específica de "limpieza de keepouts
+> stale" que esta sección nunca llegó a evaluar quedó refutada con
+> evidencia dura (comparación de UUID entre pasadas de los backups de
+> sesión 33, no sólo conteos) — no es basura acumulada, es recómputo
+> legítimo. Sesión 48 también confirmó, por separado, que el timeout IPC
+> de 2000ms es insuficiente para el trabajo legítimo de `refill_zones()`/
+> `create_items` bajo carga real (medido en vivo). **Lo que NO quedó
+> confirmado:** que ese timeout sea la causa que efectivamente produjo los
+> crashes de HackRF de sesión 33 — sigue sin reproducción directa contra
+> ese board ni equivalente de su escala; la orientación de esta sección
+> hacia "motor externo" tampoco está refutada, sólo no fue la vía que
+> sesión 48 pudo perseguir. Se deja esta sección sin reescribir por
+> trazabilidad histórica — no es el estado vigente, pero tampoco hay que
+> leer "timeout confirmado" como "causa del crash confirmada".
+
 **Alcance ejecutado:** harness sintético + análisis de código (sin bajar
 HackRF One), por decisión del arquitecto pre-Bloque 2.
 

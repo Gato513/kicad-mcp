@@ -692,6 +692,21 @@ _AUTO_KEEPOUT_PREFIX = "__kicadmcp_hc__"
 (F-D3-01, sesión 21) — permite identificarlos y borrarlos en la siguiente
 pasada sin acumular duplicados (idempotencia, ver docstring del método)."""
 
+_ENFORCE_HOLE_CLEARANCE_BATCH_SIZE = 100
+"""Tamaño de lote para ``create_items`` en ``enforce_hole_clearance``
+(sesión 48, F-V3-ZONE-FILL-CRASH). ``docs/specs/restricciones-kicad.md``
+§3 fija timeout duro de 2000ms por request IPC — "operaciones grandes se
+trocean o se rechazan"; un request por keepout es correcto pero caro (cada
+round-trip paga latencia de red aparte del cómputo), y un único request
+con todos los keepouts de una pasada grande supera el techo (medido: 707
+en un solo request, 8.40s). Medido en vivo contra
+``tests/fixtures/004_real`` (189 fp, 808 vías) con el timeout de
+producción real: N=100 → 0.93s avg/1.14s max, N=200 → 1.40s avg/1.56s
+max — ambos bajo el techo, 100 deja ~870ms de margen sobre el peor caso
+medido a esa escala. HackRF (437 fp, 1613 nets, más denso) no se midió
+directamente — el margen es mitigación de esa laguna, no garantía (ver
+``docs/BACKLOG.md``, F-V3-ZONE-FILL-CRASH)."""
+
 _HOLE_CLEARANCE_MARGIN_MM = 0.02
 """Margen de seguridad sobre el ``min_hole_clearance`` del proyecto, para
 absorber ruido de precisión de punto flotante en la geometría del polígono
@@ -2164,6 +2179,7 @@ class IpcBridge:
                     )
                     layer_values = list(zone.layers)
 
+                    pending: list[Zone] = []
                     for hole in pad_holes:
                         if hole.net_name is not None and hole.net_name == zone_net:
                             continue  # mismo net: conexión legítima, no ajeno
@@ -2188,9 +2204,15 @@ class IpcBridge:
                         keepout.proto.rule_area_settings.keepout_tracks = False
                         keepout.proto.rule_area_settings.keepout_vias = False
                         keepout.proto.rule_area_settings.keepout_footprints = False
-                        raw_board.create_items(keepout)
+                        pending.append(keepout)
                         created += 1
+                        if len(pending) >= _ENFORCE_HOLE_CLEARANCE_BATCH_SIZE:
+                            raw_board.create_items(pending)
+                            pending = []
+                    if pending:
+                        raw_board.create_items(pending)
 
+                    pending = []
                     for via in vias:
                         via_net_obj = via.net
                         via_net = (
@@ -2226,8 +2248,13 @@ class IpcBridge:
                         keepout.proto.rule_area_settings.keepout_tracks = False
                         keepout.proto.rule_area_settings.keepout_vias = False
                         keepout.proto.rule_area_settings.keepout_footprints = False
-                        raw_board.create_items(keepout)
+                        pending.append(keepout)
                         created += 1
+                        if len(pending) >= _ENFORCE_HOLE_CLEARANCE_BATCH_SIZE:
+                            raw_board.create_items(pending)
+                            pending = []
+                    if pending:
+                        raw_board.create_items(pending)
 
                 if created:
                     raw_board.refill_zones()

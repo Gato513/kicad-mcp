@@ -13,72 +13,132 @@ aproximado de severidad.
 
 ## P0 — Bloqueantes de dogfooding / release
 
-### F-V3-ZONE-FILL-CRASH — `add_zone(fill=true)` crashea KiCad de forma reproducible en la 3ª-4ª llamada sobre boards grandes — No concluyente tras auditoría 34a
+### F-V3-ZONE-FILL-CRASH — `add_zone(fill=true)` crashea KiCad de forma reproducible en la 3ª-4ª llamada sobre boards grandes — defecto real corregido (sesión 48, pendiente de commit/revisión humana), causa exacta del crash de HackRF sin confirmar
 
 **Origen:** sesión 33, Validation Suite Nivel C (HackRF One, 437
-footprints / 380 nets / 4 capas).
-
-**Reproducido 3 veces** con geometrías distintas, siempre con el mismo
-resultado: KiCad se cae (2 veces) o queda colgado transitoriamente y se
-recupera solo (1 vez), y el disco queda con exactamente **710 zonas**
-(3 reales + 707 fragmentos sin net, esparcidos entre las 2 capas
-internas) tras cada intento fallido.
-
-1. **Intento 1:** GND (In1.Cu, bbox completo, OK) → VCC + VAA (In2.Cu,
-   ambas con el bbox completo superpuesto al 100%, prioridad 0 sin
-   definir cuál gana) → crash en la 4ª llamada (`USB_SHIELD`/F.Cu).
-2. **Intento 2 (refutación explícita, D-33.1):** mismo orden pero VCC/VAA
-   en mitades disjuntas del bbox (sin overlap geométrico) → **mismo
-   crash exacto**, mismos 710 fragmentos, en la misma 4ª llamada. Refuta
-   la hipótesis de overlap del intento 1.
-3. **Intento 3:** igual que 2 pero con 20s de delay entre cada
-   `add_zone` (por si era una condición de carrera) → **mismo crash**,
-   3ª reproducción idéntica.
-
-**Patrón observado, no investigado:** el crash ocurre consistentemente
-en la 3ª-4ª llamada consecutiva a `add_zone(fill=true)`, sin
-correlación con la geometría/overlap de las zonas. Posibles hipótesis
-no evaluadas: acumulación de estado en el motor de fill/conectividad de
-pcbnew tras N llamadas sucesivas sobre un board de esta densidad (437
-footprints); interacción con el mismo mecanismo de segfault ya
-documentado en `validation-suite/tools/prepare_working.py` (remove+move
-en el mismo proceso). Limpieza determinística posible vía `pcbnew`
-directo (`board.Remove(zone)` para cada zona + `save` +
-`reload_board_from_disk`), sin pérdida de otro estado del board.
-
-**Severidad:** bloquea flujos que necesiten 3+ zonas de cobre sobre
-boards grandes (típico en diseños multi-capa con múltiples planos de
-alimentación). No bloquea el caso de 1-2 zonas (verificado limpio en
-Nivel A/B y en esta misma sesión con GND único). Candidato a
-investigación P4.0-style si reaparece en un board de escala comparable.
-
-**Clasificación (sesión 34a, auditoría de contratos):** **no concluyente**.
-Análisis de código del pipeline de `add_zone(fill=true)`
-(`refill_zones()` interno del bridge → `enforce_hole_clearance()` →
-`save_board()`) no encontró ninguna causa del lado del bridge — es el
-mismo patrón que `fill_zones()`/`route_board()`, ninguna con crashes
-reportados. La reproducción empírica con harness sintético, planeada para
-esta sesión, no se ejecutó: el único KiCad vivo disponible tenía abierto
-precisamente el proyecto HackRF One que ya crasheó 3/3 veces en sesión 33
-(`KICAD_MCP_PROJECT` quedó fijado a esa ruta), y no existe tool en la
-superficie del MCP para abrir un proyecto distinto en el editor vivo sin
-operar la GUI directamente — ejercer el harness ahí habría significado
-asumir el mismo riesgo que la sesión buscaba evitar, sin decisión
-deliberada de hacerlo. Orientativamente compatible con un bug de
-fragmentación de pcbnew a escala (la firma de 710 zonas/707 fragmentos
-sin net es consistente con fill fragmentando geometría compleja
-internamente, no con una operación del bridge que "corte" zonas) — sin
-confirmación positiva. Detalle completo:
+footprints / 380 nets / 4 capas). Reproducido 3 veces, siempre con el
+mismo resultado: KiCad se cae (2 veces) o queda colgado transitoriamente
+(1 vez), disco con **710 zonas** (3 reales + 707 fragmentos sin net) tras
+cada intento fallido. Sesión 34a lo clasificó "no concluyente", orientado
+hacia fragmentación interna de pcbnew — **esa clasificación queda
+superada por la investigación de sesión 48** (abajo). Detalle forense
+histórico: `validation-suite/level-c/hackrf-one/validation-report.md`
+§Fricciones; análisis de contratos original en
 `docs/analisis/auditoria-contratos-bridge.md` §4.
 
-**Próximo paso:** repro fiel contra HackRF One (asumiendo el riesgo
-deliberadamente) o contra un board sintético de escala equivalente (400+
-footprints, 4+ capas) — investigación propia si reaparece antes del
-release; no bloquea el ciclo actual.
+**Sesión 48 — tres diagnósticos evaluados y auditados por Codex, dos
+refutados con evidencia dura:**
 
-**Fuente:** sesión 33 (hallazgo), sesión 34a (clasificación acotada).
-Detalle forense completo en
-`validation-suite/level-c/hackrf-one/validation-report.md` §Fricciones.
+1. **v1 (bug de limpieza de keepouts stale) — REFUTADO.** Comparando UUID
+   (no sólo nombres) de los keepouts entre pasadas de los backups de
+   sesión 33: 0 UUID en común entre pasadas, con nombres idénticos — el
+   borrado funciona. Los "707 fragmentos sin net" son recómputo legítimo
+   de `enforce_hole_clearance` para *todas* las zonas de cobre reales del
+   board en cada pasada (crecen porque sesión 33 agregaba una zona real
+   nueva por llamada), no basura acumulada.
+2. **v2 (subir el timeout IPC de 2000ms a 30000ms) — BLOQUEADO.**
+   `docs/specs/restricciones-kicad.md:23-27` fija timeout duro de 2000ms
+   por request como restricción normativa (F1) — "operaciones grandes se
+   trocean o se rechazan", no se esperan más. El "techo de 30s de kipy"
+   usado para justificar el valor no existe (`sleeps` nunca se incrementa
+   en el busy-loop de `kipy/board.py`).
+3. **v3 (clasificar el timeout de refill como `KICAD_TIMEOUT` vs
+   `KICAD_NOT_RUNNING` según presencia del archivo de socket) —
+   BLOQUEADO.** Un socket Unix puede quedar huérfano tras un crash
+   abrupto (SIGKILL/segfault) sin limpiarse — "socket presente" no
+   implica "KiCad viva". Clasificar así habría reportado un crash real
+   como "sólo ocupado, reintentá", peor que el estado actual.
+
+**v4 — implementado, verificado localmente, pendiente de commit y
+revisión humana (nunca push, DoD #6).** Único cambio: `create_items` en
+`enforce_hole_clearance` (`src/kicad_mcp/bridge/ipc.py`) trocea en lotes
+de `_ENFORCE_HOLE_CLEARANCE_BATCH_SIZE=100` en vez de 1 request por ítem.
+Medido en vivo contra `tests/fixtures/004_real` (189 fp, 808 vías) con el
+timeout real de producción: N=100 → 0.93s avg/1.14s max, N=200 → 1.40s
+avg/1.56s max — ambos bajo 2000ms; un único request con 707 ítems (sin
+trocear) tardaba 8.40s, muy por encima. Test offline
+(`tests/test_pcb_hole_clearance.py::test_enforce_hole_clearance_batches_create_items`)
+verifica N=250 → 3 lotes de `[100, 100, 50]`. Test GUI
+(`tests/test_pcb_session48_zone_fill_batching_gui_slow.py`) confirma el
+round-trip real contra KiCad sobre `despertador-routed` (smoke de
+correctitud, no de carga — ver limitación siguiente). Aprobado por Codex
+(auditoría previa del plan, 4ª ronda) sin hallazgos.
+
+**Laguna declarada, confirmada empíricamente, no cerrada por este fix:**
+`refill_zones()` es una operación atómica — kipy 0.7.1 no expone fill
+parcial/selectivo (`docs/investigacion/19-zonas-ipc.md`), no se puede
+trocear. **Probe manual ad hoc de esta sesión, no versionado como test**
+(evidencia de sesión, no artefacto reproducible en CI): sobre
+`tests/fixtures/004_real` con sus 2 zonas de cobre reales preexistentes,
+crear una zona nueva de apenas 5×5mm con net real (`+3.3V`) superó igual
+los 2000ms (`ConnectionError` tras 2.74s). Esa única medición acredita el
+timeout observado en ese momento; no prueba por sí sola, de forma
+concluyente, que la población de zonas preexistente domine el costo en
+general — es la lectura más consistente con los datos (el troceo de
+`create_items`, que corre *después* del refill dentro de
+`enforce_hole_clearance`, no llegó a ejecutarse porque el timeout saltó
+antes), pero queda como inferencia razonable, no medición repetida.
+**No confirmado que este fix, por sí solo, elimine el crash de HackRF**
+— sólo que corrige el defecto que sí estaba mal (troceo de
+`create_items`) y dejó honesta la laguna que sigue sin solución dentro de
+las restricciones normativas actuales (timeout duro de 2000ms +
+`refill_zones()` no-troceable).
+
+**Construir un GUI test que demuestre multi-lote en vivo con pad holes
+reales** (no keepouts ni vías sintéticas — ver hallazgo colateral abajo)
+requeriría sintetizar >100 pads PTH/NPTH vía protobuf de kipy
+(`PadStack`/drill/capas de cobre) sin zonas de cobre grandes
+preexistentes — evaluado como desproporcionado para esta unidad, queda
+como trabajo futuro si se necesita demostración en vivo.
+
+**Próximo paso, si reaparece:** repro fiel contra HackRF One (riesgo
+deliberado, decisión humana) o rediseño de `_supervise` para no
+reconectar mientras un comando previo puede seguir vivo en KiCad
+(candidato a ADR propio, fuera de alcance de sesión 48 — ver hallazgo de
+carrera timeout→reconexión, reproducido 4 veces seguidas sobre
+`004_real` sin llegar a crash: produce cuelgue transitorio de ~22s, no
+corrupción).
+
+**Fuente:** sesión 33 (hallazgo), sesión 34a (clasificación superada),
+sesión 48 (dos hipótesis refutadas, defecto real corregido — timeout
+insuficiente para `create_items` sin trocear —, mecanismo de timeout de
+`refill_zones()` confirmado como alcanzable en boards de densidad media,
+causa exacta del crash de HackRF sin confirmar, fix pendiente de commit).
+
+---
+
+### F-VIAS-CLEARANCE-DEAD-CODE — protección de vías ajenas en `enforce_hole_clearance` nunca se ejecuta en producción
+
+**Origen:** hallazgo colateral de sesión 48, durante la construcción de un
+fixture sintético para F-V3-ZONE-FILL-CRASH (arriba).
+
+`enforce_hole_clearance` (`src/kicad_mcp/bridge/ipc.py`) filtra vías con
+`vias = [it for it in raw_board.get_tracks() if type(it).__name__ ==
+"Via"]`. Verificado en vivo contra KiCad real: `Board.get_tracks()` de
+kipy 0.7.1 tiene firma `Sequence[Union[Track, ArcTrack]]` — **nunca
+devuelve objetos `Via`**, hay un método separado `Board.get_vias()`.
+Creé 256 vías reales vía `create_items`; `get_tracks()` siguió
+reportando sólo los 2 segmentos preexistentes, 0 vías. `get_vias()`
+sobre el mismo board sí reportó las 257 (256 + 1 del fixture).
+
+**Consecuencia:** la protección de vías ajenas contra clearance
+(`tool-catalog.md` promete keepouts `__kicadmcp_hc__via_*`) es código
+muerto — el loop `for via in vias:` (`ipc.py`) nunca itera nada en
+producción, porque `vias` siempre sale vacío. El test
+`tests/test_pcb_hole_clearance.py::test_enforce_hole_clearance_protects_foreign_via`
+pasa igual porque el fake (`_FakeRawBoard.get_tracks`) devuelve
+directamente la lista pasada al constructor, sin modelar la distinción
+real de la API entre `get_tracks()`/`get_vias()` — falso verde
+estructural, mismo patrón que el de sesión 43 con `_copper_on_layer`.
+
+**Severidad:** P1 candidato — el mecanismo de protección de pads SÍ
+funciona (`_list_pad_holes_raw` lee de `get_footprints()`, camino
+correcto); sólo la rama de vías está rota. No investigado a fondo esta
+sesión — deliberadamente fuera de alcance de la unidad de F-V3 (scope
+creep). Fix candidato: cambiar `raw_board.get_tracks()` por
+`raw_board.get_vias()` en ese loop, más endurecer el fake del test para
+que la distinción sea observable (mismo criterio que sesión 48 aplicó al
+fake de `create_items`).
 
 ### F-V3-ROUTER-TIMEOUT-HARD — Freerouting 2.1.0 entra en crash-loop interno sobre boards grandes (HackRF One) — Bug upstream, no investigado
 

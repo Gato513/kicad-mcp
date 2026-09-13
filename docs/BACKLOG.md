@@ -107,38 +107,18 @@ causa exacta del crash de HackRF sin confirmar, fix pendiente de commit).
 
 ---
 
-### F-VIAS-CLEARANCE-DEAD-CODE — protección de vías ajenas en `enforce_hole_clearance` nunca se ejecuta en producción
+### F-VIAS-CLEARANCE-DEAD-CODE — protección de vías ajenas en `enforce_hole_clearance` nunca se ejecuta en producción — es D-23.3/R16, ver entrada canónica
 
-**Origen:** hallazgo colateral de sesión 48, durante la construcción de un
-fixture sintético para F-V3-ZONE-FILL-CRASH (arriba).
-
-`enforce_hole_clearance` (`src/kicad_mcp/bridge/ipc.py`) filtra vías con
-`vias = [it for it in raw_board.get_tracks() if type(it).__name__ ==
-"Via"]`. Verificado en vivo contra KiCad real: `Board.get_tracks()` de
-kipy 0.7.1 tiene firma `Sequence[Union[Track, ArcTrack]]` — **nunca
-devuelve objetos `Via`**, hay un método separado `Board.get_vias()`.
-Creé 256 vías reales vía `create_items`; `get_tracks()` siguió
-reportando sólo los 2 segmentos preexistentes, 0 vías. `get_vias()`
-sobre el mismo board sí reportó las 257 (256 + 1 del fixture).
-
-**Consecuencia:** la protección de vías ajenas contra clearance
-(`tool-catalog.md` promete keepouts `__kicadmcp_hc__via_*`) es código
-muerto — el loop `for via in vias:` (`ipc.py`) nunca itera nada en
-producción, porque `vias` siempre sale vacío. El test
-`tests/test_pcb_hole_clearance.py::test_enforce_hole_clearance_protects_foreign_via`
-pasa igual porque el fake (`_FakeRawBoard.get_tracks`) devuelve
-directamente la lista pasada al constructor, sin modelar la distinción
-real de la API entre `get_tracks()`/`get_vias()` — falso verde
-estructural, mismo patrón que el de sesión 43 con `_copper_on_layer`.
-
-**Severidad:** P1 candidato — el mecanismo de protección de pads SÍ
-funciona (`_list_pad_holes_raw` lee de `get_footprints()`, camino
-correcto); sólo la rama de vías está rota. No investigado a fondo esta
-sesión — deliberadamente fuera de alcance de la unidad de F-V3 (scope
-creep). Fix candidato: cambiar `raw_board.get_tracks()` por
-`raw_board.get_vias()` en ese loop, más endurecer el fake del test para
-que la distinción sea observable (mismo criterio que sesión 48 aplicó al
-fake de `create_items`).
+**Es el mismo hallazgo que D-23.3/R16 (sesión 23, `docs/DECISIONES.md`),
+no uno nuevo** — sesión 48 lo redescubrió acá, como hallazgo colateral de
+F-V3-ZONE-FILL-CRASH (arriba), sin cruzar referencia con la deuda técnica
+ya documentada. Causa raíz confirmada sesión 48, juicio cruzado con
+Codex en sesión 49 (veredicto: BLOQUEAR, fix diferido). Detalle completo,
+evidencia y trigger explícito de reapertura: **§"P3 — Loop de vías de
+`enforce_hole_clearance` posiblemente código muerto (R16, D-23.3)"** más
+abajo en este mismo documento — esa es la entrada canónica de severidad,
+ésta queda sólo como puntero para quien la encuentre por orden histórico
+de descubrimiento.
 
 ### F-V3-ROUTER-TIMEOUT-HARD — Freerouting 2.1.0 entra en crash-loop interno sobre boards grandes (HackRF One) — Bug upstream, no investigado
 
@@ -1195,15 +1175,58 @@ alimentación/power-flag — no es un caso raro.
 - **Workaround vigente:** `export_netlist()` + parseo manual.
 - **Esfuerzo estimado:** M.
 
-## P3 — Loop de vías de `enforce_hole_clearance` posiblemente código muerto (R16, D-23.3)
+## P3 — Loop de vías de `enforce_hole_clearance` posiblemente código muerto (R16, D-23.3) — causa raíz confirmada sesión 48/49, fix diferido
 
 En 3 corridas de investigación de sesión 23, el loop de vías de
-`enforce_hole_clearance` (líneas 1996-2032 de `ipc.py`) nunca creó un keepout
-`via_*`. Deuda técnica identificada pero **no se toca en Fase 3** salvo que
-aparezca evidencia nueva de que importa — es investigación independiente.
+`enforce_hole_clearance` (`ipc.py`, keepouts `via_*`) nunca creó un
+keepout. Deuda técnica identificada pero **no se toca** salvo que aparezca
+evidencia nueva de que importa — es investigación independiente. Ver
+`docs/DECISIONES.md` D-23.3 para el texto completo de la decisión y
+`docs/historico/sesiones/23-reporte.md` para el porqué (el bug real que
+motivó la investigación de sesión 23 se resolvió con un mecanismo
+distinto, ADR-0012/D-23.2, no con este loop).
 
-- **Origen:** D-23.3 (sesión 23).
-- **Esfuerzo estimado:** S para investigar, indeterminado para el fix.
+**Causa raíz confirmada (sesión 48, re-hallada sin cruzar referencia con
+esta entrada — hallazgo colateral de F-V3-ZONE-FILL-CRASH):**
+`enforce_hole_clearance` (`ipc.py:2170`) filtra vías con `vias = [it for
+it in raw_board.get_tracks() if type(it).__name__ == "Via"]`.
+`Board.get_tracks()` de kipy 0.7.1 (`Sequence[Union[Track, ArcTrack]]`)
+**nunca devuelve `Via`** — hay un `get_vias()` separado. Verificado en
+vivo: 256 vías creadas, `get_tracks()` reportó 0; `get_vias()` reportó
+las 257. Explica el mecanismo exacto de por qué nunca dispara, algo que
+sesión 23 no había podido determinar.
+
+**Sesión 49 — juicio cruzado con Codex sobre si esta causa raíz cumple el
+umbral de D-23.3 ("evidencia de que importa"). Veredicto: BLOQUEAR, no
+alcanza.** La causa raíz es evidencia de *mecanismo*, no de *impacto* —
+ningún dogfooding detectó jamás un `hole_clearance` real contra vía que
+el loop hubiera evitado. Fix candidato escrito y descartado (no
+commiteado) por 3 razones verificadas: (1) rompería el gate calibrado
+`tests/test_pcb_session27_zone_persist_gui.py`
+(`_KEEPOUTS_MIN=4`/`_KEEPOUTS_MAX=8`) — medido sobre `despertador-routed`:
+22 vías, 7 ajenas a GND, produciría ≥11 keepouts; (2) los keepouts que
+crea el método son globales por capa sin filtro de net — con varias
+zonas de cobre de nets distintos en la misma capa, proteger la zona A
+contra una vía ajena podría bloquear que la zona B (dueña legítima de esa
+vía) se conecte a ella, riesgo nunca evaluado porque el caso de
+referencia (D3/ANT1) es de una sola zona; (3) riesgo de duplicación de
+keepouts por combinación zona×vía en boards con muchas zonas (mismo
+territorio que F-V3-ZONE-FILL-CRASH). Detalle completo en
+`docs/BACKLOG.md` §F-VIAS-CLEARANCE-DEAD-CODE (sección P0, arriba —
+queda ahí por orden histórico de descubrimiento, esta entrada es la
+canónica de severidad).
+
+**Trigger de reapertura (reemplaza al genérico de sesión 23):** (a) un
+`hole_clearance` real contra vía que sobreviva al refill en un
+dogfooding/validación; o (b) decisión arquitectónica que reemplace
+D-23.3, con fix de keepouts filtrados por net (no globales por capa) +
+validación GUI multi-zona/multi-net + medición de proliferación de
+keepouts.
+
+- **Origen:** D-23.3 (sesión 23); causa raíz sesión 48; diferido tras
+  juicio cruzado sesión 49.
+- **Esfuerzo estimado:** hecho (causa raíz). Fix en sí: indeterminado,
+  condicionado al trigger de reapertura de arriba.
 
 ## P3 — Ergonomía de colocación (hallazgo D4)
 

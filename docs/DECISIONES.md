@@ -58,6 +58,14 @@ y en los reportes de sesión referenciados.
   alcance, conservando solo el término de agujero (ver
   `docs/investigacion/30-solder-mask-ant1.md` §"Fix implementado").
   Referenciado como R16 en `docs/BACKLOG.md` y `docs/CONTEXT.md`.
+  **Causa raíz del "nunca creó un keepout" confirmada en sesión 48:**
+  `Board.get_tracks()` de kipy 0.7.1 nunca devuelve objetos `Via` (hay un
+  `get_vias()` separado) — explica el mecanismo, no aporta evidencia de
+  impacto. Fix candidato evaluado y **diferido tras juicio cruzado con
+  Codex en sesión 49** (rompería un gate GUI calibrado y tiene riesgo de
+  corrección propio en boards multi-zona/multi-net) — la decisión de
+  arriba sigue vigente tal cual. Detalle completo en `docs/BACKLOG.md`
+  §"P3 — Loop de vías de `enforce_hole_clearance`... (R16, D-23.3)".
 - **D-23.2 (ADR-0012)**: `route_board`, al terminar OK, garantiza disco == memoria == `err_post` reportado — ver ADR-0012 para el contrato completo.
 
 **D-23.2 extendido (sesión 27):** contrato disco==memoria aplicado a

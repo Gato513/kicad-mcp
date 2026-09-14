@@ -120,7 +120,7 @@ abajo en este mismo documento — esa es la entrada canónica de severidad,
 ésta queda sólo como puntero para quien la encuentre por orden histórico
 de descubrimiento.
 
-### F-V3-ROUTER-TIMEOUT-HARD — Freerouting 2.1.0 entra en crash-loop interno sobre boards grandes (HackRF One) — Bug upstream, no investigado
+### F-V3-ROUTER-TIMEOUT-HARD — Freerouting 2.1.0 entra en crash-loop interno sobre boards grandes (HackRF One) — investigado sesión 49: bug upstream ya corregido en 2.2.3+, pendiente confirmar completitud
 
 **Origen:** sesión 33, Validation Suite Nivel C (HackRF One).
 
@@ -134,17 +134,69 @@ completar, con progreso real hasta ahí): acá el motor no avanza,
 crashea internamente en loop sin indicio de por qué esta topología
 específica (4 capas, 380 nets, plano GND parcial) dispara la excepción.
 
-**Severidad:** bloquea `route_board` end-to-end sobre boards de esta
-escala/topología. No es un bug de `kicad-mcp` (`route_board` se
-comportó correctamente ante el fallo — 0 persistencia corrupta, mismo
-contrato D-23.2/ADR-0012 que en cualquier timeout). Es un bug upstream
-de Freerouting 2.1.0, fuera del control del proyecto — documentar como
-límite conocido del flujo automatizado en la documentación de
-release, no "arreglar" desde `kicad-mcp`.
+**Investigación sesión 49 (repro standalone, sin KiCad vivo).** El
+`route.dsn` exacto de la corrida de sesión 33 seguía en
+`validation-suite/level-c/hackrf-one/working/.kicad-mcp/autoroute/route.dsn`
+(4 capas, 379 nets — coincide). Repro aislado: `java -jar
+freerouting-X.jar -de route.dsn -do route.ses -host KiCad` (mismo
+invocation que `bridge/autoroute.py:_run_freerouting`), sin tocar
+KiCad ni el repo.
 
-**Fuente:** sesión 33. Log completo en
+- **Búsqueda upstream:** `gh api search/issues -f q='repo:freerouting/freerouting
+  MazeSearchAlgo NullPointerException'` encontró PR #658 ("Fix NPE in
+  combine_traces and AIOOBE in BatchAutorouter for >2-layer boards",
+  cerrado sin mergear pero con análisis de causa raíz aceptado por el
+  maintainer). El **changelog oficial de v2.2.3** confirma el fix:
+  *"Fixed routing failures on boards with more than 2 copper layers
+  (PR #671) — `RouterSettings` incorrectly hardcoded 2-layer defaults
+  for all per-layer arrays... Any board with more layers could crash
+  with `ArrayIndexOutOfBoundsException` [o NPE aguas abajo]"* — con
+  crédito explícito a los reportes de #657/#658. HackRF One es
+  exactamente ese caso (4 capas, >2).
+- **Repro con 2.1.0 (el mismo log de sesión 33):** 6 `NullPointerException`
+  en `MazeSearchAlgo.expand_to_target_doors`, 0 líneas de progreso, en
+  33 líneas totales de log.
+- **Repro con 2.2.3 (Java 26, `/usr/lib/jvm/java-26-openjdk` — 2.2.3+
+  requiere JDK ≥21 con class-file version 69, no corre con Java 21):
+  25 minutos de corrida sobre el mismo `route.dsn`, 2045 líneas de log,
+  0 líneas `ERROR`, 0 `NullPointerException`. Actividad normal de
+  pass 1 (fallos de inserción de traza puntuales, esperables en un
+  board denso — no crashes) hasta que el timeout externo (1500s) cortó
+  el proceso; el propio Freerouting había registrado
+  `PullTightAlgo.is_stop_requested: time limit exceeded` segundos antes,
+  sin abortar.
+
+**Veredicto: el bug de crash-loop está corregido upstream desde v2.2.3
+(2026-05-08), casi un año de desarrollo por delante de la 2.1.0 usada en
+sesión 33 (releases intermedios: 2.2.0-2.2.4, 2.3.0, hoy 2.4.1).** Lo
+que esta sesión NO confirma: si el ruteo **completa** en un timeout
+razonable — el proceso de prueba no terminó el pass 1 en 25 min de un
+solo hilo antes de que el timeout externo lo cortara (sin señal de
+estancamiento; podría necesitar más tiempo, o beneficiarse de
+multi-hilo/tuning que 2.2.3+ expone). Eso es un problema de
+tiempo/calidad, no el crash P0 original.
+
+**Severidad revisada:** ya no bloquea `route_board` end-to-end por un
+bug interno de Freerouting sin salida — hay un camino de mitigación
+conocido (subir de versión). Sigue siendo **fuera del control de
+`kicad-mcp`** arreglar el motor en sí; lo accionable acá es actualizar
+la versión de Freerouting recomendada/probada en la documentación de
+entorno (`scripts/verificar_entorno.py` no pinea versión hoy, sólo
+apunta a la página de releases genérica).
+
+**Trigger para cerrar del todo:** correr `route_board` real (vía
+`route_board` de kicad-mcp, no el repro standalone) con Freerouting
+≥2.2.3 contra HackRF One con un timeout largo (≥3600s, como sesión 33)
+y confirmar que produce un `.ses`/ruteo válido — no sólo que no
+crashea. Requiere KiCad abierto + `KICAD_MCP_FREEROUTING_JAR` seteada
+(no disponibles en esta sesión, ver `verificar_entorno.py`). Candidato
+natural para retomar la Validation Suite Nivel C.
+
+**Fuente:** sesión 33 (hallazgo original), sesión 49 (causa raíz +
+repro standalone, sin cambios de código en el repo). Log de 2.1.0 en
 `validation-suite/level-c/hackrf-one/working/.kicad-mcp/autoroute/freerouting.log`
-(no versionado — archivo de trabajo).
+(no versionado — archivo de trabajo); repro de 2.2.3 hecho en
+scratchpad, no versionado.
 
 ### F-C4-01 — Freerouting se traba en re-ruteo incremental sobre cluster denso ya mayormente ruteado (`anavi-dev-mic`) — Bug upstream, no investigado, bloquea gate GUI 32d
 

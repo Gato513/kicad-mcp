@@ -606,3 +606,98 @@ def test_run_autoroute_calls_ensure_headless_config(
     autoroute.run_autoroute(_src(tmp_path), tmp_path / "work", runner=_FakeRunner(), jar_path=jar)
 
     assert json.loads(settings.read_text(encoding="utf-8"))["gui"]["enabled"] is False
+
+
+# --- F-PCBNEW-SWIG-PY314 (sesión 49) -----------------------------------------
+#
+# Bajo Python >=3.14, ``pcbnew.py`` (generado por SWIG, empaquetado por
+# KiCad — NO código de ``kicad-mcp``) itera colecciones llamando
+# ``it.next()`` sobre un ``pcbnew.SwigPyIterator`` que en esta versión sólo
+# expone ``__next__`` (el alias ``next`` de compatibilidad Python 2
+# desapareció) — rompe ``GetDrawings()``/``GetTracks()`` con
+# ``AttributeError``, que es exactamente lo que ``has_outline()``
+# (``_EXPORT_DSN_SCRIPT``) y ``counts()`` (``_IMPORT_SES_SCRIPT``) usan.
+# Confirmado en vivo llamando ``_run_export_dsn``/``_run_import_ses`` SIN
+# modificar contra ``validation-suite/level-a/anavi-dev-mic/working/
+# anavi-dev-mic.kicad_pcb`` (real, no fixture de test): ambos fallaban con
+# ``KicadMcpError(KICAD_CLI_FAILED)`` cuyo hint traía el traceback de
+# ``SwigPyIterator``. Fix: guard de una línea al inicio de cada script,
+# ``if not hasattr(pcbnew.SwigPyIterator, "next"): pcbnew.SwigPyIterator.next
+# = pcbnew.SwigPyIterator.__next__`` — sólo parcha si falta, no toca builds
+# de pcbnew donde ``next`` ya funciona (compat hacia atrás intacta).
+
+
+@pytest.mark.unit
+def test_export_and_import_scripts_carry_the_swig_iterator_guard() -> None:
+    """Regresión rápida (sin pcbnew real): el guard debe seguir presente en
+    AMBOS scripts — si un refactor lo borra sin querer, este test lo detecta
+    sin depender de que la máquina de CI tenga el bug (los tests
+    ``integration`` de abajo sólo fallan en máquinas con pcbnew afectado)."""
+    guard = "pcbnew.SwigPyIterator.next = pcbnew.SwigPyIterator.__next__"
+    assert guard in autoroute._EXPORT_DSN_SCRIPT
+    assert guard in autoroute._IMPORT_SES_SCRIPT
+
+
+@pytest.mark.integration
+def test_export_dsn_survives_py314_swig_iterator_bug(tmp_path: Path) -> None:
+    """Motor real (pcbnew del SISTEMA, sin GUI/IPC — mismo patrón que
+    ``test_pcb_session31b_duplicate_refs.py``). Regresión directa de
+    F-PCBNEW-SWIG-PY314: sin el guard, esto fallaba con
+    ``AttributeError: 'SwigPyIterator' object has no attribute 'next'``
+    propagado como ``KICAD_CLI_FAILED`` — con el guard, exporta limpio."""
+    from tests.conftest import mirror_fixture
+
+    system_python = autoroute._resolve_system_python(None)
+    fixture = Path(__file__).parent / "fixtures" / "005_pcb_limpio"
+    if not (fixture / "clean_board.kicad_pcb").is_file():
+        pytest.skip("fixture 005_pcb_limpio no disponible")
+    project = mirror_fixture(fixture, tmp_path / "005")
+    dsn_path = tmp_path / "out.dsn"
+
+    autoroute._run_export_dsn(
+        subprocess.run, system_python, project / "clean_board.kicad_pcb", dsn_path, 60.0
+    )
+
+    assert dsn_path.is_file()
+    assert dsn_path.stat().st_size > 0
+
+
+@pytest.mark.integration
+def test_import_ses_counts_survives_py314_swig_iterator_bug(tmp_path: Path) -> None:
+    """Mismo motor real. ``counts()`` (que usa ``GetTracks()``) corre ANTES
+    de tocar el ``.ses`` — sin el guard, revienta ahí mismo con
+    ``AttributeError`` antes de siquiera intentar importar; con el guard,
+    llega hasta ``ImportSpecctraSES`` (que sí puede fallar legítimamente
+    con un ``.ses`` sintético sin rutas — ``IMPORT_FAILED``, no el iterador)."""
+    from tests.conftest import mirror_fixture
+
+    system_python = autoroute._resolve_system_python(None)
+    fixture = Path(__file__).parent / "fixtures" / "005_pcb_limpio"
+    if not (fixture / "clean_board.kicad_pcb").is_file():
+        pytest.skip("fixture 005_pcb_limpio no disponible")
+    project = mirror_fixture(fixture, tmp_path / "005")
+    pcb_path = project / "clean_board.kicad_pcb"
+    ses_path = tmp_path / "empty.ses"
+    ses_path.write_text(
+        '(session "clean_board"\n'
+        '  (base_design "clean_board.dsn")\n'
+        "  (routes\n"
+        "    (resolution um 10)\n"
+        "    (network_out\n"
+        "    )\n"
+        "  )\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    routed_path = tmp_path / "routed.kicad_pcb"
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        autoroute._run_import_ses(
+            subprocess.run, system_python, pcb_path, ses_path, routed_path, 60.0
+        )
+
+    # Falla legítimamente (SES sin rutas no es lo que este board espera) —
+    # pero por el motivo correcto (IMPORT_FAILED), no por el iterador roto.
+    assert excinfo.value.code is ErrorCode.KICAD_CLI_FAILED
+    assert "SwigPyIterator" not in (excinfo.value.hint or "")
+    assert "IMPORT_FAILED" in (excinfo.value.hint or "")

@@ -82,6 +82,15 @@ except Exception as e:
     sys.stderr.write("NO_PCBNEW: %s\n" % e)
     sys.exit(3)
 
+# Sesión 49 (F-PCBNEW-SWIG-PY314): bajo Python >=3.14, pcbnew.py (SWIG,
+# empaquetado por KiCad, no código nuestro) itera colecciones llamando
+# ``it.next()`` sobre un ``SwigPyIterator`` que sólo expone ``__next__``
+# (el alias ``next`` de compatibilidad Python 2 desapareció) — rompe
+# GetDrawings()/GetTracks() con AttributeError. Guardado: sólo parcha si
+# falta, para no tocar builds de pcbnew donde ``next`` ya funciona.
+if not hasattr(pcbnew.SwigPyIterator, "next"):
+    pcbnew.SwigPyIterator.next = pcbnew.SwigPyIterator.__next__
+
 src, out = sys.argv[1], sys.argv[2]
 
 def has_outline(board):
@@ -114,6 +123,11 @@ try:
 except Exception as e:
     sys.stderr.write("NO_PCBNEW: %s\n" % e)
     sys.exit(3)
+
+# Sesión 49 (F-PCBNEW-SWIG-PY314): ver comentario gemelo en
+# _EXPORT_DSN_SCRIPT — mismo guard, GetTracks() lo necesita acá.
+if not hasattr(pcbnew.SwigPyIterator, "next"):
+    pcbnew.SwigPyIterator.next = pcbnew.SwigPyIterator.__next__
 
 board_path, ses, out = sys.argv[1], sys.argv[2], sys.argv[3]
 

@@ -322,17 +322,16 @@ señales) tiene camino de resolución confirmado.
 (`tests/test_pcb_session32d_stitching_gui_slow.py`) reales con
 `KICAD_MCP_FREEROUTING_JAR` apuntando a ≥2.2.3 (idealmente 2.4.1) y KiCad
 abierto, y confirmar que `route_board` completa con `stitched_vias` conteniendo
-la entrada de `MK1.3` como esperaba H1 originalmente. Requiere además
-resolver `F-PCBNEW-SWIG-PY314` primero (o exportar desde una máquina/venv
-con Python <3.14), porque si no el export DSN real de `route_board` falla
-antes de llegar a invocar Freerouting.
+la entrada de `MK1.3` como esperaba H1 originalmente. `F-PCBNEW-SWIG-PY314`
+(abajo, bloqueante del export DSN real en esta máquina) ya está cerrado
+— el gate sólo necesita ahora KiCad abierto + el jar configurado.
 
 **Fuente:** Ciclo C4 (hallazgo original, diagnóstico parcial),
 `docs/investigacion/c4-gate-gui-32d-h1-devmic-timeout.md`; sesión 49
 (causa raíz + repro standalone confirmado, sin cambios de código en el
 repo — jars/DSN/SES de prueba en scratchpad, no versionados).
 
-### F-PCBNEW-SWIG-PY314 — `pcbnew.py` (SWIG, del paquete `kicad`) rompe bajo Python 3.14 del sistema: `GetTracks()`/`GetDrawings()` fallan — hallazgo colateral sesión 49, NO investigado a fondo, potencial bloqueante de `route_board` real en esta máquina
+### F-PCBNEW-SWIG-PY314 — `pcbnew.py` (SWIG, del paquete `kicad`) rompe bajo Python 3.14 del sistema: `GetTracks()`/`GetDrawings()` fallan — ✅ CERRADO sesión 49, fix aplicado
 
 **Origen:** hallazgo colateral durante la investigación de F-C4-01
 (arriba), al intentar exportar un DSN real vía
@@ -363,40 +362,130 @@ tal como está, con una excepción Python cruda en el subprocess (no un
 en esta sesión (no había KiCad abierto), pero sí confirmado el fallo
 puntual de los dos iteradores que esos scripts usan.
 
-**Workaround confirmado (probado en el script standalone de esta
-sesión, NO aplicado al repo):** un monkeypatch de una línea inmediatamente
-después de `import pcbnew` resuelve el problema sin tocar el paquete de
-KiCad:
+**Fix aplicado (sesión 49, `bridge/autoroute.py`):** monkeypatch de una
+línea, guardado (sólo aplica si falta, no toca builds de `pcbnew` donde
+`next` ya funciona), agregado al inicio de `_EXPORT_DSN_SCRIPT` e
+`_IMPORT_SES_SCRIPT`:
 
 ```python
-pcbnew.SwigPyIterator.next = pcbnew.SwigPyIterator.__next__
+if not hasattr(pcbnew.SwigPyIterator, "next"):
+    pcbnew.SwigPyIterator.next = pcbnew.SwigPyIterator.__next__
 ```
 
-Verificado: sin el parche, `GetTracks()`/`GetDrawings()` fallan; con el
-parche, devuelven las listas esperadas (85 tracks, 50 drawings sobre el
-fixture de `anavi-dev-mic`).
+**Confirmado end-to-end contra el código real (no un script aparte):**
+llamando directamente `kicad_mcp.bridge.autoroute._run_export_dsn` y
+`_run_import_ses` (las funciones exactas que usa `route_board`) contra
+`validation-suite/level-a/anavi-dev-mic/working/anavi-dev-mic.kicad_pcb`
+— **antes** del fix ambas fallaban con `KicadMcpError(KICAD_CLI_FAILED)`
+cuyo hint traía el traceback de `SwigPyIterator`; **después**, ambas
+completan (`EXPORT SUCCEEDED: 2463044 bytes`,
+`IMPORT SUCCEEDED: (79, 98, 6, 6)`). Confirma que esto SÍ bloqueaba
+`route_board` real en esta máquina, no sólo el script standalone de la
+investigación original.
 
-**Severidad:** potencial P0 — si se confirma que afecta `route_board`
-real (no sólo mi script standalone), bloquea el pipeline de autoroute
-completo en esta máquina específica, con o sin relación a F-V3/F-C4. Es
-un problema de packaging/entorno (paquete `kicad` de esta distro con
-Python 3.14 muy nuevo — `pacman -Ss jdk` mostró que el sistema tiene
-paquetes muy recientes), no un bug conceptual de `kicad-mcp`, pero el fix
-(el monkeypatch de una línea) SÍ sería código de `kicad-mcp` si se decide
-aplicarlo ahí — decisión del humano, no tomada esta sesión: (a) parchear
-`_EXPORT_DSN_SCRIPT`/`_IMPORT_SES_SCRIPT` defensivamente, (b) documentar
-como requisito de entorno (pin de versión de Python del sistema o de
-`kicad`), o (c) escalar el bug a KiCad/Arch upstream.
+**Cobertura de test (sesión 49, `tests/test_autoroute.py`):**
+- `test_export_and_import_scripts_carry_the_swig_iterator_guard`
+  (`unit`): el guard sigue presente como texto en ambos scripts — corre
+  siempre, sin pcbnew real.
+- `test_export_dsn_survives_py314_swig_iterator_bug` /
+  `test_import_ses_counts_survives_py314_swig_iterator_bug`
+  (`integration`, motor real): regresión directa contra
+  `tests/fixtures/005_pcb_limpio`. Verificado manualmente (revirtiendo el
+  fix temporalmente) que los 3 tests detectan la regresión si el guard se
+  borra.
 
-**No investigado en esta sesión:** si esto ya rompía antes de sesión 49
-(regresión reciente del sistema, p. ej. un `pacman -Syu` que subió Python
-a 3.14) o si es la primera vez que se ejercita este código exacto en esta
-máquina; alcance completo (qué otras llamadas `Get*()` de `pcbnew` en el
-resto del código de `kicad-mcp` comparten el mismo patrón de iteración
-rota); confirmación end-to-end contra `route_board` real.
+**Hallazgo colateral de esta confirmación, NO cerrado — ver entrada
+nueva `F-DUPREFS-SILENT-NETLIST` más abajo:** al correr la suite
+`integration` completa tras el fix, `test_pcb_session31b_duplicate_refs.py`
+pasó a fallar — no por el fix en sí, sino porque destapó que su premisa
+("pcbnew falla enteramente con refs duplicados") ya no es cierta en esta
+versión de KiCad. Test dejado tal cual, sin tocar — es evidencia real de
+un hallazgo nuevo, no una regresión de este fix.
 
-**Fuente:** sesión 49, hallazgo colateral. Sin evidencia versionada
-(reproducido en scripts de scratchpad, no en el repo).
+**No investigado en esta sesión:** si el bug de `SwigPyIterator` ya
+rompía antes de sesión 49 (regresión reciente del sistema, p. ej. un
+`pacman -Syu` que subió Python a 3.14) o si es la primera vez que se
+ejercita este código exacto en esta máquina; alcance completo (qué otras
+llamadas `Get*()` de `pcbnew` en el resto del código de `kicad-mcp`
+podrían compartir el mismo patrón, aunque ninguna otra fue encontrada al
+grepear `import pcbnew` en `src/`).
+
+**Fuente:** sesión 49. Fix en `src/kicad_mcp/bridge/autoroute.py`, tests
+en `tests/test_autoroute.py`.
+
+### F-DUPREFS-SILENT-NETLIST — `pcbnew.ExportSpecctraDSN` ya no falla con refs duplicados en esta versión de KiCad; trunca el netlist en silencio — hallazgo sesión 49, NO investigado a fondo, producción no afectada (precheck independiente sigue protegiendo)
+
+**Origen:** hallazgo colateral al arreglar F-PCBNEW-SWIG-PY314 (arriba) y
+correr la suite `integration` completa para verificar que no rompía
+nada. `test_pcb_session31b_duplicate_refs.py` (sesión 31b, F-V1-02) pasó
+de verde a rojo — no por el fix en sí, sino porque el fix destapó el
+comportamiento real de `pcbnew.ExportSpecctraDSN` por primera vez en
+esta máquina (antes, cualquier llamada a `_run_export_dsn` crasheaba por
+`SwigPyIterator` sin importar los refs duplicados — el test "pasaba" por
+el motivo equivocado, mismo patrón de falso verde que `_copper_on_layer`
+en sesión 43).
+
+**Lo que documentan `ADR-0013` y el comentario de
+`tools/pcb.py:_find_duplicate_refs`** (textual): *"pcbnew no puede
+exportar el DSN... `pcbnew.ExportSpecctraDSN` falla enteramente si dos o
+más footprints comparten reference designator, sin importar su
+posición (confirmado en sesión 31... `ok=False,size=0` →
+`ok=True,size=2.4MB`)"*.
+
+**Lo que pasa en esta máquina (KiCad 10.0.6), verificado llamando
+`_run_export_dsn` directo contra `tests/fixtures/006_pcb_refs_duplicados/
+dup_refs.kicad_pcb` (2 footprints con ref literal `REF**` compartida,
+más `R1`/`R2` únicos):** la exportación **NO falla** — `ok=True`, DSN de
+2474 bytes (chico pero bien formado, no un `size=0` truncado a medias).
+`pcbnew` **renombra solo** el segundo duplicado a `REF**_1` en el bloque
+`(placement...)`. Pero la sección `(network (net NET1 (pins ...)))` del
+DSN sólo lista los pines de `R1`/`R2` — **los pines de `REF**`/`REF**_1`
+quedan completamente ausentes del netlist**, sin ningún error ni warning
+en el DSN ni en el `returncode`. Si Freerouting corriera sobre este DSN,
+esos 2 componentes simplemente no tendrían ninguna conexión que rutear
+— indistinguible de "no tiene nets", no de "el exportador los perdió".
+
+**Por qué esto NO es un riesgo de producción hoy:** `route_board`
+(`tools/pcb.py:2531`, precheck `DUPLICATE_REFS`) usa
+`_find_duplicate_refs(pre_footprints)`, que lee refs del snapshot IPC en
+vivo — **no depende de `ExportSpecctraDSN` en absoluto**. El precheck
+sigue bloqueando este escenario ANTES de llegar al subprocess de export,
+exactamente igual que antes de este hallazgo. Verificado leyendo el
+código, no sólo asumido.
+
+**Por qué sí importa igual:** (1) la justificación documentada en
+`ADR-0013` y en el propio código ya no describe la realidad de esta
+versión de KiCad — alguien que lea ese comentario para entender el
+riesgo se lleva una imagen equivocada (un crash limpio, no corrupción
+silenciosa); (2) el modo de falla real, si el precheck alguna vez se
+bypasea, resuelve, o hay un camino de código nuevo que llame
+`ExportSpecctraDSN` sin pasar por `_find_duplicate_refs` primero (ej. un
+uso standalone de `bridge/autoroute.py` fuera de `route_board`), sería
+**peor** que lo que el ADR asume: pérdida silenciosa de conectividad, no
+un error visible.
+
+**No investigado en esta sesión (decisión explícita: documentar, no
+tocar el test ni el ADR):** si el comportamiento cambió entre la versión
+de KiCad de sesión 31 y la 10.0.6 actual (más probable), o si depende de
+la forma exacta del board/refs (no descartado); si este mismo patrón de
+truncado silencioso aplica a otros casos que `ExportSpecctraDSN` podría
+manejar mal (footprints sin pads, refs vacíos, etc. — no ejercitados);
+si vale la pena que el precheck `DUPLICATE_REFS` deje de estar
+condicionado únicamente a la app-level check y algo dentro de
+`_run_export_dsn` también valide la integridad del netlist exportado
+(defensa en profundidad) contra el conteo de pines esperado.
+
+**Estado del test:** `test_pcb_session31b_duplicate_refs.py::
+test_export_dsn_fails_with_duplicate_refs_and_succeeds_after_rename`
+queda **fallando deliberadamente**, sin tocar — es la evidencia viva de
+este hallazgo, no una regresión de sesión 49 a arreglar en silencio.
+Decisión sobre si actualizar el test a la nueva realidad (con un assert
+explícito sobre la pérdida de pines, no sólo "no lanza") queda para
+cuando se investigue esto a fondo.
+
+**Fuente:** sesión 49, hallazgo colateral sin investigación dedicada.
+DSN de evidencia generado en scratchpad, no versionado; reproducible con
+`tests/fixtures/006_pcb_refs_duplicados/` (sí versionado).
 
 ### F-V2-REFILL-SILENCIOSO — `route_board(refill=true)` puede no persistir el refill sin ningún error visible — ✅ CERRADO sesión 32b
 

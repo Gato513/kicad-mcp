@@ -198,7 +198,7 @@ repro standalone, sin cambios de código en el repo). Log de 2.1.0 en
 (no versionado — archivo de trabajo); repro de 2.2.3 hecho en
 scratchpad, no versionado.
 
-### F-C4-01 — Freerouting se traba en re-ruteo incremental sobre cluster denso ya mayormente ruteado (`anavi-dev-mic`) — Bug upstream, no investigado, bloquea gate GUI 32d
+### F-C4-01 — Freerouting se traba en re-ruteo incremental sobre cluster denso ya mayormente ruteado (`anavi-dev-mic`) — investigado sesión 49: mismo fix upstream que F-V3-ROUTER-TIMEOUT-HARD lo resuelve
 
 **Origen:** Ciclo C4, intento de ejecutar el gate GUI pendiente desde
 sesión 32d para el fix de stitching (ver entrada P1 "CERRADO
@@ -258,16 +258,145 @@ de que más tiempo lo resuelva. No se corrió H2. No se tocó el fixture ni
 `route_board`; contrato D-23.2 intacto (timeout ocurre antes de
 cualquier persist).
 
-**Próximo paso sugerido:** si aparece una 2ª instancia confirmada de
-este patrón específico (re-ruteo incremental sobre cluster denso
-trabando el motor), promover a investigación P4.0-style dedicada.
-Mientras tanto, el gate GUI 32d de sesión 32d queda formalmente
-bloqueado por esto — no por el fix de stitching en sí, cuyos 8 tests
-unitarios canario + guardrails siguen verdes.
+**Investigación sesión 49 (repro standalone, sin KiCad vivo, mismo
+método que F-V3-ROUTER-TIMEOUT-HARD).** El fixture actual
+(`validation-suite/level-a/anavi-dev-mic/working/anavi-dev-mic.kicad_pcb`,
+sin tocar) **ya es** el escenario H1 tal cual está commiteado — no hace
+falta reconstruirlo: `MK1` pad 3 (net `GND`) sólo tiene cobre en `F.Cu`,
+la zona GND está sólo en `B.Cu`, y `board.GetConnectivity()` confirma que
+el pad no tiene ningún ítem físico conectado (huérfano real, verificado
+vía API de conectividad de `pcbnew`, no inferido).
 
-**Fuente:** Ciclo C4.
-`docs/investigacion/c4-gate-gui-32d-h1-devmic-timeout.md` (reporte
-completo de la investigación read-only).
+- **Export DSN** (`pcbnew.ExportSpecctraDSN`, mismo script que
+  `bridge/autoroute.py:_EXPORT_DSN_SCRIPT`) desde ese fixture: 19 nets, 2
+  capas. **Hallazgo colateral necesario para poder exportar — ver entrada
+  nueva `F-PCBNEW-SWIG-PY314` más abajo**: en esta máquina,
+  `board.GetDrawings()`/`GetTracks()` (usados por el export/import real
+  de `route_board`) fallan con `AttributeError` bajo Python 3.14 — se
+  parcheó sólo en el script standalone de esta investigación
+  (`pcbnew.SwigPyIterator.next = pcbnew.SwigPyIterator.__next__`), NO en
+  el repo.
+- **Repro con 2.1.0** sobre ese DSN real: score congelado en **969.31,
+  "2 unrouted"**, sin mejora durante 52+ passes (300s), 0 `.ses`
+  producido — mismo patrón de estancamiento que documentó Ciclo C4 (la
+  cifra exacta de score difiere levemente de los "969.16–969.19"
+  originales — esperable, Freerouting no es determinista pass a pass,
+  ver docstring de `test_pcb_session32d_stitching_gui_slow.py` sobre este
+  riesgo — pero el patrón de "congelado, 2 unrouted, sin salida" es
+  idéntico).
+- **Repro con 2.4.1** sobre el MISMO DSN: **completó limpio en 3m33s**.
+  El detector de estancamiento de Freerouting (`PR #634`, en el motor
+  desde v2.2.0 — ver evidencia en F-V3-ROUTER-TIMEOUT-HARD arriba) paró
+  el autorouter solo tras 10 passes sin mejora ("score 680.00 no mejoró
+  más de 0.5 puntos en las últimas 10 passes"), y emitió un **reporte
+  legible de las 8 conexiones sin rutear** (incluida `via -> MK1-3`, el
+  pad huérfano exacto que el fix de stitching de `route_board` debe
+  resolver DESPUÉS vía inserción manual de vía, no vía Freerouting).
+  Generó un `.ses` válido (15331 bytes) — resultado parcial utilizable,
+  no un cuelgue sin salida.
+
+**Lectura del resultado:** que Freerouting 2.4.1 deje `via -> MK1-3` sin
+rutear NO es una regresión — es el comportamiento esperado y necesario:
+el mecanismo de stitching de `route_board` (F-D5-01, `enforce_hole_clearance`
++ inserción de vía post-refill) existe precisamente para resolver esos
+huérfanos que el autorouter no toca. Lo que cambia es que Freerouting ya
+no se cuelga/traba indefinidamente antes de llegar a esa etapa — termina,
+reporta, y le entrega el control de vuelta al pipeline de `kicad-mcp`.
+
+**Relación con F-V3-ROUTER-TIMEOUT-HARD:** confirmado que es la misma
+causa raíz de familia (motor de Freerouting 2.1.0, sin las mejoras de
+estabilidad/detección de estancamiento de v2.2.0+) aplicada a una escala
+y mecanismo distintos (re-ruteo incremental sobre cluster denso vs. board
+grande desde cero) — la hipótesis de sesión "Ciclo C4" sobre densidad de
+cobre preexistente en el corredor de búsqueda queda parcialmente
+corroborada (ahí es donde Freerouting 2.1.0 se atasca), pero la causa de
+fondo (versión de motor desactualizada) es la misma en ambos hallazgos.
+
+**Severidad revisada:** igual que F-V3-ROUTER-TIMEOUT-HARD — ya no es un
+callejón sin salida upstream; hay mitigación conocida (subir de versión).
+El gate GUI 32d sigue sin poder correrse en ESTA sesión (requiere KiCad
+abierto), pero el bloqueo de fondo (Freerouting colgándose sin dar
+señales) tiene camino de resolución confirmado.
+
+**Trigger para cerrar del todo:** correr H1/H2
+(`tests/test_pcb_session32d_stitching_gui_slow.py`) reales con
+`KICAD_MCP_FREEROUTING_JAR` apuntando a ≥2.2.3 (idealmente 2.4.1) y KiCad
+abierto, y confirmar que `route_board` completa con `stitched_vias` conteniendo
+la entrada de `MK1.3` como esperaba H1 originalmente. Requiere además
+resolver `F-PCBNEW-SWIG-PY314` primero (o exportar desde una máquina/venv
+con Python <3.14), porque si no el export DSN real de `route_board` falla
+antes de llegar a invocar Freerouting.
+
+**Fuente:** Ciclo C4 (hallazgo original, diagnóstico parcial),
+`docs/investigacion/c4-gate-gui-32d-h1-devmic-timeout.md`; sesión 49
+(causa raíz + repro standalone confirmado, sin cambios de código en el
+repo — jars/DSN/SES de prueba en scratchpad, no versionados).
+
+### F-PCBNEW-SWIG-PY314 — `pcbnew.py` (SWIG, del paquete `kicad`) rompe bajo Python 3.14 del sistema: `GetTracks()`/`GetDrawings()` fallan — hallazgo colateral sesión 49, NO investigado a fondo, potencial bloqueante de `route_board` real en esta máquina
+
+**Origen:** hallazgo colateral durante la investigación de F-C4-01
+(arriba), al intentar exportar un DSN real vía
+`pcbnew.ExportSpecctraDSN` (el mismo script que usa
+`bridge/autoroute.py:_EXPORT_DSN_SCRIPT`) con `/usr/bin/python3` (el
+python del SISTEMA que `kicad-mcp` usa explícitamente, F5 — no es el venv
+del proyecto).
+
+**Síntoma:** `board.GetDrawings()` y `board.GetTracks()` (entre otros —
+no se auditó la lista completa) fallan con
+`AttributeError: 'SwigPyIterator' object has no attribute 'next'`.
+`GetFootprints()` SÍ funciona (probado, 13 footprints OK). Causa exacta:
+`/usr/lib/python3.14/site-packages/pcbnew.py` (generado por SWIG,
+empaquetado por `kicad`, no es código de `kicad-mcp`) define su propio
+`__iter__` que llama manualmente `it.next()` sobre un
+`pcbnew.SwigPyIterator` — ese objeto expone `__next__` (protocolo Python
+3 estándar, confirmado con `hasattr`) pero NO el alias `next` de
+compatibilidad Python 2 que versiones anteriores de las bindings SWIG sí
+incluían.
+
+**Impacto en `kicad-mcp`:** `bridge/autoroute.py` usa exactamente este
+patrón en `_EXPORT_DSN_SCRIPT` (`has_outline()` itera `GetDrawings()`) e
+`_IMPORT_SES_SCRIPT` (`counts()` itera `GetTracks()`) — el pipeline real
+de `route_board`/`fill_zones` sobre disco (paso 1 y 3 del round-trip de
+autoroute, ver docstring del módulo) probablemente falla en esta máquina
+tal como está, con una excepción Python cruda en el subprocess (no un
+`NO_OUTLINE` limpio) — no confirmado end-to-end contra `route_board` real
+en esta sesión (no había KiCad abierto), pero sí confirmado el fallo
+puntual de los dos iteradores que esos scripts usan.
+
+**Workaround confirmado (probado en el script standalone de esta
+sesión, NO aplicado al repo):** un monkeypatch de una línea inmediatamente
+después de `import pcbnew` resuelve el problema sin tocar el paquete de
+KiCad:
+
+```python
+pcbnew.SwigPyIterator.next = pcbnew.SwigPyIterator.__next__
+```
+
+Verificado: sin el parche, `GetTracks()`/`GetDrawings()` fallan; con el
+parche, devuelven las listas esperadas (85 tracks, 50 drawings sobre el
+fixture de `anavi-dev-mic`).
+
+**Severidad:** potencial P0 — si se confirma que afecta `route_board`
+real (no sólo mi script standalone), bloquea el pipeline de autoroute
+completo en esta máquina específica, con o sin relación a F-V3/F-C4. Es
+un problema de packaging/entorno (paquete `kicad` de esta distro con
+Python 3.14 muy nuevo — `pacman -Ss jdk` mostró que el sistema tiene
+paquetes muy recientes), no un bug conceptual de `kicad-mcp`, pero el fix
+(el monkeypatch de una línea) SÍ sería código de `kicad-mcp` si se decide
+aplicarlo ahí — decisión del humano, no tomada esta sesión: (a) parchear
+`_EXPORT_DSN_SCRIPT`/`_IMPORT_SES_SCRIPT` defensivamente, (b) documentar
+como requisito de entorno (pin de versión de Python del sistema o de
+`kicad`), o (c) escalar el bug a KiCad/Arch upstream.
+
+**No investigado en esta sesión:** si esto ya rompía antes de sesión 49
+(regresión reciente del sistema, p. ej. un `pacman -Syu` que subió Python
+a 3.14) o si es la primera vez que se ejercita este código exacto en esta
+máquina; alcance completo (qué otras llamadas `Get*()` de `pcbnew` en el
+resto del código de `kicad-mcp` comparten el mismo patrón de iteración
+rota); confirmación end-to-end contra `route_board` real.
+
+**Fuente:** sesión 49, hallazgo colateral. Sin evidencia versionada
+(reproducido en scripts de scratchpad, no en el repo).
 
 ### F-V2-REFILL-SILENCIOSO — `route_board(refill=true)` puede no persistir el refill sin ningún error visible — ✅ CERRADO sesión 32b
 

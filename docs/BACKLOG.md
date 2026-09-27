@@ -373,6 +373,98 @@ para ningún jar ≥2.2.3.
 (causa raíz + repro standalone confirmado, sin cambios de código en el
 repo — jars/DSN/SES de prueba en scratchpad, no versionados).
 
+**Actualización sesión 50 — F-C4-01 resuelto, pero el gate GUI 32d
+descubre un hallazgo P0 NUEVO y distinto: ver `F-RELOAD-STALE-POST-ROUTE`
+justo abajo.** Con jar 2.4.1 + `KICAD_MCP_JAVA_EXE`, `route_board()` real
+contra `anavi-dev-mic` **completó el ruteo dos veces seguidas** (317.6s y
+246.0s, 19/-1 tracks — el conteo negativo de la 2ª corrida es ruido
+esperable de re-rutear sobre un board que la 1ª corrida ya había dejado
+parcialmente ruteado en disco, no investigado más) — el motor de
+Freerouting ya no es el bloqueante. H1/H2 en sí **no pudieron ejecutarse
+hasta el final** (2/2) por el hallazgo nuevo, no por F-C4-01.
+
+### F-RELOAD-STALE-POST-ROUTE — `route_board` pierde la conexión IPC al
+`BoardHandle` capturado ANTES del round-trip de Freerouting cuando el
+ruteo tarda varios minutos — el refill de seguridad post-route falla
+reproduciblemente (2/2) con `POST_ROUTE_REFILL_SKIPPED`/`KICAD_NOT_RUNNING`
+
+**Origen:** sesión 50, al fin conseguir que el gate GUI 32d (H1,
+`anavi-dev-mic`) corriera con Freerouting real tras cerrar F-C4-01
+(arriba). Reproducido **2 de 2 veces**, ambas contra KiCad 10.0.6 real,
+PCB Editor en foco, socket IPC verificado responsivo (por una conexión
+*distinta* y activa en paralelo, ver abajo) en el mismo instante del
+fallo — descarta que KiCad se haya cerrado o colgado de verdad.
+
+**Síntoma exacto:** `route_board()` corre el round-trip completo
+(export DSN → Freerouting subprocess ~250-320s → import SES →
+reemplazo atómico de disco, D-23.2 respetado: el .kicad_pcb en disco
+queda válido). Al llegar al paso "recargar el editor vivo" (necesario
+para poder refillear zonas contra el cobre nuevo, D-19.1), la llamada
+`bridge.reload_board_from_disk(open_board)` (`tools/pcb.py:2588`) falla
+con `ConnectionError`, mapeado por `_map_ipc_failure`
+(`bridge/ipc.py:1061-1064`) a `KICAD_NOT_RUNNING`. `route_board` respeta
+el contrato (D-23.2/D-32b.1): no fuerza el refill sobre un vivo
+desincronizado, reporta `POST_ROUTE_REFILL_SKIPPED` con el estado
+completo (`zones_refilladas=0`, `drc_err_post=18`) y un hint accionable
+(`reload_board_from_disk()` + `fill_zones()` manuales). **No hay
+corrupción ni violación de contrato — el fallo es honesto y
+recuperable** — pero el mecanismo de refill automático, la razón de ser
+de todo el pipeline post-route, no corre solo cuando más falta hace
+(boards que tardan lo suficiente en rutear como para que esto dispare).
+
+**Hipótesis de causa raíz (fuerte, no 100% confirmada — no se
+instrumentó el socket para probarlo directamente):** `open_board`
+(`tools/pcb.py:2500`, vía `_open_board_or_none(bridge)`) se captura
+**ANTES** de arrancar el subprocess externo de Freerouting — el mismo
+objeto/handle se reutiliza ~5 minutos después, tras el round-trip
+completo, para el reload. La conexión IPC subyacente (kipy `KiCad`
+client, singleton en `IpcBridge._client`) no recibe NINGÚN tráfico
+durante esos minutos (el subprocess de Freerouting no es una llamada
+IPC). Una conexión IPC en paralelo que sí tuvo actividad (mis propios
+`health` checks) siguió funcionando sin problema en el mismo instante —
+consistente con que el socket/sesión IPC se cae por **inactividad
+prolongada**, no por que KiCad deje de responder en general. `_supervise`
+clasifica correctamente el fallo e invalida `self._client` para el
+PRÓXIMO request (`ipc.py:1410-1412`), pero **no reintenta la operación
+actual con una conexión fresca** — y `open_board` en sí sigue apuntando
+al handle viejo, así que ni siquiera un retry ingenuo del mismo call
+alcanzaría sin volver a pedir el board vía `_open_board_or_none`.
+
+**Por qué esto es P0 y no un caso de borde:** el escenario que lo
+dispara — Freerouting tardando varios minutos — es el caso **normal**
+para cualquier board no trivial (ver F-V3-ROUTER-TIMEOUT-HARD arriba:
+HackRF One ni completa en 30 min). Sin un fix, `route_board(refill=true)`
+sobre un board real que tarde más de ~1-2 min en rutear probablemente
+**nunca** consiga refillear zonas automáticamente — degrada con gracia
+(error explícito + hint manual, D-23.2 intacto) pero convierte la
+"seguridad de fábrica" del pipeline en algo que hay que completar a mano
+siempre, no en el caso raro.
+
+**No investigado en esta sesión (decisión explícita, alcance de
+sesión):** no se instrumentó para confirmar que el `ConnectionError`
+viene específicamente de un timeout de inactividad del socket IPC (vs.
+otra causa); no se probó si un retry con `_open_board_or_none(bridge)`
+fresco justo antes del reload (en vez de reusar el `open_board` viejo)
+soluciona el problema — es la hipótesis de fix más directa pero toca el
+pipeline gobernado por D-23.2/ADR-0012, candidato a ADR propio o
+adenda a ADR-0012, no un fix de una línea sin revisión humana. Posible
+relación de familia con "el hallazgo de carrera timeout→reconexión" ya
+anotado en `F-V3-ZONE-FILL-CRASH` (arriba, sesión 48) — mismo barrio
+(`_supervise`/reconexión tras una pausa larga) pero disparador distinto
+(ahí: comandos previos potencialmente aún vivos en KiCad; acá: handle
+capturado antes de un subprocess externo largo, sin tráfico IPC de por
+medio) — no confirmado que sea la MISMA causa raíz, sólo la misma
+familia de fragilidad.
+
+**Trigger para cerrar:** decisión humana sobre el approach (retry con
+handle fresco vs. otro mecanismo), luego repetir H1/H2 reales
+(`tests/test_pcb_session32d_stitching_gui_slow.py`) hasta ver
+`reloaded=True` + `stitched_vias` no vacío.
+
+**Fuente:** sesión 50, descubierto en vivo intentando cerrar el gate GUI
+32d tras resolver F-C4-01. Logs de ambos intentos no versionados
+(`/tmp/f-d5-01-devmic-32d`, `/tmp/h1_retry.log`).
+
 ### F-PCBNEW-SWIG-PY314 — `pcbnew.py` (SWIG, del paquete `kicad`) rompe bajo Python 3.14 del sistema: `GetTracks()`/`GetDrawings()` fallan — ✅ CERRADO sesión 49, fix aplicado
 
 **Origen:** hallazgo colateral durante la investigación de F-C4-01

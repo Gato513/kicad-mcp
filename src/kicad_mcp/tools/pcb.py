@@ -2590,6 +2590,45 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                 except KicadMcpError as exc:
                     reloaded = False
                     reload_error = exc
+                    # F-RELOAD-STALE-POST-ROUTE (sesión 50, ver ADR-0012
+                    # §"Extensión F-RELOAD-STALE"): ``open_board`` se capturó
+                    # ANTES del subprocess externo de Freerouting, que puede
+                    # tardar varios minutos sin tráfico IPC de por medio.
+                    # Observado en producción (3/4 corridas reales) que
+                    # ``reload_board_from_disk`` puede fallar acá con
+                    # ``KICAD_NOT_RUNNING`` pese a que KiCad sigue corriendo —
+                    # causa raíz NO confirmada (7 repros aislados de "conexión
+                    # muere por inactividad" la refutaron, parece
+                    # intermitente/race condition, ver ADR-0012 y BACKLOG).
+                    # ``_supervise`` ya invalidó ``bridge._client`` para el
+                    # PRÓXIMO request
+                    # (D-07.1: no hay retry de mutaciones dentro de una misma
+                    # conexión) — un ÚNICO reintento con un handle COMPLETAMENTE
+                    # FRESCO (nueva conexión vía ``_open_board_or_none``, no la
+                    # ``board`` vieja) le da a la recarga una segunda chance sin
+                    # tocar el guard D-32b.1: sólo aplica si el error es
+                    # específicamente ``KICAD_NOT_RUNNING`` (firma de conexión
+                    # perdida, no de un fallo real de KiCad) y sólo si, tras
+                    # reconectar, el editor abierto SIGUE siendo el mismo
+                    # target — si cambió o se cerró mientras tanto, es un
+                    # fallo genuino y se preserva el comportamiento anterior
+                    # (POST_ROUTE_REFILL_SKIPPED más abajo).
+                    if exc.code is ErrorCode.KICAD_NOT_RUNNING:
+                        retry_board = _open_board_or_none(bridge)
+                        retry_path = (
+                            bridge.get_open_board_path(retry_board)
+                            if retry_board is not None
+                            else None
+                        )
+                        if retry_path is not None and retry_path.resolve() == pcb_path.resolve():
+                            assert retry_board is not None  # retry_path lo implica
+                            try:
+                                bridge.reload_board_from_disk(retry_board)
+                                reloaded = True
+                                reload_error = None
+                                open_board = retry_board
+                            except KicadMcpError as exc2:
+                                reload_error = exc2
             else:
                 reloaded = "skipped_editor_closed" if open_board is None else False
 

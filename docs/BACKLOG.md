@@ -383,10 +383,11 @@ parcialmente ruteado en disco, no investigado más) — el motor de
 Freerouting ya no es el bloqueante. H1/H2 en sí **no pudieron ejecutarse
 hasta el final** (2/2) por el hallazgo nuevo, no por F-C4-01.
 
-### F-RELOAD-STALE-POST-ROUTE — `route_board` pierde la conexión IPC al
-`BoardHandle` capturado ANTES del round-trip de Freerouting cuando el
-ruteo tarda varios minutos — el refill de seguridad post-route falla
-reproduciblemente (2/2) con `POST_ROUTE_REFILL_SKIPPED`/`KICAD_NOT_RUNNING`
+### F-RELOAD-STALE-POST-ROUTE — el refill de seguridad post-route puede
+fallar con `POST_ROUTE_REFILL_SKIPPED`/`KICAD_NOT_RUNNING` cuando el
+ruteo tarda varios minutos — **mitigación (retry) implementada y
+verificada por unit, causa raíz NO confirmada pese a investigación
+extensiva (parece intermitente, no 100% reproducible)**
 
 **Origen:** sesión 50, al fin conseguir que el gate GUI 32d (H1,
 `anavi-dev-mic`) corriera con Freerouting real tras cerrar F-C4-01
@@ -412,58 +413,91 @@ recuperable** — pero el mecanismo de refill automático, la razón de ser
 de todo el pipeline post-route, no corre solo cuando más falta hace
 (boards que tardan lo suficiente en rutear como para que esto dispare).
 
-**Hipótesis de causa raíz (fuerte, no 100% confirmada — no se
-instrumentó el socket para probarlo directamente):** `open_board`
-(`tools/pcb.py:2500`, vía `_open_board_or_none(bridge)`) se captura
-**ANTES** de arrancar el subprocess externo de Freerouting — el mismo
-objeto/handle se reutiliza ~5 minutos después, tras el round-trip
-completo, para el reload. La conexión IPC subyacente (kipy `KiCad`
-client, singleton en `IpcBridge._client`) no recibe NINGÚN tráfico
-durante esos minutos (el subprocess de Freerouting no es una llamada
-IPC). Una conexión IPC en paralelo que sí tuvo actividad (mis propios
-`health` checks) siguió funcionando sin problema en el mismo instante —
-consistente con que el socket/sesión IPC se cae por **inactividad
-prolongada**, no por que KiCad deje de responder en general. `_supervise`
-clasifica correctamente el fallo e invalida `self._client` para el
-PRÓXIMO request (`ipc.py:1410-1412`), pero **no reintenta la operación
-actual con una conexión fresca** — y `open_board` en sí sigue apuntando
-al handle viejo, así que ni siquiera un retry ingenuo del mismo call
-alcanzaría sin volver a pedir el board vía `_open_board_or_none`.
+**Hipótesis de causa raíz original (REFUTADA por instrumentación
+directa, misma sesión):** se sospechó que `open_board`
+(`tools/pcb.py:2500`, vía `_open_board_or_none(bridge)`), capturado
+**ANTES** de arrancar el subprocess externo de Freerouting, perdía la
+conexión IPC subyacente por **inactividad prolongada** durante los
+~250-320s sin tráfico IPC del round-trip. **Refutada con 7 repros
+aislados, ninguno reprodujo el fallo:** (1) conexión idle 300s con
+pings periódicos — sobrevive; (2) conexión bajo la carga REAL de
+Freerouting (JVM a 123% CPU, ~190s) con pings cada 10s — sobrevive; (3)
+conexión con **silencio TOTAL e ininterrumpido de 290s** (sin ningún
+ping, replicando exactamente la ausencia de tráfico IPC de
+`run_autoroute`) usando el MISMO handle viejo — sobrevive,
+`get_board()`/`revert()` OK; (4) ídem pero con `subprocess.run(["sleep",
+"290"])` real en vez de `time.sleep()` — sobrevive; (5) ídem usando la
+clase `IpcBridge` real (no `kipy` crudo) — sobrevive, `reload_board_
+from_disk()` con el handle viejo funciona tras el subprocess; (6) ídem
+despachado dentro de `anyio.to_thread.run_sync()` (la forma exacta en
+que FastMCP corre `route_board`, que es `def` sync, no `async def`) —
+sobrevive; (7) `os.replace()` sobre el `.kicad_pcb` abierto (nuevo
+inodo, mismo path, el mecanismo exacto de D-14.3) seguido de `revert()`
+inmediato — sobrevive. **Ninguna de las variables mecánicas
+identificables (inactividad, carga de CPU, spawn de subprocess, thread
+del dispatch, reemplazo de inodo) rompe la conexión en aislamiento.**
 
-**Por qué esto es P0 y no un caso de borde:** el escenario que lo
-dispara — Freerouting tardando varios minutos — es el caso **normal**
-para cualquier board no trivial (ver F-V3-ROUTER-TIMEOUT-HARD arriba:
-HackRF One ni completa en 30 min). Sin un fix, `route_board(refill=true)`
-sobre un board real que tarde más de ~1-2 min en rutear probablemente
-**nunca** consiga refillear zonas automáticamente — degrada con gracia
-(error explícito + hint manual, D-23.2 intacto) pero convierte la
-"seguridad de fábrica" del pipeline en algo que hay que completar a mano
-siempre, no en el caso raro.
+**Evidencia de que el fallo real es intermitente, no determinístico:**
+de 4 corridas reales de `route_board()` completas contra KiCad (misma
+máquina, mismo proyecto, ~250-330s de ruteo real cada vez), **3
+fallaron** con `KICAD_NOT_RUNNING` en el reload y **1 tuvo éxito a la
+primera** (sin necesitar ningún retry) — la 4ª corrida, con logging de
+debug temporal en `_supervise()` para capturar el traceback crudo antes
+de la clasificación, simplemente no generó ninguna excepción que
+capturar. Esto es inconsistente con una causa 100% mecánica y
+reproducible; más compatible con una race condition rara (máquina de
+2 núcleos con uso pesado de swap, ver `free -h` de esta sesión —
+2.8GiB/3.8GiB de swap en uso — candidato a variable de confusión no
+controlada entre corridas) que ninguno de los 7 experimentos aislados
+logró disparar deliberadamente.
 
-**No investigado en esta sesión (decisión explícita, alcance de
-sesión):** no se instrumentó para confirmar que el `ConnectionError`
-viene específicamente de un timeout de inactividad del socket IPC (vs.
-otra causa); no se probó si un retry con `_open_board_or_none(bridge)`
-fresco justo antes del reload (en vez de reusar el `open_board` viejo)
-soluciona el problema — es la hipótesis de fix más directa pero toca el
-pipeline gobernado por D-23.2/ADR-0012, candidato a ADR propio o
-adenda a ADR-0012, no un fix de una línea sin revisión humana. Posible
-relación de familia con "el hallazgo de carrera timeout→reconexión" ya
-anotado en `F-V3-ZONE-FILL-CRASH` (arriba, sesión 48) — mismo barrio
-(`_supervise`/reconexión tras una pausa larga) pero disparador distinto
-(ahí: comandos previos potencialmente aún vivos en KiCad; acá: handle
-capturado antes de un subprocess externo largo, sin tráfico IPC de por
-medio) — no confirmado que sea la MISMA causa raíz, sólo la misma
-familia de fragilidad.
+**Fix implementado de todos modos (commit pendiente de esta sesión):**
+aunque la causa raíz exacta no se confirmó, el retry único con handle
+fresco (`tools/pcb.py`, gateado a `exc.code is ErrorCode.KICAD_NOT_RUNNING`
++ re-verificación de `is_target_open`) es una mitigación de costo/riesgo
+bajo — no reintenta la MISMA conexión (D-07.1 intacto), no relaja el
+guard `reloaded is True` (D-32b.1 intacto), y en el peor caso (ambos
+intentos fallan) se comporta IDÉNTICO a antes del fix. Verificado con 5
+tests unit (`tests/test_pcb_session50_reload_retry_canary.py`): éxito
+del reintento, agotamiento tras 2 fallos, editor cerrado/cambiado
+mientras tanto, no-retry para códigos que no son `KICAD_NOT_RUNNING`.
+Documentado en ADR-0012 §"Extensión F-RELOAD-STALE (sesión 50)".
 
-**Trigger para cerrar:** decisión humana sobre el approach (retry con
-handle fresco vs. otro mecanismo), luego repetir H1/H2 reales
-(`tests/test_pcb_session32d_stitching_gui_slow.py`) hasta ver
-`reloaded=True` + `stitched_vias` no vacío.
+**Por qué esto sigue siendo prioritario pese a ser intermitente:** el
+escenario que lo dispara —Freerouting tardando varios minutos— es el
+caso NORMAL para cualquier board no trivial (ver F-V3-ROUTER-TIMEOUT-HARD
+arriba). Con 3/4 de fallo observado en esta sesión, la tasa real puede
+ser alta; el fix mitiga sin poder garantizar cierre total mientras la
+causa exacta no se identifique.
+
+**No cerrado — no confirmado que el fix por sí solo alcance.** El
+único intento real POST-fix con `route_board` completo (la corrida que
+tuvo éxito) no permite distinguir si el éxito vino del reintento o de
+que el primer intento ya funcionó — no hubo excepción que capturar. H1
+tampoco pudo verificarse limpio esa corrida: el reload funcionó pero el
+guardrail de stitching rechazó `MK1.3` por razón geométrica distinta
+("cobre ajeno en la región inmediata", no "capas opuestas") — la
+fixture de `/tmp` ya lleva 4 re-ruteos acumulados y la geometría cerca
+de `MK1.3` derivó del escenario original que H1 espera (no-determinismo
+YA documentado en el docstring del test, sesión 32d) — probar H1 limpio
+requiere una copia fresca del fixture original, no reintentado en esta
+sesión por costo de tiempo.
+
+**Trigger para cerrar del todo:** repetir H1 con una copia FRESCA del
+fixture (no la de `/tmp` ya reruteada 4 veces) hasta acumular evidencia
+suficiente (¿cuántas corridas de N fallan/tienen éxito con el fix
+puesto?) para decidir si el retry alcanza o si hace falta seguir
+investigando la causa exacta (candidato: instrumentar con logging
+permanente condicionado a un env var de debug, no temporal como en esta
+sesión, para poder capturar el traceback crudo la próxima vez que
+ocurra en producción sin tener que re-parchear código).
 
 **Fuente:** sesión 50, descubierto en vivo intentando cerrar el gate GUI
-32d tras resolver F-C4-01. Logs de ambos intentos no versionados
-(`/tmp/f-d5-01-devmic-32d`, `/tmp/h1_retry.log`).
+32d tras resolver F-C4-01; extendido con la investigación de causa raíz
+(7 repros aislados, todos refutando la hipótesis de inactividad) y el
+fix + su verificación unit. Logs/scripts de la investigación no
+versionados (`/tmp/f-d5-01-devmic-32d`, `/tmp/probe_*.py`,
+`/tmp/h1_debug.log`).
 
 ### F-PCBNEW-SWIG-PY314 — `pcbnew.py` (SWIG, del paquete `kicad`) rompe bajo Python 3.14 del sistema: `GetTracks()`/`GetDrawings()` fallan — ✅ CERRADO sesión 49, fix aplicado
 

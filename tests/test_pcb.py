@@ -425,9 +425,7 @@ async def test_move_footprint_rejects_external_disk_edit(
     mcp = _make_server(bridge)
 
     async with create_connected_server_and_client_session(mcp._mcp_server) as client:
-        result = await client.call_tool(
-            "move_footprint", {"ref": "U1", "x_mm": 50.0, "y_mm": 50.0}
-        )
+        result = await client.call_tool("move_footprint", {"ref": "U1", "x_mm": 50.0, "y_mm": 50.0})
     assert result.isError
     text = _text(result)
     assert "EXTERNAL_EDIT_DETECTED" in text

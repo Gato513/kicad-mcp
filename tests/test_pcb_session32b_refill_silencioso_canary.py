@@ -325,7 +325,11 @@ async def test_live_stale_marcado_antes_de_levantar(
 @pytest.mark.unit
 async def test_no_retry_del_reload(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """D-07.1: mutaciones no se reintentan. reload_board_from_disk se llama
-    UNA sola vez pese a fallar — el fix no agrega retry."""
+    UNA sola vez pese a fallar con un error que NO es KICAD_NOT_RUNNING (acá,
+    AS_BUSY) — el fix de sesión 32b no agrega retry genérico. Sesión 50 SÍ
+    agregó un reintento acotado, pero sólo para la firma específica de
+    conexión perdida (KICAD_NOT_RUNNING, con un handle completamente fresco,
+    no la misma conexión) — ver test_pcb_session50_reload_retry_canary.py."""
     project = _make_project(tmp_path)
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
     _patch_pipeline(monkeypatch, drc_sequence=[_drc(3), _drc(0)], result=_result(project))

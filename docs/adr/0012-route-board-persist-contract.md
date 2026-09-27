@@ -318,3 +318,78 @@ esta sesión que ningún PCB Editor estaba en foco. Ver
 **Fuente:** sesión 32d. Ver `docs/investigacion/32c-f-d5-01.md` §"Hipótesis
 de fix para sesión 32d" (input) y `docs/historico/sesiones/32d-reporte.md`
 (análisis comparativo D1-D3).
+
+## Extensión F-RELOAD-STALE (sesión 50)
+
+Con el motor de Freerouting real funcionando de punta a punta contra
+`anavi-dev-mic` (jar 2.4.1 + Java 25, ver ADR-0011), el gate GUI 32d (H1)
+descubrió un modo de falla nuevo del guard `reload_error is not None` que
+D-32b.1 introdujo: cuando el ruteo tarda varios minutos (250-320s en las
+corridas reales de esta sesión — el caso NORMAL para cualquier board no
+trivial, no uno raro), `reload_board_from_disk(open_board)` puede fallar
+con `KICAD_NOT_RUNNING`, pese a que KiCad sigue corriendo y respondiendo
+(confirmado por una conexión IPC *distinta*, activa, en el mismo instante
+del fallo). Efecto: `POST_ROUTE_REFILL_SKIPPED` se disparaba con
+frecuencia alta cuando hiciera falta el refill de verdad — el mecanismo
+de seguridad de este mismo ADR quedaba parcialmente inútil en la
+práctica para boards reales.
+
+**Causa raíz: NO confirmada pese a investigación extensiva — la hipótesis
+de inactividad del socket quedó REFUTADA.** Se sospechó inicialmente que
+`open_board` (capturado en `tools/pcb.py` ANTES del subprocess externo de
+Freerouting, D-14.3, reutilizado minutos después para la recarga) perdía
+la conexión IPC subyacente por falta de tráfico durante el round-trip.
+7 repros aislados (idle con pings, carga real de CPU del JVM, silencio
+total ininterrumpido de 290s, `subprocess.run()` real, la clase
+`IpcBridge` real, dispatch vía `anyio.to_thread.run_sync` — la forma
+exacta en que FastMCP corre `route_board`, sync no async —, y
+`os.replace()` sobre el archivo abierto) **no lograron reproducir el
+fallo en NINGÚN caso**. Evidencia adicional de que el fallo real podría
+ser una race condition intermitente, no determinística: de 4 corridas
+reales completas de `route_board()` contra KiCad en la misma sesión, 3
+fallaron y 1 tuvo éxito a la primera sin necesitar retry. `_supervise`
+clasifica correctamente cualquier `ConnectionError` real (sea cual sea
+su causa) e invalida `self._client` para el PRÓXIMO request (`ipc.py`),
+pero no reintentaba la operación actual, y `open_board` en sí seguía
+apuntando al handle viejo — ni un retry ingenuo del mismo call habría
+alcanzado. Detalle completo de los 7 repros: `docs/BACKLOG.md` entrada
+`F-RELOAD-STALE-POST-ROUTE`.
+
+**Decisión:** un ÚNICO reintento de `reload_board_from_disk`, con un handle
+COMPLETAMENTE FRESCO (`_open_board_or_none(bridge)` de nuevo — nueva
+conexión, nuevo `Board`, no el `open_board` viejo), cuando y sólo cuando el
+error de la primera recarga es específicamente `KICAD_NOT_RUNNING` — la
+firma de una conexión perdida (`ConnectionError`/`kipy.errors.ConnectionError`
+vía `_map_ipc_failure`), no de un fallo real de KiCad (`AS_BUSY`, timeout u
+otro). El reintento sólo se acepta si, tras reconectar, el editor abierto
+SIGUE siendo el mismo target (`get_open_board_path` del handle fresco
+resuelve al mismo `pcb_path`) — si cambió de proyecto o se cerró mientras
+tanto, es un fallo genuino y se preserva el comportamiento de D-32b.1 sin
+cambios (`POST_ROUTE_REFILL_SKIPPED`).
+
+**Por qué esto NO reabre "el guard `reloaded is True` no se relaja"**
+(sección de sesión 32b arriba): el reintento no desacopla refill de
+reload ni refillea con un vivo desactualizado — sigue exigiendo
+`reloaded is True` genuino antes de tocar zonas. Sólo le da a la
+recarga EN SÍ una segunda oportunidad, con una conexión que realmente
+funciona, antes de concluir que falló. Si el reintento también falla
+(con `KICAD_NOT_RUNNING` u otro código), el pipeline cae exactamente al
+mismo camino que antes de este fix — D-07.1 (mutaciones sin retry)
+sigue intacto en el sentido estricto: no se reintenta la MISMA operación
+sobre la MISMA conexión, se reintenta sobre una conexión distinta tras
+una reconexión ya forzada por `_supervise`.
+
+**No confirmado con el motor real de forma concluyente** (pendiente al
+cierre de sesión 50): el fix está verificado con un canario unit
+(`tests/test_pcb_session50_reload_retry_canary.py`, 5 casos — éxito del
+reintento, agotamiento tras 2 fallos, editor cerrado/cambiado mientras
+tanto, no-retry para errores no-`KICAD_NOT_RUNNING`). Contra KiCad real,
+la única corrida POST-fix con `route_board` completo tuvo éxito a la
+primera (sin necesitar el reintento) — no permite distinguir si el fix
+ayudó o si simplemente no hizo falta esa vez. Dado el patrón intermitente
+observado (3/4 fallos reales en la sesión), cerrar esto con confianza
+requiere acumular más corridas reales — el gate GUI 32d (H1, con una
+copia FRESCA del fixture, no una ya re-ruteada varias veces) es el
+trigger de cierre definitivo.
+
+**Fuente:** sesión 50, `docs/BACKLOG.md` entrada `F-RELOAD-STALE-POST-ROUTE`.

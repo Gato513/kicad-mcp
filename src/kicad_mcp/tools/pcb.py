@@ -2614,21 +2614,42 @@ def register(mcp: FastMCP, *, ipc_bridge: IpcBridge | None = None) -> None:
                     # fallo genuino y se preserva el comportamiento anterior
                     # (POST_ROUTE_REFILL_SKIPPED más abajo).
                     if exc.code is ErrorCode.KICAD_NOT_RUNNING:
-                        retry_board = _open_board_or_none(bridge)
-                        retry_path = (
-                            bridge.get_open_board_path(retry_board)
-                            if retry_board is not None
-                            else None
-                        )
-                        if retry_path is not None and retry_path.resolve() == pcb_path.resolve():
-                            assert retry_board is not None  # retry_path lo implica
-                            try:
-                                bridge.reload_board_from_disk(retry_board)
-                                reloaded = True
-                                reload_error = None
-                                open_board = retry_board
-                            except KicadMcpError as exc2:
-                                reload_error = exc2
+                        try:
+                            retry_board = _open_board_or_none(bridge)
+                        except KicadMcpError as exc_retry_open:
+                            # Auditoría de Codex (commit bf54747, [P1]):
+                            # ``_open_board_or_none`` sólo traga
+                            # ``KICAD_NOT_RUNNING`` — un fallo distinto acá
+                            # (``KICAD_RESTARTED``, ``AS_BUSY``, etc.) NO
+                            # debe escapar sin capturar: el ruteo YA reemplazó
+                            # el .kicad_pcb en disco (D-14.3/D-23.2) y dejar
+                            # que la excepción se propague acá saltearía el
+                            # registro de ``live_stale``/snapshot más abajo —
+                            # un vivo desactualizado podría después pisar el
+                            # ruteo recién persistido. Se pliega como el
+                            # ``reload_error`` real: mismo camino honesto de
+                            # ``POST_ROUTE_REFILL_SKIPPED`` que si el
+                            # reintento hubiera fallado en la recarga misma.
+                            retry_board = None
+                            reload_error = exc_retry_open
+                        else:
+                            retry_path = (
+                                bridge.get_open_board_path(retry_board)
+                                if retry_board is not None
+                                else None
+                            )
+                            if (
+                                retry_path is not None
+                                and retry_path.resolve() == pcb_path.resolve()
+                            ):
+                                assert retry_board is not None  # retry_path lo implica
+                                try:
+                                    bridge.reload_board_from_disk(retry_board)
+                                    reloaded = True
+                                    reload_error = None
+                                    open_board = retry_board
+                                except KicadMcpError as exc2:
+                                    reload_error = exc2
             else:
                 reloaded = "skipped_editor_closed" if open_board is None else False
 

@@ -101,6 +101,7 @@ class _FakeBridge(IpcBridge):
         reload_error: Exception | None = None,
         reload_fail_times: int = 1,
         open_board_path_on_retry: str | None | object = _UNSET,
+        get_open_board_error_on_retry: KicadMcpError | None = None,
         n_zones: int = 0,
     ) -> None:
         self._client = None  # type: ignore[assignment]
@@ -108,6 +109,7 @@ class _FakeBridge(IpcBridge):
         self._lock = threading.Lock()
         self._open_board_path = open_board_path
         self._open_board_path_on_retry = open_board_path_on_retry
+        self._get_open_board_error_on_retry = get_open_board_error_on_retry
         self._refs = list(refs or ["U1", "R1"])
         self._reload_error = reload_error
         self._reload_fail_times = reload_fail_times
@@ -127,6 +129,8 @@ class _FakeBridge(IpcBridge):
 
     def get_open_board(self) -> BoardHandle | None:  # type: ignore[override]
         self.get_open_board_calls += 1
+        if self.get_open_board_calls > 1 and self._get_open_board_error_on_retry is not None:
+            raise self._get_open_board_error_on_retry
         if self._current_path() is None:
             return None
         return BoardHandle(_raw=object())
@@ -428,3 +432,40 @@ async def test_no_retry_for_non_connection_errors(
     assert "POST_ROUTE_REFILL_SKIPPED" in _text(result)
     assert bridge.reload_calls == 1  # ni get_open_board_or_none se volvió a llamar
     assert bridge.get_open_board_calls == 1
+
+
+@pytest.mark.unit
+async def test_reload_retry_survives_error_reconnecting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Auditoría de Codex ([P1] sobre bf54747): si ``_open_board_or_none``
+    (el fetch del handle fresco) levanta un ``KicadMcpError`` DISTINTO de
+    ``KICAD_NOT_RUNNING`` (ej. ``KICAD_RESTARTED``), eso NO debe escapar sin
+    capturar — el ruteo ya reemplazó el .kicad_pcb en disco (D-14.3); dejar
+    que la excepción se propague saltearía el registro de ``live_stale``/
+    snapshot más abajo, exponiendo el ruteo recién persistido a que un vivo
+    desactualizado lo pise después. Debe caer al mismo POST_ROUTE_REFILL_SKIPPED
+    honesto que cualquier otro fallo de reload, con live_stale marcado."""
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    _patch_pipeline(monkeypatch, drc_sequence=[_drc(3), _drc(0)], result=_result(project))
+    bridge = _FakeBridge(
+        open_board_path=str(project / "proj.kicad_pcb"),
+        n_zones=2,
+        reload_error=_not_running_error(),
+        reload_fail_times=1,
+        get_open_board_error_on_retry=KicadMcpError(
+            code=ErrorCode.KICAD_RESTARTED,
+            message="KiCad se reinició durante la sesión.",
+            hint="Pedí get_world_context.",
+        ),
+    )
+    mcp = _server(bridge)
+
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("route_board", {})
+
+    assert result.isError
+    assert "POST_ROUTE_REFILL_SKIPPED" in _text(result)
+    assert bridge.reload_calls == 1  # nunca llegó a reintentar el reload en sí
+    assert get_default_store().is_live_stale() is True

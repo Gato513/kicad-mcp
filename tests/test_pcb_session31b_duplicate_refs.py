@@ -492,15 +492,22 @@ board.Save(sys.argv[1])
 @pytest.mark.integration
 @pytest.mark.xfail(
     reason=(
-        "F-DUPREFS-SILENT-NETLIST (docs/BACKLOG.md, sesión 49): en KiCad "
-        "10.0.6, pcbnew.ExportSpecctraDSN ya NO falla con refs duplicados "
-        "— los renombra solo (REF** -> REF**_1) y trunca esos pines del "
-        "netlist en silencio, sin error. La premisa original de este test "
-        "(sesión 31b) era que fallaba enteramente; eso dejó de ser cierto "
-        "en esta versión. xfail en vez de arreglar la aserción: no está "
-        "investigado si es un cambio de versión de KiCad o algo más, y "
-        "afirmar el comportamiento nuevo como 'correcto' sin esa "
-        "investigación sería prematuro. La producción no está en riesgo — "
+        "F-DUPREFS-SILENT-NETLIST (docs/BACKLOG.md, sesión 49/50): en "
+        "KiCad 10.0.6, pcbnew.ExportSpecctraDSN ya NO falla con refs "
+        "duplicados — los renombra solo (REF** -> REF**_1). La premisa "
+        "original de este test (sesión 31b) era que fallaba enteramente; "
+        "eso dejó de ser cierto en esta versión. xfail en vez de arreglar "
+        "la aserción: no está investigado si es un cambio de versión de "
+        "KiCad o algo más. **Aclaración de sesión 50**: la afirmación de "
+        "sesión 49 de que esto 'trunca el netlist en silencio' quedó "
+        "REFUTADA para el caso que realmente importa — ver "
+        "test_export_dsn_preserves_connectivity_of_duplicate_refs_with_"
+        "real_net (mismo archivo), que confirma que refs duplicados CON "
+        "conectividad real (un net asignado) exportan sus 8 pines sin "
+        "pérdida. El fixture 006 usado acá tiene los REF** SIN net por "
+        "diseño (ver su SOURCE.md) — su ausencia del DSN es la ausencia "
+        "esperable de cualquier pad sin net, no evidencia de pérdida. La "
+        "producción no está en riesgo por ninguna de las dos razones — "
         "el precheck DUPLICATE_REFS de route_board no depende de "
         "ExportSpecctraDSN, ver _find_duplicate_refs en tools/pcb.py."
     ),
@@ -538,3 +545,77 @@ def test_export_dsn_fails_with_duplicate_refs_and_succeeds_after_rename(
     _run_export_dsn(subprocess.run, system_python, pcb_path, dsn_path, 60.0)
     assert dsn_path.exists()
     assert dsn_path.stat().st_size > 0
+
+
+_ASSIGN_NET_TO_DUPS_SCRIPT = """
+import sys
+import pcbnew
+board = pcbnew.LoadBoard(sys.argv[1])
+net1 = None
+for net in board.GetNetInfo().NetsByNetcode().values():
+    if net.GetNetname() == "NET1":
+        net1 = net
+        break
+assert net1 is not None
+dups = [fp for fp in board.GetFootprints() if fp.GetReference() == "REF**"]
+assert len(dups) == 2, dups
+for fp in dups:
+    for pad in fp.Pads():
+        pad.SetNet(net1)
+board.Save(sys.argv[1])
+"""
+
+
+@pytest.mark.integration
+def test_export_dsn_preserves_connectivity_of_duplicate_refs_with_real_net(
+    tmp_path: Path,
+) -> None:
+    """F-DUPREFS-SILENT-NETLIST (docs/BACKLOG.md, sesión 49/50) — refutación
+    parcial del hallazgo original con evidencia nueva (sesión 50).
+
+    Sesión 49 reportó que los pines de los footprints ``REF**``/``REF**_1``
+    quedaban "completamente ausentes del netlist" tras el renombrado
+    automático de refs duplicados — leído como riesgo de pérdida silenciosa
+    de conectividad si el precheck ``DUPLICATE_REFS`` alguna vez se
+    bypasea. Esa evidencia usó el fixture 006 tal cual está commiteado:
+    los 2 footprints ``REF**`` son filler heredado de 005, **sin net
+    asignado por diseño** (ver ``SOURCE.md`` del fixture) — su ausencia de
+    cualquier ``(net ...)`` del DSN es exactamente lo esperable para
+    cualquier pad sin net, duplicado o no; no demuestra pérdida de datos.
+
+    Este test asigna ``NET1`` (el net real que ya conecta ``R1``/``R2`` en
+    el fixture) a los 4 pads de los 2 ``REF**`` — el escenario que
+    realmente importaría en producción, donde refs duplicados SÍ tienen
+    conectividad real. Resultado: los 8 pines (incluidos los de ambas
+    instancias renombradas) aparecen correctamente en ``(net NET1 (pins
+    ...))`` — **sin pérdida**. El riesgo de "pérdida silenciosa de
+    conectividad" que motivaba el punto (2) de "por qué sí importa igual"
+    en el BACKLOG no se materializa en este escenario; sigue habiendo
+    valor en el precheck ``DUPLICATE_REFS`` por otras razones (DSN más
+    legible, `set_footprint_ref` sigue siendo la resolución correcta), pero
+    no por pérdida de conectividad demostrada."""
+    project = tmp_path / "proj"
+    mirror_fixture(_FIXTURE_006, project)
+    pcb_path = project / "dup_refs.kicad_pcb"
+    dsn_path = tmp_path / "out.dsn"
+    system_python = _resolve_system_python(None)
+
+    assigned = subprocess.run(
+        [system_python, "-c", _ASSIGN_NET_TO_DUPS_SCRIPT, str(pcb_path)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert assigned.returncode == 0, assigned.stderr
+
+    _run_export_dsn(subprocess.run, system_python, pcb_path, dsn_path, 60.0)
+    dsn_text = dsn_path.read_text()
+
+    net1_block = dsn_text.split("(net NET1", 1)[1].split(")", 1)[0]
+    pins = net1_block.split("(pins", 1)[1].strip()
+    pin_names = pins.split()
+    # 4 pines originales (R1/R2) + 4 de los REF** renombrados — ninguno
+    # se pierde pese al renombrado automático REF** -> REF**_1.
+    assert len(pin_names) == 8, f"esperaba 8 pines en NET1, encontré {pin_names}"
+    assert any(p.startswith("REF**-") for p in pin_names)
+    assert any(p.startswith("REF**_1-") for p in pin_names)

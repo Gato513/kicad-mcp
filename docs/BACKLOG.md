@@ -603,7 +603,7 @@ grepear `import pcbnew` en `src/`).
 **Fuente:** sesión 49. Fix en `src/kicad_mcp/bridge/autoroute.py`, tests
 en `tests/test_autoroute.py`.
 
-### F-DUPREFS-SILENT-NETLIST — `pcbnew.ExportSpecctraDSN` ya no falla con refs duplicados en esta versión de KiCad; trunca el netlist en silencio — hallazgo sesión 49, NO investigado a fondo, producción no afectada (precheck independiente sigue protegiendo)
+### F-DUPREFS-SILENT-NETLIST — `pcbnew.ExportSpecctraDSN` ya no falla con refs duplicados en esta versión de KiCad — **el riesgo de "pérdida silenciosa de conectividad" quedó REFUTADO (sesión 50) para el caso con net real; producción no afectada por ninguna vía**
 
 **Origen:** hallazgo colateral al arreglar F-PCBNEW-SWIG-PY314 (arriba) y
 correr la suite `integration` completa para verificar que no rompía
@@ -643,43 +643,67 @@ sigue bloqueando este escenario ANTES de llegar al subprocess de export,
 exactamente igual que antes de este hallazgo. Verificado leyendo el
 código, no sólo asumido.
 
-**Por qué sí importa igual:** (1) la justificación documentada en
-`ADR-0013` y en el propio código ya no describe la realidad de esta
-versión de KiCad — alguien que lea ese comentario para entender el
-riesgo se lleva una imagen equivocada (un crash limpio, no corrupción
-silenciosa); (2) el modo de falla real, si el precheck alguna vez se
-bypasea, resuelve, o hay un camino de código nuevo que llame
-`ExportSpecctraDSN` sin pasar por `_find_duplicate_refs` primero (ej. un
-uso standalone de `bridge/autoroute.py` fuera de `route_board`), sería
-**peor** que lo que el ADR asume: pérdida silenciosa de conectividad, no
-un error visible.
+**Por qué se pensó que importaba igual (sesión 49, REFUTADO parcialmente
+en sesión 50):** (1) la justificación documentada en `ADR-0013` y en el
+propio código ya no describe la realidad de esta versión de KiCad —
+sigue siendo cierto, el ADR sigue desactualizado en ese punto puntual;
+(2) se temió que el modo de falla real, si el precheck alguna vez se
+bypasea, fuera **peor** que lo que el ADR asume: pérdida silenciosa de
+conectividad. **Esto último es lo que sesión 50 investigó a fondo y
+refutó** — ver abajo.
 
-**No investigado en esta sesión (decisión explícita: documentar, no
-tocar el test ni el ADR):** si el comportamiento cambió entre la versión
-de KiCad de sesión 31 y la 10.0.6 actual (más probable), o si depende de
-la forma exacta del board/refs (no descartado); si este mismo patrón de
-truncado silencioso aplica a otros casos que `ExportSpecctraDSN` podría
-manejar mal (footprints sin pads, refs vacíos, etc. — no ejercitados);
-si vale la pena que el precheck `DUPLICATE_REFS` deje de estar
-condicionado únicamente a la app-level check y algo dentro de
-`_run_export_dsn` también valide la integridad del netlist exportado
-(defensa en profundidad) contra el conteo de pines esperado.
+**Investigación de sesión 50 — 3 experimentos controlados contra una
+copia de `tests/fixtures/006_pcb_refs_duplicados/dup_refs.kicad_pcb`
+(scripts en `/tmp/f-duprefs-investigation/`, no versionados; el
+regresivo permanente sí quedó versionado, ver "Estado del test"
+abajo):**
 
-**Estado del test:** revisión independiente de Codex (`codex review
---commit aa85ed5`, sesión 49) marcó como `[P2]` dejar este test en rojo
-a propósito — viola la separación CI/revisión semántica de `AGENTS.md`
-§12 aunque la razón de fondo fuera deliberada. Resuelto marcándolo
-`@pytest.mark.xfail(strict=False, reason=...)` (no arreglando la
-aserción): la suite `integration` vuelve a estar limpia sin afirmar que
-el comportamiento nuevo de `ExportSpecctraDSN` sea el esperado — sigue
-siendo la misma evidencia viva del hallazgo, sólo que ya no rompe la
-señal de CI. Decisión sobre actualizar la aserción en sí (con un assert
-explícito sobre la pérdida de pines) sigue pendiente de cuando se
-investigue esto a fondo.
+1. **Refs duplicados CON conectividad real (el escenario que de verdad
+   importaría en producción):** el fixture 006 commiteado tiene los 2
+   `REF**` **sin net asignado por diseño** (heredados de 005 como
+   filler, ver su propio `SOURCE.md`) — la evidencia original de sesión
+   49 ("los pines de REF**/REF**_1 ausentes del netlist") es exactamente
+   la ausencia esperable de CUALQUIER pad sin net, duplicado o no, no
+   evidencia de pérdida causada por el renombrado. Asignando `NET1` (el
+   net real que ya conecta `R1`/`R2`) a los 4 pads de los 2 `REF**` y
+   re-exportando: **los 8 pines aparecen correctamente en
+   `(net NET1 (pins ...))`**, repartidos entre `REF**-N` y `REF**_1-N` —
+   **sin pérdida**. El riesgo (2) de arriba NO se materializa en este
+   escenario.
+2. **Ref vacía (`""`)**: KiCad la trata como si fuera literalmente
+   `"REF**"` — un footprint con ref vacía colisiona con la MISMA bolsa
+   de duplicados que `"REF**"` y termina renombrado a `REF**_N` en el
+   DSN (sorprendente para inspección humana del placement, pero sin
+   pérdida de conectividad: sus pines siguen apareciendo correctamente
+   bajo su net real).
+3. **Footprint sin pads**: exporta sin error, sin crash; el footprint
+   simplemente no aporta pines a ningún net (nada que perder, ya que no
+   tenía pines).
 
-**Fuente:** sesión 49, hallazgo colateral sin investigación dedicada.
-DSN de evidencia generado en scratchpad, no versionado; reproducible con
-`tests/fixtures/006_pcb_refs_duplicados/` (sí versionado).
+**Conclusión revisada:** el riesgo de "pérdida silenciosa de
+conectividad" que motivaba tratar esto como hallazgo activo no se
+materializa en ninguno de los 3 escenarios probados. Sigue habiendo
+valor real en el precheck `DUPLICATE_REFS` (independiente de este
+hallazgo): un DSN con refs `REF**`/`REF**_1` autogenerados es menos
+legible para debugging, y `set_footprint_ref` sigue siendo la vía
+correcta de resolución (ADR-0013) — pero no por pérdida de datos
+demostrada. El ADR-0013 y el comentario de
+`tools/pcb.py:_find_duplicate_refs` siguen desactualizados en describir
+un crash limpio (`ok=False,size=0`) que ya no ocurre en esta versión de
+KiCad — corrección de esos textos queda como higiene menor, no P0/P1.
+
+**Estado del test:** el xfail original (`test_export_dsn_fails_with_
+duplicate_refs_and_succeeds_after_rename`, sesión 49) se mantiene —
+su premisa de sesión 31b (que la exportación falla enteramente) sigue
+sin cumplirse en KiCad 10.0.6, motivo no investigado (¿cambio de
+versión? sigue abierto). **Test permanente nuevo** (sesión 50,
+`test_export_dsn_preserves_connectivity_of_duplicate_refs_with_real_net`,
+mismo archivo): fija como regresión que refs duplicados CON conectividad
+real exportan sus 8 pines sin pérdida — la evidencia positiva que
+refuta el riesgo (2).
+
+**Fuente:** sesión 49 (hallazgo original, sin investigación dedicada);
+sesión 50 (3 experimentos controlados + test de regresión permanente).
 
 ### F-V2-REFILL-SILENCIOSO — `route_board(refill=true)` puede no persistir el refill sin ningún error visible — ✅ CERRADO sesión 32b
 

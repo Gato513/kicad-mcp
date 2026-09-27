@@ -192,8 +192,47 @@ crashea. Requiere KiCad abierto + `KICAD_MCP_FREEROUTING_JAR` seteada
 (no disponibles en esta sesión, ver `verificar_entorno.py`). Candidato
 natural para retomar la Validation Suite Nivel C.
 
+**Hallazgo colateral cerrado (sesión 50):** el repro standalone de
+sesión 49 sólo pudo correr Freerouting 2.2.3+ invocando Java 26
+manualmente (`/usr/lib/jvm/java-26-openjdk/bin/java`) — Freerouting
+≥2.2.3 exige class file version 69 (**Java 25**), y el `java` del PATH
+de esta máquina resuelve a 21. `bridge/autoroute.py` **no** tenía forma
+de overridear el ejecutable de java en producción (`route_board`
+siempre invocaba el literal `"java"`, a diferencia de `system_python`/
+`jar_path` que sí resuelven contra env vars) — sin este fix, "seteá el
+jar a ≥2.2.3" era **insuficiente** para cerrar este hallazgo vía
+`route_board` real, sólo servía para el repro standalone. Cerrado
+agregando `KICAD_MCP_JAVA_EXE` (mismo patrón que
+`KICAD_MCP_SYSTEM_PYTHON`/`KICAD_MCP_FREEROUTING_JAR`, ver ADR-0011).
+El trigger de arriba ahora sí es alcanzable con KiCad abierto + jar
+≥2.2.3 + `KICAD_MCP_JAVA_EXE` apuntando a un JDK ≥25.
+
+**Confirmación en vivo (sesión 50), vía `route_board` real, no repro
+standalone:** con KiCad 10.0.6 abierto (PCB Editor de
+`hackrf-one/working` en foco), jar 2.4.1 + `KICAD_MCP_JAVA_EXE=java-26`,
+dos corridas reales de `route_board()` contra el board completo (437 fp
+/ 380 nets / 4 capas, 1018 ítems sin rutear reportados por Freerouting):
+`timeout_s=600` y `timeout_s=1800`. **Ninguna de las dos crasheó ni
+produjo `NullPointerException`/`ERROR`** — ambas arrancaron limpio
+(`Auto-routing stage started ... for 1018 unrouted items`) y terminaron
+en `KICAD_TIMEOUT` typed error (D-14.4), con D-23.2 intacto (backup G1
+en `.kicad-mcp/backups/`, board de disco sin tocar, servidor MCP
+responsivo tras el timeout en ambos casos). **Sigue sin confirmarse que
+complete** — ninguna corrida pasó de la línea de arranque en el log
+capturado (8 líneas ambas veces, 10 min y 30 min), lo que probablemente
+sea un artefacto de buffering de stdout de la JVM perdido al matar el
+proceso en el timeout (`_run_freerouting` sólo lee `exc.stdout`/
+`exc.stderr` de `TimeoutExpired`, que no garantiza haber drenado el pipe)
+y no evidencia de que el router esté trabado — pero no se puede
+distinguir una cosa de la otra con la instrumentación actual. **El
+crash-loop P0 queda confirmado resuelto con evidencia real, no sólo
+standalone; "completa en tiempo razonable" sigue abierto como ítem de
+calidad/tiempo, no bloqueante.**
+
 **Fuente:** sesión 33 (hallazgo original), sesión 49 (causa raíz +
-repro standalone, sin cambios de código en el repo). Log de 2.1.0 en
+repro standalone, sin cambios de código en el repo), sesión 50 (fix de
+`KICAD_MCP_JAVA_EXE` + confirmación real vía `route_board` contra KiCad
+vivo). Log de 2.1.0 en
 `validation-suite/level-c/hackrf-one/working/.kicad-mcp/autoroute/freerouting.log`
 (no versionado — archivo de trabajo); repro de 2.2.3 hecho en
 scratchpad, no versionado.
@@ -324,7 +363,10 @@ señales) tiene camino de resolución confirmado.
 abierto, y confirmar que `route_board` completa con `stitched_vias` conteniendo
 la entrada de `MK1.3` como esperaba H1 originalmente. `F-PCBNEW-SWIG-PY314`
 (abajo, bloqueante del export DSN real en esta máquina) ya está cerrado
-— el gate sólo necesita ahora KiCad abierto + el jar configurado.
+— el gate sólo necesita ahora KiCad abierto + el jar configurado + (ver
+hallazgo colateral en `F-V3-ROUTER-TIMEOUT-HARD` arriba) `KICAD_MCP_JAVA_EXE`
+apuntando a un JDK ≥25, ya que el `java` del PATH de esta máquina no alcanza
+para ningún jar ≥2.2.3.
 
 **Fuente:** Ciclo C4 (hallazgo original, diagnóstico parcial),
 `docs/investigacion/c4-gate-gui-32d-h1-devmic-timeout.md`; sesión 49

@@ -60,6 +60,7 @@ _LOGGER = logging.getLogger("kicad_mcp")
 _SYSTEM_PYTHON_DEFAULT: Final = "/usr/bin/python3"
 _SYSTEM_PYTHON_ENV: Final = "KICAD_MCP_SYSTEM_PYTHON"
 _JAVA_EXE_DEFAULT: Final = "java"
+_JAVA_EXE_ENV: Final = "KICAD_MCP_JAVA_EXE"
 _JAR_ENV: Final = "KICAD_MCP_FREEROUTING_JAR"
 
 # Exit codes de los scripts ``pcbnew`` (para distinguir el mapeo de errores).
@@ -200,6 +201,19 @@ class AutorouteResult:
 
 def _resolve_system_python(system_python: str | None) -> str:
     return system_python or os.environ.get(_SYSTEM_PYTHON_ENV) or _SYSTEM_PYTHON_DEFAULT
+
+
+def _resolve_java_exe(java_exe: str | None) -> str:
+    """Resuelve el ejecutable de java para invocar Freerouting.
+
+    Fuente: ``java_exe`` explícito o el env ``KICAD_MCP_JAVA_EXE``, con
+    fallback a ``"java"`` del PATH (comportamiento histórico). Necesario
+    porque el requisito de versión de Java lo fija el JAR de Freerouting
+    elegido, no este server — un ``java`` del PATH que sirve para 2.1.0
+    puede ser demasiado viejo para 2.2.3+ (confirmado sesión 49: class file
+    version 69 = Java 25, el `java` por defecto puede quedar en 17-21).
+    """
+    return java_exe or os.environ.get(_JAVA_EXE_ENV) or _JAVA_EXE_DEFAULT
 
 
 def _resolve_jar(jar_path: str | None) -> str:
@@ -732,7 +746,7 @@ def run_autoroute(
     runner: SubprocessRunner | None = None,
     system_python: str | None = None,
     jar_path: str | None = None,
-    java_exe: str = _JAVA_EXE_DEFAULT,
+    java_exe: str | None = None,
 ) -> AutorouteResult:
     """Ejecuta el round-trip DSN → Freerouting → SES sobre ``src_pcb`` de disco.
 
@@ -745,6 +759,7 @@ def run_autoroute(
     run: SubprocessRunner = runner if runner is not None else subprocess.run
     sys_py = _resolve_system_python(system_python)
     jar = _resolve_jar(jar_path)
+    java = _resolve_java_exe(java_exe)
 
     workdir.mkdir(parents=True, exist_ok=True)
     dsn = workdir / "route.dsn"
@@ -768,9 +783,7 @@ def run_autoroute(
     export_ms = (time.perf_counter() - t0) * 1000
 
     t1 = time.perf_counter()
-    _run_freerouting(
-        run, java_exe, jar, dsn, ses, log_path, max_passes=max_passes, timeout_s=timeout_s
-    )
+    _run_freerouting(run, java, jar, dsn, ses, log_path, max_passes=max_passes, timeout_s=timeout_s)
     route_ms = (time.perf_counter() - t1) * 1000
 
     t2 = time.perf_counter()

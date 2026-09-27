@@ -49,6 +49,7 @@ class _FakeRunner:
         self.produce_ses = produce_ses
         self.import_counts = import_counts
         self.calls: list[str] = []
+        self.last_java_args: list[str] = []
 
     def __call__(
         self,
@@ -61,6 +62,7 @@ class _FakeRunner:
     ) -> subprocess.CompletedProcess[str]:
         if args[0] == "java" or "-jar" in args:
             self.calls.append("java")
+            self.last_java_args = args
             return self._resolve_java(args)
         # python -c <script> ...
         script = args[2]
@@ -123,6 +125,31 @@ def test_autoroute_success(tmp_path: Path, jar: str) -> None:
     assert result.export_ms >= 0 and result.route_ms >= 0 and result.import_ms >= 0
     assert Path(result.routed_pcb).name == "routed.kicad_pcb"
     assert runner.calls == ["export", "java", "import"]
+
+
+@pytest.mark.unit
+def test_resolve_java_exe_precedencia(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explícito > env > default ``"java"`` (mismo orden que jar/system_python)."""
+    monkeypatch.delenv("KICAD_MCP_JAVA_EXE", raising=False)
+    assert autoroute._resolve_java_exe(None) == "java"
+
+    monkeypatch.setenv("KICAD_MCP_JAVA_EXE", "/opt/java25/bin/java")
+    assert autoroute._resolve_java_exe(None) == "/opt/java25/bin/java"
+    assert autoroute._resolve_java_exe("/explicit/java") == "/explicit/java"
+
+
+@pytest.mark.unit
+def test_autoroute_usa_java_exe_del_env(
+    tmp_path: Path, jar: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``run_autoroute`` sin ``java_exe`` explícito respeta ``KICAD_MCP_JAVA_EXE``
+
+    (session actual: el ``java`` por defecto del PATH puede ser incompatible
+    con el jar de Freerouting pineado — ver docstring de ``_resolve_java_exe``)."""
+    monkeypatch.setenv("KICAD_MCP_JAVA_EXE", "/opt/java25/bin/java")
+    runner = _FakeRunner()
+    autoroute.run_autoroute(_src(tmp_path), tmp_path / "work", runner=runner, jar_path=jar)
+    assert runner.last_java_args[0] == "/opt/java25/bin/java"
 
 
 @pytest.mark.unit

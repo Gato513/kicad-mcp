@@ -483,14 +483,36 @@ YA documentado en el docstring del test, sesión 32d) — probar H1 limpio
 requiere una copia fresca del fixture original, no reintentado en esta
 sesión por costo de tiempo.
 
-**Trigger para cerrar del todo:** repetir H1 con una copia FRESCA del
-fixture (no la de `/tmp` ya reruteada 4 veces) hasta acumular evidencia
-suficiente (¿cuántas corridas de N fallan/tienen éxito con el fix
-puesto?) para decidir si el retry alcanza o si hace falta seguir
-investigando la causa exacta (candidato: instrumentar con logging
-permanente condicionado a un env var de debug, no temporal como en esta
-sesión, para poder capturar el traceback crudo la próxima vez que
-ocurra en producción sin tener que re-parchear código).
+**Actualización (misma sesión, copia fresca del fixture):** repetido
+con `/tmp/f-d5-01-devmic-32d-fresh` (fixture pristino, no el reruteado
+4 veces) — **reload exitoso a la primera de nuevo** (`"reloaded":true`,
+sin necesitar el retry). Acumulado: **2 de 5** corridas reales de
+`route_board()` con éxito de reload a la primera, **3 de 5** con fallo
+`KICAD_NOT_RUNNING`. Confirma el patrón intermitente, ratio
+aproximadamente 40/60 con esta muestra chica — no concluyente sobre si
+el fix ayuda en los casos que SÍ fallan (ninguna corrida post-fix llegó
+a necesitar el retry para tener éxito; las que fallan, fallan derecho,
+sin dato de si el retry las hubiera salvado).
+
+**H1 sigue sin cerrar limpio, pero por una razón DISTINTA y ya
+documentada** (no bloqueada por este hallazgo): con el fixture fresco,
+Freerouting rechazó el guardrail de stitching por
+`"cobre ajeno en la región inmediata"` (guardrail #5) en vez del
+escenario "capas opuestas" que H1 espera — el no-determinismo de POR
+DÓNDE rutea Freerouting en cada corrida, ya documentado explícitamente
+en el docstring del módulo de test desde sesión 32d ("no hay garantía
+de que reproduzca exactamente la topología que 32c aisló"). Esto es
+esperable y no indica una regresión de este fix.
+
+**Trigger para cerrar del todo:** seguir acumulando corridas reales
+(¿cuántas de N fallan/tienen éxito con el fix puesto?) para una
+muestra estadísticamente más sólida; considerar instrumentar con
+logging permanente condicionado a un env var de debug (no temporal
+como en esta sesión) para capturar el traceback crudo la próxima vez
+que ocurra en producción sin tener que re-parchear código. H1 (el
+escenario de stitching específico) necesita además una corrida donde
+Freerouting reproduzca la topología "capas opuestas" — independiente de
+este hallazgo.
 
 **Fuente:** sesión 50, descubierto en vivo intentando cerrar el gate GUI
 32d tras resolver F-C4-01; extendido con la investigación de causa raíz

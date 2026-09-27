@@ -758,6 +758,32 @@ def test_supervise_maps_connection_error_and_invalidates_client() -> None:
 
 
 @pytest.mark.unit
+def test_supervise_logs_raw_exception_before_mapping(caplog: pytest.LogCaptureFixture) -> None:
+    """F-RELOAD-STALE-POST-ROUTE (sesión 50): ``_supervise`` deja una línea
+    JSON permanente con la excepción CRUDA (tipo + mensaje) antes de
+    mapearla — sin esto, diagnosticar una futura recurrencia del hallazgo
+    de sesión 50 (reload post-route falla con KICAD_NOT_RUNNING de forma
+    intermitente, causa raíz no confirmada pese a 7 repros aislados, ver
+    docs/BACKLOG.md) requeriría re-parchear código para verla."""
+    import json
+    import logging
+
+    raising = _RaisingClient(ConnectionError("Connection refused"))
+    factory = _CountingFactory(lambda: raising)
+    bridge = IpcBridge(client_factory=factory)
+
+    with caplog.at_level(logging.WARNING, logger="kicad_mcp"), pytest.raises(KicadMcpError):
+        bridge.get_version()
+
+    lines = [json.loads(r.message) for r in caplog.records if r.name == "kicad_mcp"]
+    entry = next(line for line in lines if line["tool_name"] == "ipc_supervise_failure")
+    assert entry["op_name"] == "get_version"
+    assert entry["exc_type"] == "builtins.ConnectionError"
+    assert "Connection refused" in entry["exc_detail"]
+    assert entry["mapped_code"] == "KICAD_NOT_RUNNING"
+
+
+@pytest.mark.unit
 def test_supervise_maps_timeout_to_kicad_timeout() -> None:
     """``TimeoutError`` mid-op ⇒ ``KICAD_TIMEOUT`` con hint accionable."""
     raising = _RaisingClient(TimeoutError("request took too long"))

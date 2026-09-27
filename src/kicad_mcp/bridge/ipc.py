@@ -34,6 +34,7 @@ from ..errors import ErrorCode, KicadMcpError
 from ..logging_config import (
     log_copper_layer_stackup_unavailable,
     log_ipc_retry,
+    log_ipc_supervise_failure,
     log_socket_glob_ambiguous,
 )
 
@@ -1410,6 +1411,13 @@ class IpcBridge:
                 # Cliente sospechoso → descartar para que el próximo request
                 # reconstruya la conexión. Busy no afecta la conexión.
                 self._client = None
+            # F-RELOAD-STALE-POST-ROUTE (sesión 50): línea permanente con el
+            # tipo/mensaje de la excepción CRUDA antes de mapear — la próxima
+            # vez que esto ocurra en producción, alcanza con grep en vez de
+            # re-parchear código para ver qué excepción real dispara esto
+            # (investigación de sesión 50 no logró aislar la causa exacta,
+            # ver docs/BACKLOG.md).
+            log_ipc_supervise_failure(op_name, exc, mapped.code.value)
             raise mapped from exc
 
     def _run_supervised_read(self, op_name: str, do: Callable[[], _T]) -> _T:

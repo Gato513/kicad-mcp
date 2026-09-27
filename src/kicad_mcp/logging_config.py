@@ -139,3 +139,34 @@ def log_ipc_retry(op_name: str, attempt: int, backoff_ms: int) -> None:
             ensure_ascii=False,
         )
     )
+
+
+def log_ipc_supervise_failure(op_name: str, exc: BaseException, mapped_code: str) -> None:
+    """Emite una línea JSON cuando ``_supervise`` mapea una excepción cruda
+    (F-RELOAD-STALE-POST-ROUTE, sesión 50).
+
+    ``tool_name="ipc_supervise_failure"`` es el canal fijo para grep/filter.
+    Sesión 50 investigó por qué ``reload_board_from_disk`` puede fallar con
+    ``KICAD_NOT_RUNNING`` tras un ruteo largo (3 de 5 corridas reales) sin
+    lograr aislar la causa exacta en 7 repros mecánicos distintos (ver
+    ``docs/BACKLOG.md`` entrada ``F-RELOAD-STALE-POST-ROUTE``) — el patrón
+    observado sugiere una race condition intermitente. Esta línea permanente
+    (no gateada por env var, mismo criterio que ``log_ipc_retry``: bajo
+    volumen, sólo dispara en fallos reales) le da a una futura investigación
+    el tipo/mensaje de la excepción CRUDA, sin tener que re-parchear código
+    para conseguirlo la próxima vez que ocurra en producción.
+    """
+    detail = str(exc)[:300]
+    _LOGGER.warning(
+        json.dumps(
+            {
+                "tool_name": "ipc_supervise_failure",
+                "op_name": op_name,
+                "exc_type": f"{type(exc).__module__}.{type(exc).__qualname__}",
+                "exc_detail": detail,
+                "mapped_code": mapped_code,
+            },
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+    )

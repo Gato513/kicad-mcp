@@ -13,7 +13,7 @@ aproximado de severidad.
 
 ## P0 — Bloqueantes de dogfooding / release
 
-### F-V3-ZONE-FILL-CRASH — `add_zone(fill=true)` crashea KiCad de forma reproducible en la 3ª-4ª llamada sobre boards grandes — defecto real corregido (sesión 48, pendiente de commit/revisión humana), causa exacta del crash de HackRF sin confirmar
+### F-V3-ZONE-FILL-CRASH — `add_zone(fill=true)` crashea KiCad de forma reproducible en la 3ª-4ª llamada sobre boards grandes — defecto real corregido y commiteado (sesión 48, commit 047ba2e), pendiente de revisión/push humana (DoD #6), causa exacta del crash de HackRF sin confirmar
 
 **Origen:** sesión 33, Validation Suite Nivel C (HackRF One, 437
 footprints / 380 nets / 4 capas). Reproducido 3 veces, siempre con el
@@ -49,8 +49,8 @@ refutados con evidencia dura:**
    implica "KiCad viva". Clasificar así habría reportado un crash real
    como "sólo ocupado, reintentá", peor que el estado actual.
 
-**v4 — implementado, verificado localmente, pendiente de commit y
-revisión humana (nunca push, DoD #6).** Único cambio: `create_items` en
+**v4 — implementado, verificado localmente, commiteado (047ba2e),
+pendiente de revisión humana (nunca push, DoD #6).** Único cambio: `create_items` en
 `enforce_hole_clearance` (`src/kicad_mcp/bridge/ipc.py`) trocea en lotes
 de `_ENFORCE_HOLE_CLEARANCE_BATCH_SIZE=100` en vez de 1 request por ítem.
 Medido en vivo contra `tests/fixtures/004_real` (189 fp, 808 vías) con el
@@ -103,7 +103,8 @@ corrupción).
 sesión 48 (dos hipótesis refutadas, defecto real corregido — timeout
 insuficiente para `create_items` sin trocear —, mecanismo de timeout de
 `refill_zones()` confirmado como alcanzable en boards de densidad media,
-causa exacta del crash de HackRF sin confirmar, fix pendiente de commit).
+causa exacta del crash de HackRF sin confirmar, fix commiteado en 047ba2e,
+pendiente de revisión/push humana).
 
 ---
 
@@ -451,8 +452,9 @@ reproducible; más compatible con una race condition rara (máquina de
 controlada entre corridas) que ninguno de los 7 experimentos aislados
 logró disparar deliberadamente.
 
-**Fix implementado de todos modos (commit pendiente de esta sesión):**
-aunque la causa raíz exacta no se confirmó, el retry único con handle
+**Fix implementado de todos modos (commiteado en bf54747/bcc13f0/901a475,
+pendiente de revisión/push humana):** aunque la causa raíz exacta no se
+confirmó, el retry único con handle
 fresco (`tools/pcb.py`, gateado a `exc.code is ErrorCode.KICAD_NOT_RUNNING`
 + re-verificación de `is_target_open`) es una mitigación de costo/riesgo
 bajo — no reintenta la MISMA conexión (D-07.1 intacto), no relaja el

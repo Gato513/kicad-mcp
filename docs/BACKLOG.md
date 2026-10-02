@@ -1654,7 +1654,7 @@ bloqueante para la consolidación en curso.
 - **Esfuerzo estimado:** L (varias tools, cada una con su propio patrón de
   verificación de efecto vía kicad-skip).
 
-## P3 — `get_world_context(kind="sch")` falla con `#PWR*`/`#FLG*` (R13)
+## P3 — `get_world_context(kind="sch")` falla con `#PWR*`/`#FLG*` (R13) — ✅ CERRADO sesión 51
 
 Set-difference asimétrico entre posiciones (todo símbolo) y netlist
 (kicad-cli excluye pseudo-símbolos `#`-prefijados). Dispara
@@ -1662,8 +1662,11 @@ Set-difference asimétrico entre posiciones (todo símbolo) y netlist
 alimentación/power-flag — no es un caso raro.
 
 - **Origen:** D-19e.2, confirmado de nuevo como F-D4-01 en sesión 22.
-- **Workaround vigente:** `export_netlist()` + parseo manual.
-- **Esfuerzo estimado:** M.
+- **Cierre (sesión 51):** reproducido con `kicad-cli` real (001_basico + `power:GND`
+  `#PWR01` → `posición sin netlist: #PWR01`). Fix en `bridge/state_builder.py::_rebuild`:
+  se descartan de las posiciones los refs `#`-prefijados antes de indexar/cruzar con el
+  netlist (cubre también `#PWR?` repetidos). Un ref real sin netlist sigue siendo error.
+  Tests: 2 unit + 1 `integration` en `tests/test_state_builder.py`.
 
 ## P3 — Loop de vías de `enforce_hole_clearance` posiblemente código muerto (R16, D-23.3) — causa raíz confirmada sesión 48/49, fix diferido
 

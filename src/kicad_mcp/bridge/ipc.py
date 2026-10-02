@@ -7,6 +7,15 @@ Responsabilidades del bridge (arquitectura §10, restricciones-kicad.md):
 - **Cola de profundidad 1**: un ``threading.Lock`` alrededor de toda
   llamada IPC. KiCad procesa cada request en el hilo de UI; enviarle
   concurrencia lo bloquea.
+- **El lock NO es reentrante** (``threading.Lock``, no ``RLock``): cada
+  método público de ``IpcBridge`` adquiere ``self._lock`` y, si desde dentro
+  de ese bloque llama a OTRO método público, el hilo se bloquea contra sí
+  mismo — deadlock silencioso (cuelga, no levanta excepción). Regla: los
+  helpers que corren bajo el lock son funciones/métodos que NO lo toman y
+  reciben lo que necesitan por parámetro (ver ``_edge_cuts_bbox_nm`` y la
+  nota en ``board_outline``/``read_board_context``). Para combinar dos
+  lecturas, leer ambas dentro de un único bloque ``with self._lock`` o
+  componer en el llamador, fuera del bridge.
 - **Detección de reinicio**: ``KICAD_API_TOKEN`` cambia por instancia.
   Si cambia entre dos llamadas, la operación en curso falla con
   ``KICAD_RESTARTED``.

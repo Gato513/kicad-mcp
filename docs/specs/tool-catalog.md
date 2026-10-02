@@ -183,7 +183,9 @@ Notas de `get_context_delta` (sesión 05 T4):
 | `run_drc` | DRC del PCB **presupuestado**: resumen por tipo (default) o detalle paginado | `min_severity?=warning`, `exclude_types?`, `detail_type?`, `offset?=0`, `limit?=20` | none | `INVALID_PARAMS`, `KICAD_CLI_FAILED`, `PROJECT_NOT_FOUND` |
 
 **`run_erc`** — formato de violación: `{rule, severity, message,
-items: [{ref?|net?|pos?}]}` — posiciones en **mm**.
+items: [{ref?|net?|pos?}]}` — posiciones en **mm**. `kicad-cli` 10.0.x
+reporta `pos` del ERC ÷100 (F-03); el bridge lo compensa ×100 sólo en esa serie
+(`bridge/rules.py::_erc_pos_scale`). Otras versiones pasan crudas.
 
 **`run_drc` presupuestado (F-10, D-12.6).** La respuesta cruda medía 18 956 tok
 / 42 s (sesión 11, 47× el techo D4). Rediseño:

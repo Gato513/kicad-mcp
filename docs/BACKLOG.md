@@ -1613,7 +1613,7 @@ confirmada de este sub-patrón específico (capas iguales, no opuestas).
 
 | Item | Evidencia | Estado |
 |---|---|---|
-| `run_erc()` posiciones ÷100 | F-03 (D2), F-19b-12 (19b) | Abierto, confirmado 2 veces. |
+| `run_erc()` posiciones ÷100 | F-03 (D2), F-19b-12 (19b) | ✅ Cerrado (sesión 51) — causa en `kicad-cli` 10.0.6 (JSON crudo ÷100, verificado contra `.kicad_sch`), no en el bridge. `run_erc` compensa ×100 sólo en la serie 10.0.x (`bridge/rules.py::_erc_pos_scale`); otras versiones pasan crudas. Re-evaluar el rango al soportar 10.1+/9.x. |
 | `health()` no distingue `PROJECT_NOT_CONFIGURED` vs `PROJECT_PATH_NOT_FOUND` | F-02 | ✅ Cerrado — `health()`/`project` ahora emite `PROJECT_NOT_CONFIGURED` (env var ausente) o `PROJECT_PATH_NOT_FOUND` (env var apuntando a un path inexistente) con hints distintos; adición pura al `StrEnum ErrorCode` (F1/F3 intacta). Ver `docs/specs/tool-catalog.md` §meta y §Taxonomía. |
 | `draw_board_outline` inmutable (sin `replace=true`/`delete`) | F-06 | Abierto. |
 | Asimetría `delete_track` sí / `delete_footprint` no | D-R3, D-R8 | Abierto, sin ADR — **sigue así deliberadamente**. Escaló a P0 en sesión 31 (F-V1-02: refs duplicados bloqueaban `route_board`), pero sesión 31b cerró ese caso sin tocar la asimetría — resolvió por anotación (`set_footprint_ref`), no por borrado. Ver ADR-0013: un `delete_footprint` general sigue rechazado, ADR-0010 vigente sin excepción. |

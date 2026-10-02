@@ -29,6 +29,24 @@ _SEVERITY_ORDER: Final = {"error": 3, "warning": 2, "info": 1, "exclusion": 0}
 _REF_RE: Final = re.compile(r"(?:Symbol|Footprint|Component)\s+([A-Za-z_]+\d+)")
 _NET_RE: Final = re.compile(r'[Nn]et\s+"([^"]+)"')
 
+# F-03/F-19b-12: ``kicad-cli sch erc --format json`` reporta ``pos`` ÷100 con
+# ``coordinate_units: "mm"`` (verificado contra el .kicad_sch: U1 en (127, 63.5)
+# sale como (1.27, 0.635), kicad-cli 10.0.6). El bug es de kicad-cli, no del
+# bridge. Se compensa SOLO en las series verificadas; una versión no listada
+# pasa cruda para no multiplicar de más si upstream lo corrige.
+_ERC_POS_SCALE: Final = 100.0
+_ERC_POS_BUG_SERIES: Final = frozenset({(10, 0)})
+
+
+def _erc_pos_scale(kicad_version: str) -> float:
+    """Factor a aplicar a ``pos`` del ERC según la versión de kicad-cli."""
+    parts = kicad_version.split(".")
+    try:
+        series = (int(parts[0]), int(parts[1]))
+    except (IndexError, ValueError):
+        return 1.0
+    return _ERC_POS_SCALE if series in _ERC_POS_BUG_SERIES else 1.0
+
 
 @dataclass(frozen=True)
 class Item:
@@ -62,7 +80,7 @@ class RulesReport:
     unconnected: int = 0
 
 
-def _extract_item(raw: dict[str, Any]) -> Item:
+def _extract_item(raw: dict[str, Any], pos_scale: float = 1.0) -> Item:
     desc = str(raw.get("description", ""))
     ref_match = _REF_RE.search(desc)
     net_match = _NET_RE.search(desc)
@@ -70,7 +88,10 @@ def _extract_item(raw: dict[str, Any]) -> Item:
     pos: tuple[float, float] | None = None
     if isinstance(pos_raw, dict):
         try:
-            pos = (float(pos_raw.get("x", 0)), float(pos_raw.get("y", 0)))
+            pos = (
+                float(pos_raw.get("x", 0)) * pos_scale,
+                float(pos_raw.get("y", 0)) * pos_scale,
+            )
         except (TypeError, ValueError):
             pos = None
     return Item(
@@ -120,7 +141,11 @@ def _reorder_edge_clearance_items(rule: str, items: tuple[Item, ...]) -> tuple[I
 
 
 def _build_report(
-    payload: dict[str, Any], iterator: Iterable[dict[str, Any]], *, unconnected: int = 0
+    payload: dict[str, Any],
+    iterator: Iterable[dict[str, Any]],
+    *,
+    unconnected: int = 0,
+    pos_scale: float = 1.0,
 ) -> RulesReport:
     violations: list[Violation] = []
     counts: dict[str, int] = {}
@@ -128,7 +153,7 @@ def _build_report(
         severity = str(v.get("severity", "warning"))
         counts[severity] = counts.get(severity, 0) + 1
         rule = str(v.get("type", "unknown"))
-        items = tuple(_extract_item(i) for i in v.get("items", []))
+        items = tuple(_extract_item(i, pos_scale) for i in v.get("items", []))
         items = _reorder_edge_clearance_items(rule, items)
         violations.append(
             Violation(
@@ -202,7 +227,8 @@ def run_erc(sch_path: Path) -> RulesReport:
         payload = json.loads(tmp_path.read_text(encoding="utf-8"))
     finally:
         tmp_path.unlink(missing_ok=True)
-    return _build_report(payload, _iter_erc_violations(payload))
+    scale = _erc_pos_scale(str(payload.get("kicad_version", "")))
+    return _build_report(payload, _iter_erc_violations(payload), pos_scale=scale)
 
 
 def run_drc(pcb_path: Path) -> RulesReport:

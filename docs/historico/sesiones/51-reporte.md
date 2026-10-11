@@ -46,8 +46,16 @@ lock no lo toman. Cierra la deuda registrada en sesión 19d (antecedente:
 - `-m integration` e `-m integration_gui_slow` **no se corrieron al cierre**
   (KiCad cerrado). El test `integration` de R13 y los cambios de bridge de
   F-03 conviene correrlos con KiCad abierto antes de mergear.
-- **Sin auditoría de Codex** sobre estos tres commits (AGENTS.md §6: cambio
-  a `src/` es disparador). Pendiente de decisión del humano.
+- La verificación empírica del ×100 con `kicad-cli` real no la reprodujo
+  Codex (su ejecución de `kicad-cli sch erc` no produjo salida en el sandbox);
+  la evidencia sigue siendo la propia de la sesión (JSON crudo vs `.kicad_sch`).
+
+## Auditoría Codex (`codex review --base 8611fee^`, rango de los 3 commits) — sin hallazgos
+
+Veredicto: sin regresiones accionables. Codex confirmó que la corrección ERC
+está gateada por versión y que los pseudo-símbolos se excluyen antes del
+cruce con el netlist; corrió `tests/test_rules.py` y `tests/test_state_builder.py`
+(21 tests verdes). Revisión posterior (AGENTS.md §6 regla 4) cumplida.
 
 ## Sin ADR
 

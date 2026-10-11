@@ -230,6 +230,14 @@ crash-loop P0 queda confirmado resuelto con evidencia real, no sólo
 standalone; "completa en tiempo razonable" sigue abierto como ítem de
 calidad/tiempo, no bloqueante.**
 
+**Instrumentación del log (sesión 52):** `_run_freerouting` ya no captura
+la salida por pipe; la escribe directo a `.kicad-mcp/autoroute/freerouting.log`
+mientras corre (seguible con `tail -f`) y el log completo sobrevive al
+`KICAD_TIMEOUT` (el error ahora trae `data.log_path` y la cola en el hint).
+Con esto la corrida larga del trigger de arriba deja evidencia que distingue
+"router trabado" de "router progresando". La corrida real (≥3600 s, KiCad
+abierto, jar ≥2.2.3 + `KICAD_MCP_JAVA_EXE`) sigue pendiente.
+
 **Fuente:** sesión 33 (hallazgo original), sesión 49 (causa raíz +
 repro standalone, sin cambios de código en el repo), sesión 50 (fix de
 `KICAD_MCP_JAVA_EXE` + confirmación real vía `route_board` contra KiCad

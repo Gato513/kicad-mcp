@@ -47,7 +47,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Protocol
+from typing import IO, Final, Protocol
 
 from ..errors import ErrorCode, KicadMcpError
 from .rules_reader import load_project_rules
@@ -164,7 +164,9 @@ class SubprocessRunner(Protocol):
         self,
         args: list[str],
         *,
-        capture_output: bool,
+        capture_output: bool = False,
+        stdout: IO[str] | None = None,
+        stderr: int | None = None,
         text: bool,
         timeout: float,
         check: bool,
@@ -654,10 +656,21 @@ def _run_freerouting(
     args = [java_exe, "-jar", jar, "-de", str(dsn), "-do", str(ses), "-host", "KiCad"]
     if max_passes is not None:
         args += ["-mp", str(max_passes)]
+    # La salida va DIRECTO al archivo de log (no por pipe): así sobrevive al
+    # kill por timeout y se puede seguir en vivo con ``tail -f`` durante
+    # corridas largas (sesión 52; antes un ``KICAD_TIMEOUT`` dejaba el log
+    # vacío o con sólo la línea de arranque, indistinguible de un router
+    # trabado). El log queda completo en disco; el ``hint`` usa sólo la cola.
     try:
-        completed = runner(
-            args, capture_output=True, text=True, timeout=float(timeout_s), check=False
-        )
+        with log_path.open("w", encoding="utf-8") as log_file:
+            completed = runner(
+                args,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=float(timeout_s),
+                check=False,
+            )
     except FileNotFoundError as exc:
         raise KicadMcpError(
             code=ErrorCode.KICAD_CLI_MISSING,
@@ -666,29 +679,36 @@ def _run_freerouting(
             data={"requirement": "java"},
         ) from exc
     except subprocess.TimeoutExpired as exc:
-        log_path.write_text(
-            _tail(_as_str(exc.stdout) + _as_str(exc.stderr), 4000), encoding="utf-8"
-        )
         raise KicadMcpError(
             code=ErrorCode.KICAD_TIMEOUT,
             message=f"El ruteo con Freerouting excedió {timeout_s} s.",
             hint=(
                 "Subí timeout_s, reducí la densidad de la placa, o ruteá por zonas. "
-                "El router escala peor con densidad."
+                "El router escala peor con densidad. "
+                f"Log del router en {log_path} (cola: {_tail(_read_log(log_path), 300)!r})."
             ),
-            data={"stage": "freerouting", "timeout_s": timeout_s},
+            data={
+                "stage": "freerouting",
+                "timeout_s": timeout_s,
+                "log_path": str(log_path),
+            },
         ) from exc
 
-    log_path.write_text(
-        _tail((completed.stdout or "") + (completed.stderr or ""), 4000), encoding="utf-8"
-    )
     if not ses.is_file() or ses.stat().st_size == 0:
+        log_tail = _tail(_read_log(log_path))
         raise KicadMcpError(
             code=ErrorCode.KICAD_CLI_FAILED,
             message="Freerouting no produjo un SES válido.",
-            hint=_tail(completed.stdout + completed.stderr) or f"returncode={completed.returncode}",
-            data={"stage": "freerouting", "log_tail": _tail(completed.stdout + completed.stderr)},
+            hint=log_tail or f"returncode={completed.returncode}",
+            data={"stage": "freerouting", "log_tail": log_tail},
         )
+
+
+def _read_log(log_path: Path) -> str:
+    try:
+        return log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def _run_import_ses(

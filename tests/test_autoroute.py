@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import IO
 
 import pytest
 
@@ -55,7 +56,9 @@ class _FakeRunner:
         self,
         args: list[str],
         *,
-        capture_output: bool,
+        capture_output: bool = False,
+        stdout: IO[str] | None = None,
+        stderr: int | None = None,
         text: bool,
         timeout: float,
         check: bool,
@@ -63,7 +66,10 @@ class _FakeRunner:
         if args[0] == "java" or "-jar" in args:
             self.calls.append("java")
             self.last_java_args = args
-            return self._resolve_java(args)
+            result = self._resolve_java(args)
+            if stdout is not None:  # como el real: la salida va directa al log
+                stdout.write((result.stdout or "") + (result.stderr or ""))
+            return result
         # python -c <script> ...
         script = args[2]
         if "ExportSpecctraDSN" in script:
@@ -217,6 +223,48 @@ def test_autoroute_freerouting_no_ses(tmp_path: Path, jar: str) -> None:
         autoroute.run_autoroute(_src(tmp_path), tmp_path / "work", runner=runner, jar_path=jar)
     assert exc.value.code is ErrorCode.KICAD_CLI_FAILED
     assert exc.value.data is not None and exc.value.data["stage"] == "freerouting"
+    assert "could not route" in exc.value.data["log_tail"]
+
+
+@pytest.mark.unit
+def test_autoroute_freerouting_streams_stdout_to_log_file(tmp_path: Path, jar: str) -> None:
+    """La salida del router va directo al archivo (sobrevive al timeout)."""
+    seen: dict[str, object] = {}
+
+    class _Spy(_FakeRunner):
+        def __call__(self, args: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+            if "-jar" in args:
+                seen["stdout"] = kw.get("stdout")
+                seen["stderr"] = kw.get("stderr")
+                seen["capture_output"] = kw.get("capture_output", False)
+            return super().__call__(args, **kw)  # type: ignore[arg-type]
+
+    work = tmp_path / "work"
+    autoroute.run_autoroute(_src(tmp_path), work, runner=_Spy(), jar_path=jar)
+    assert seen["stdout"] is not None and seen["stderr"] == subprocess.STDOUT
+    assert seen["capture_output"] is False
+    assert "routed" in (work / "freerouting.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_autoroute_freerouting_timeout_keeps_partial_log(tmp_path: Path, jar: str) -> None:
+    class _Hang(_FakeRunner):
+        def __call__(self, args: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+            if "-jar" in args:
+                out = kw["stdout"]
+                assert hasattr(out, "write")
+                out.write("Auto-routing stage started\npass 1\n")  # type: ignore[union-attr]
+                out.flush()  # type: ignore[union-attr]
+                raise subprocess.TimeoutExpired(cmd="java", timeout=5)
+            return super().__call__(args, **kw)  # type: ignore[arg-type]
+
+    work = tmp_path / "work"
+    with pytest.raises(KicadMcpError) as exc:
+        autoroute.run_autoroute(_src(tmp_path), work, runner=_Hang(), jar_path=jar, timeout_s=5)
+    assert exc.value.code is ErrorCode.KICAD_TIMEOUT
+    assert "pass 1" in (work / "freerouting.log").read_text(encoding="utf-8")
+    assert exc.value.data is not None
+    assert exc.value.data["log_path"] == str(work / "freerouting.log")
 
 
 @pytest.mark.unit

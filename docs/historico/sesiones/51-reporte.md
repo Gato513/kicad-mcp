@@ -43,9 +43,14 @@ lock no lo toman. Cierra la deuda registrada en sesión 19d (antecedente:
 
 ## No verificado
 
-- `-m integration` e `-m integration_gui_slow` **no se corrieron al cierre**
-  (KiCad cerrado). El test `integration` de R13 y los cambios de bridge de
-  F-03 conviene correrlos con KiCad abierto antes de mergear.
+- `-m integration_gui_slow` **no se corrió** (sin `KICAD_MCP_FREEROUTING_JAR`;
+  la sesión no toca `route_board` ni zonas, no es gate de este merge).
+- `-m integration` **no se corrió al cierre** (KiCad cerrado). **Actualización
+  posterior (2026-10-11, KiCad 10.0.6 abierto):** 41 passed, 1 xfailed, 0
+  fallos (4:48). El xfail es el conocido de F-DUPREFS-SILENT-NETLIST
+  (`test_export_dsn_fails_with_duplicate_refs_and_succeeds_after_rename`),
+  no una regresión. Cubre el test `integration` de R13 y los cambios de
+  bridge de F-03.
 - La verificación empírica del ×100 con `kicad-cli` real no la reprodujo
   Codex (su ejecución de `kicad-cli sch erc` no produjo salida en el sandbox);
   la evidencia sigue siendo la propia de la sesión (JSON crudo vs `.kicad_sch`).

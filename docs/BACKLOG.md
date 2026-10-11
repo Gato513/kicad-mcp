@@ -1667,6 +1667,9 @@ alimentación/power-flag — no es un caso raro.
   se descartan de las posiciones los refs `#`-prefijados antes de indexar/cruzar con el
   netlist (cubre también `#PWR?` repetidos). Un ref real sin netlist sigue siendo error.
   Tests: 2 unit + 1 `integration` en `tests/test_state_builder.py`.
+- **Pendiente de verificación (cierre sesión 51):** `-m integration` no se re-ejecutó
+  al cierre (KiCad cerrado); lo mismo aplica al fix de F-03. Correrlo antes de mergear.
+  Sin auditoría de Codex sobre los commits de sesión 51 (ver `51-reporte.md`).
 
 ## P3 — Loop de vías de `enforce_hole_clearance` posiblemente código muerto (R16, D-23.3) — causa raíz confirmada sesión 48/49, fix diferido
 

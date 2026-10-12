@@ -30,7 +30,25 @@
       "Edit(./tests/golden/**)",
       "Edit(./CLAUDE.md)",
       "Edit(./.claude/**)",
-      "Edit(./pyproject.toml)"
+      "Edit(./pyproject.toml)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Edit(./.env)",
+      "Edit(./.env.*)",
+      "Read(~/.ssh/**)",
+      "Edit(~/.ssh/**)",
+      "Read(~/.aws/credentials)",
+      "Edit(~/.aws/credentials)",
+      "Read(~/.config/gh/hosts.yml)",
+      "Edit(~/.config/gh/hosts.yml)",
+      "Read(~/.netrc)",
+      "Edit(~/.netrc)",
+      "Read(./**/*.pem)",
+      "Edit(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Edit(./**/*.key)",
+      "Read(./**/secrets/**)",
+      "Edit(./**/secrets/**)"
     ]
   }
 }

@@ -7,6 +7,15 @@ Responsabilidades del bridge (arquitectura §10, restricciones-kicad.md):
 - **Cola de profundidad 1**: un ``threading.Lock`` alrededor de toda
   llamada IPC. KiCad procesa cada request en el hilo de UI; enviarle
   concurrencia lo bloquea.
+- **El lock NO es reentrante** (``threading.Lock``, no ``RLock``): cada
+  método público de ``IpcBridge`` adquiere ``self._lock`` y, si desde dentro
+  de ese bloque llama a OTRO método público, el hilo se bloquea contra sí
+  mismo — deadlock silencioso (cuelga, no levanta excepción). Regla: los
+  helpers que corren bajo el lock son funciones/métodos que NO lo toman y
+  reciben lo que necesitan por parámetro (ver ``_edge_cuts_bbox_nm`` y la
+  nota en ``board_outline``/``read_board_context``). Para combinar dos
+  lecturas, leer ambas dentro de un único bloque ``with self._lock`` o
+  componer en el llamador, fuera del bridge.
 - **Detección de reinicio**: ``KICAD_API_TOKEN`` cambia por instancia.
   Si cambia entre dos llamadas, la operación en curso falla con
   ``KICAD_RESTARTED``.
@@ -24,14 +33,19 @@ from __future__ import annotations
 import os
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NewType, Protocol, TypeVar
 
 from ..errors import ErrorCode, KicadMcpError
-from ..logging_config import log_ipc_retry, log_socket_glob_ambiguous
+from ..logging_config import (
+    log_copper_layer_stackup_unavailable,
+    log_ipc_retry,
+    log_ipc_supervise_failure,
+    log_socket_glob_ambiguous,
+)
 
 _T = TypeVar("_T")
 
@@ -206,6 +220,17 @@ class CopperItem:
     size_mm: Mm | None = None  # via: diámetro
     drill_mm: Mm | None = None  # via
     via_layers: tuple[str, str] | None = None  # via: (capa_inicio, capa_fin)
+    # Capas de cobre que una via REALMENTE atraviesa (stackup habilitado del
+    # board) — a diferencia de ``via_layers`` (siempre el par de extremos,
+    # formato de salida ``V ... F.Cu-B.Cu``), esto es lo que
+    # ``_copper_on_layer`` usa para el filtro ``layer=``. Invariante cuando
+    # no es ``None``: ``{via_span_layers[0], via_span_layers[-1]} ==
+    # set(via_layers)`` COMO CONJUNTO, no posicionalmente — ``via_layers`` es
+    # ``(drill.start_layer, drill.end_layer)`` tal cual los reporta kipy, no
+    # garantizado ascendente. ``None`` cuando no se pudo resolver el stackup
+    # (compat KiCad 9.0-9.0.4, ver ``_safe_copper_layer_values``): degrada a
+    # que ``_copper_on_layer`` matchee sólo los extremos vía ``via_layers``.
+    via_span_layers: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -504,17 +529,27 @@ def _is_copper_item(it: Any) -> bool:
     return type(it).__name__ in ("Track", "ArcTrack", "Via")
 
 
-def _kipy_copper_to_item(it: Any, net_name: str) -> CopperItem:
+def _kipy_copper_to_item(it: Any, net_name: str, copper_values: Sequence[int]) -> CopperItem:
     """Convierte un ``Track``/``ArcTrack``/``Via`` de kipy a ``CopperItem``.
 
     Única fuente de la verdad de la conversión (D-16.1): la usan
     ``list_net_copper``, ``list_all_copper`` y ``get_copper_by_kiid`` por
     igual. Precondición: ``_is_copper_item(it)`` es ``True``.
+
+    ``copper_values``: stackup de cobre habilitado del board, para poblar
+    ``via_span_layers`` en la rama ``Via``. Vacío (``()``) cuando el
+    resultado no tiene ninguna vía o la lectura del stackup degradó —
+    ``_via_span_layer_names`` no se invoca y ``via_span_layers`` queda
+    ``None``.
     """
     tname = type(it).__name__
     if tname == "Via":
         p = it.position
         drill = it.padstack.drill
+        via_layers = (
+            _layer_int_to_str(drill.start_layer),
+            _layer_int_to_str(drill.end_layer),
+        )
         return CopperItem(
             kind="via",
             kiid=str(it.id.value),
@@ -528,9 +563,11 @@ def _kipy_copper_to_item(it: Any, net_name: str) -> CopperItem:
             mid_y_mm=None,
             size_mm=nm_to_mm(Nm(int(it.diameter))),
             drill_mm=nm_to_mm(Nm(int(it.drill_diameter))),
-            via_layers=(
-                _layer_int_to_str(drill.start_layer),
-                _layer_int_to_str(drill.end_layer),
+            via_layers=via_layers,
+            via_span_layers=(
+                _via_span_layer_names(copper_values, drill.start_layer, drill.end_layer)
+                if copper_values
+                else None
             ),
         )
     s = it.start
@@ -587,6 +624,38 @@ def _copper_layer_values(raw_board: Any) -> list[int]:
     return out
 
 
+def _safe_copper_layer_values(raw_board: Any) -> list[int]:
+    """``_copper_layer_values`` con degradación ante fallo de lectura del
+    stackup.
+
+    ``Board.get_enabled_layers()`` es ``versionadded 0.5.0`` (KiCad 9.0.5+) —
+    F4 declara mínimo compatible 9.0. Un fallo se loguea (regla 2, JSON
+    estructurado) y degrada a ``[]`` en vez de romper la lectura de cobre en
+    KiCad 9.0.0-9.0.4: no es ``except Exception: pass`` (regla 1), queda
+    observable en el log.
+    """
+    try:
+        return _copper_layer_values(raw_board)
+    except Exception as exc:  # degradación deliberada, ver docstring
+        log_copper_layer_stackup_unavailable(str(exc))
+        return []
+
+
+def _via_span_layer_names(copper_values: Sequence[int], start: int, end: int) -> tuple[str, ...]:
+    """Nombres de las capas de cobre que una vía atraviesa entre ``start`` y
+    ``end`` (inclusive), según el stackup habilitado del board.
+
+    Los valores del enum ``BoardLayer`` están en orden físico de stackup
+    (``BL_F_Cu`` < ``BL_In1_Cu`` < … < ``BL_In30_Cu`` < ``BL_B_Cu``), así que
+    el span es el slice ordenado de ``copper_values`` entre ambos extremos.
+    Tolera extremos invertidos (normaliza con ``min``/``max``).
+    """
+    lo, hi = (start, end) if start <= end else (end, start)
+    ordered = sorted(copper_values)
+    span = [v for v in ordered if lo <= v <= hi]
+    return tuple(_layer_int_to_str(v) for v in span)
+
+
 def _zone_layer_value(layer: str) -> int:
     """Resuelve un nombre de capa de cobre (``"F.Cu"``, ``"In1.Cu"``…) al enum
     ``BoardLayer`` de kipy. Rechaza capas no-cobre (Edge.Cuts, F.SilkS…) con
@@ -632,6 +701,21 @@ _AUTO_KEEPOUT_PREFIX = "__kicadmcp_hc__"
 """Prefijo de nombre de los keepouts auto-generados por ``enforce_hole_clearance``
 (F-D3-01, sesión 21) — permite identificarlos y borrarlos en la siguiente
 pasada sin acumular duplicados (idempotencia, ver docstring del método)."""
+
+_ENFORCE_HOLE_CLEARANCE_BATCH_SIZE = 100
+"""Tamaño de lote para ``create_items`` en ``enforce_hole_clearance``
+(sesión 48, F-V3-ZONE-FILL-CRASH). ``docs/specs/restricciones-kicad.md``
+§3 fija timeout duro de 2000ms por request IPC — "operaciones grandes se
+trocean o se rechazan"; un request por keepout es correcto pero caro (cada
+round-trip paga latencia de red aparte del cómputo), y un único request
+con todos los keepouts de una pasada grande supera el techo (medido: 707
+en un solo request, 8.40s). Medido en vivo contra
+``tests/fixtures/004_real`` (189 fp, 808 vías) con el timeout de
+producción real: N=100 → 0.93s avg/1.14s max, N=200 → 1.40s avg/1.56s
+max — ambos bajo el techo, 100 deja ~870ms de margen sobre el peor caso
+medido a esa escala. HackRF (437 fp, 1613 nets, más denso) no se midió
+directamente — el margen es mitigación de esa laguna, no garantía (ver
+``docs/BACKLOG.md``, F-V3-ZONE-FILL-CRASH)."""
 
 _HOLE_CLEARANCE_MARGIN_MM = 0.02
 """Margen de seguridad sobre el ``min_hole_clearance`` del proyecto, para
@@ -1336,6 +1420,13 @@ class IpcBridge:
                 # Cliente sospechoso → descartar para que el próximo request
                 # reconstruya la conexión. Busy no afecta la conexión.
                 self._client = None
+            # F-RELOAD-STALE-POST-ROUTE (sesión 50): línea permanente con el
+            # tipo/mensaje de la excepción CRUDA antes de mapear — la próxima
+            # vez que esto ocurra en producción, alcanza con grep en vez de
+            # re-parchear código para ver qué excepción real dispara esto
+            # (investigación de sesión 50 no logró aislar la causa exacta,
+            # ver docs/BACKLOG.md).
+            log_ipc_supervise_failure(op_name, exc, mapped.code.value)
             raise mapped from exc
 
     def _run_supervised_read(self, op_name: str, do: Callable[[], _T]) -> _T:
@@ -1731,7 +1822,16 @@ class IpcBridge:
                 items = raw_board.get_items_by_net(
                     net_obj, [OT.KOT_PCB_TRACE, OT.KOT_PCB_ARC, OT.KOT_PCB_VIA]
                 )
-                return tuple(_kipy_copper_to_item(it, net) for it in items if _is_copper_item(it))
+                copper_items = [it for it in items if _is_copper_item(it)]
+                # Sesión 43 (fix _copper_on_layer): stackup sólo si hay al
+                # menos una via — un listado de sólo tracks no paga el IPC
+                # extra de get_enabled_layers().
+                copper_values = (
+                    _safe_copper_layer_values(raw_board)
+                    if any(type(it).__name__ == "Via" for it in copper_items)
+                    else ()
+                )
+                return tuple(_kipy_copper_to_item(it, net, copper_values) for it in copper_items)
 
             return self._run_supervised_read("list_net_copper", _do)
 
@@ -1754,13 +1854,18 @@ class IpcBridge:
                 items = raw_board.get_items(
                     types=[OT.KOT_PCB_TRACE, OT.KOT_PCB_ARC, OT.KOT_PCB_VIA]
                 )
+                copper_items = [it for it in items if _is_copper_item(it)]
+                # Sesión 43 (fix _copper_on_layer): idem list_net_copper.
+                copper_values = (
+                    _safe_copper_layer_values(raw_board)
+                    if any(type(it).__name__ == "Via" for it in copper_items)
+                    else ()
+                )
                 out: list[CopperItem] = []
-                for it in items:
-                    if not _is_copper_item(it):
-                        continue
+                for it in copper_items:
                     net = it.net
                     net_name = str(net.name) if net is not None and net.name else ""
-                    out.append(_kipy_copper_to_item(it, net_name))
+                    out.append(_kipy_copper_to_item(it, net_name, copper_values))
                 return tuple(out)
 
             return self._run_supervised_read("list_all_copper", _do)
@@ -1787,7 +1892,13 @@ class IpcBridge:
                 it = items[0]
                 net = it.net
                 net_name = str(net.name) if net is not None and net.name else ""
-                return _kipy_copper_to_item(it, net_name)
+                # Sesión 43 (fix _copper_on_layer): stackup sólo si el KIID
+                # resuelve a una via — el caso típico (track/arc) no paga el
+                # IPC extra.
+                copper_values = (
+                    _safe_copper_layer_values(raw_board) if type(it).__name__ == "Via" else ()
+                )
+                return _kipy_copper_to_item(it, net_name, copper_values)
 
             return self._run_supervised_read("get_copper_by_kiid", _do)
 
@@ -2085,6 +2196,7 @@ class IpcBridge:
                     )
                     layer_values = list(zone.layers)
 
+                    pending: list[Zone] = []
                     for hole in pad_holes:
                         if hole.net_name is not None and hole.net_name == zone_net:
                             continue  # mismo net: conexión legítima, no ajeno
@@ -2109,9 +2221,15 @@ class IpcBridge:
                         keepout.proto.rule_area_settings.keepout_tracks = False
                         keepout.proto.rule_area_settings.keepout_vias = False
                         keepout.proto.rule_area_settings.keepout_footprints = False
-                        raw_board.create_items(keepout)
+                        pending.append(keepout)
                         created += 1
+                        if len(pending) >= _ENFORCE_HOLE_CLEARANCE_BATCH_SIZE:
+                            raw_board.create_items(pending)
+                            pending = []
+                    if pending:
+                        raw_board.create_items(pending)
 
+                    pending = []
                     for via in vias:
                         via_net_obj = via.net
                         via_net = (
@@ -2147,8 +2265,13 @@ class IpcBridge:
                         keepout.proto.rule_area_settings.keepout_tracks = False
                         keepout.proto.rule_area_settings.keepout_vias = False
                         keepout.proto.rule_area_settings.keepout_footprints = False
-                        raw_board.create_items(keepout)
+                        pending.append(keepout)
                         created += 1
+                        if len(pending) >= _ENFORCE_HOLE_CLEARANCE_BATCH_SIZE:
+                            raw_board.create_items(pending)
+                            pending = []
+                    if pending:
+                        raw_board.create_items(pending)
 
                 if created:
                     raw_board.refill_zones()

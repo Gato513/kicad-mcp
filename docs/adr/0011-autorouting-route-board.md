@@ -66,6 +66,12 @@ subprocesos usan el python del **SISTEMA** (`/usr/bin/python3` por default,
 overridable con `KICAD_MCP_SYSTEM_PYTHON`), **NUNCA** el venv del proyecto
 (`pcbnew` no es dependencia de `pyproject`, F5). El router corre como subprocess,
 no por IPC: no toca la cola IPC de profundidad 1 (contención D-12.7 intacta).
+El ejecutable de java es `"java"` del PATH por default, overridable con
+`KICAD_MCP_JAVA_EXE` (agregado sesión 49/50, mismo patrón que
+`KICAD_MCP_SYSTEM_PYTHON`/`KICAD_MCP_FREEROUTING_JAR` — necesario porque el
+requisito real de versión de Java lo fija el jar de Freerouting pineado, no
+este server: confirmado empíricamente que Freerouting ≥2.2.3 exige class file
+version 69 = **Java 25**, no la "Java ≥17" que basta para 2.1.0).
 
 A diferencia del spike, el export **NO dibuja el contorno** automáticamente: un
 board sin `Edge.Cuts` FALLA con hint accionable (`draw_board_outline`) — la tool
@@ -76,10 +82,10 @@ de producción no muta el contorno en silencio.
 | Fallo | Código | Hint / `data` |
 |---|---|---|
 | jar ausente (`KICAD_MCP_FREEROUTING_JAR` no seteada o ruta inexistente) | `KICAD_CLI_MISSING` | export la env al freerouting.jar · `data.requirement="freerouting_jar"` |
-| java ausente | `KICAD_CLI_MISSING` | instalar Java ≥17 · `data.requirement="java"` |
+| java ausente (ejecutable no existe, `FileNotFoundError`) | `KICAD_CLI_MISSING` | instalar Java ≥17 (o corregir `KICAD_MCP_JAVA_EXE`) · `data.requirement="java"` |
 | `pcbnew` no importable (python del sistema) | `KICAD_CLI_MISSING` | KiCad completo trae pcbnew · `data.requirement="pcbnew"` |
 | export DSN falla (típico: sin Edge.Cuts) | `KICAD_CLI_FAILED` | "dibujá el contorno con draw_board_outline" · `data.reason="no_edge_cuts"` |
-| Freerouting exit≠0 / SES vacío | `KICAD_CLI_FAILED` | tail del log · `data.stage="freerouting"` |
+| Freerouting exit≠0 / SES vacío (incluye java existente pero incompatible con el jar — el proceso corre, exit≠0, sin SES) | `KICAD_CLI_FAILED` | tail del log (`UnsupportedClassVersionError` visible ahí si es incompatibilidad de versión) · `data.stage="freerouting"` |
 | Freerouting timeout | `KICAD_TIMEOUT` | subí timeout_s / reducí densidad · `data.timeout_s` |
 | import SES falla | `KICAD_CLI_FAILED` | stderr · `data.stage="import_ses"` |
 
@@ -99,6 +105,17 @@ sesiones que no rutean): `java -version` ≥17, jar en
 `KICAD_MCP_FREEROUTING_JAR` existente, `python3 -c "import pcbnew"` con el python
 del SISTEMA. Con los tres OK imprime "flujo de autorouting disponible". Estos
 requisitos son de **sistema** (estilo `kicad-cli`), **no** de `pyproject` (F5).
+
+**Nota sesión 49/50:** el check de `java -version` ≥17 sigue siendo la barrera
+mínima documentada acá, pero NO garantiza compatibilidad con el jar que termine
+configurado en `KICAD_MCP_FREEROUTING_JAR` — Freerouting ≥2.2.3 exige Java 25;
+el `java` que satisface el check puede ser demasiado viejo para el jar real. El
+verificador no lo detecta (no invoca el jar); si `route_board` falla con
+`KICAD_CLI_FAILED`/`stage="freerouting"` pese al check en verde (log tail
+con `UnsupportedClassVersionError`), sospechar desajuste de versión y usar
+`KICAD_MCP_JAVA_EXE` para apuntar a un JDK más nuevo instalado en la
+máquina — no confundir con `KICAD_CLI_MISSING`, que sólo ocurre si el
+ejecutable de java directamente no existe (ver D-14.4).
 
 ## Consecuencias
 

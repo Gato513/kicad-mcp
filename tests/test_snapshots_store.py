@@ -423,6 +423,11 @@ def test_validate_base_snap_still_checks_mtime_for_disk_snapshot(tmp_path: Path)
     with pytest.raises(KicadMcpError) as excinfo:
         validate_base_snap(store, snap_id, sch)
     assert excinfo.value.code is ErrorCode.EXTERNAL_EDIT_DETECTED
+    # Mensaje/hint específicos de esta ruta (sesión 45: ya no se ejercitan
+    # end-to-end vía move_footprint — check_no_external_disk_edit dispara
+    # primero ahí — así que quedan cubiertos acá, contra la función pura).
+    assert "editado fuera del agente" in excinfo.value.message
+    assert "pedí contexto" in excinfo.value.hint
 
 
 @pytest.mark.unit
@@ -480,7 +485,19 @@ async def test_move_footprint_snapshot_stale_when_base_snap_unknown(
 async def test_move_footprint_external_edit_detected_when_mtime_diverges(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``base_snap`` registrado pero mtime cambió ⇒ ``EXTERNAL_EDIT_DETECTED``."""
+    """``base_snap`` registrado pero mtime cambió ⇒ ``EXTERNAL_EDIT_DETECTED``.
+
+    Sesión 45: ``move_footprint`` cerró la asimetría de ``disk_check``
+    (ADR-0014) — ``check_no_external_disk_edit`` (P3.2) corre ANTES que
+    ``_check_base_snap`` en el orden de guardas de ``@mutating_tool``, así
+    que en este escenario (``register()`` deja un ancla de disco Y un
+    ``base_snap`` que también diverge) el guard más general dispara primero.
+    El mensaje ya no es el de ``validate_base_snap`` ("editado fuera del
+    agente"/"pedí contexto") sino el de ``check_no_external_disk_edit`` — el
+    mensaje/hint específicos de ``_check_base_snap`` se movieron a
+    ``test_validate_base_snap_still_checks_mtime_for_disk_snapshot`` arriba,
+    contra la función pura directamente.
+    """
     project = _make_project(tmp_path)
     monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
     bridge = _FakeBridge(refs=["U1"], nets=["GND"], bbox=BBoxMm(Mm(0), Mm(0), Mm(200), Mm(200)))
@@ -502,9 +519,9 @@ async def test_move_footprint_external_edit_detected_when_mtime_diverges(
     assert result.isError
     text = _text(result)
     assert "EXTERNAL_EDIT_DETECTED" in text
-    assert "editado fuera del agente" in text
-    # Hint accionable: instruye pedir contexto de nuevo antes de reintentar.
-    assert "pedí contexto" in text
+    assert "cambió en disco" in text
+    # Hint accionable: instruye recargar el board vivo antes de reintentar.
+    assert "reload_board_from_disk" in text
     assert bridge.moves == []
 
 

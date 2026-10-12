@@ -45,6 +45,9 @@ Eso alcanza para el 90% de las sesiones. Lo demás es "bajo demanda":
 |---|---|---|
 | `AGENTS.md` | Contrato transversal de coordinación multiagente: roles, autoridad, independencia, handoffs | Humano, tras cada sesión que cambie reglas de coordinación |
 | `docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md` | Único protocolo operativo vigente de coordinación multiagente | Humano, cuando cambie el flujo operativo |
+| `docs/proceso/JUICIO-CRUZADO-CODEX-v1.md` | Variante intensiva opcional de la revisión independiente (dos jueces Codex ciegos, excepción §13 del flujo) | Humano, cuando cambie el protocolo |
+| `docs/proceso/TRIAGE-SISTEMICO-DE-HALLAZGOS-v1.md` | Criterio de clasificación de hallazgos por causa raíz y de selección de fix (no es un protocolo ni abre ciclo) | Humano, cuando cambie el criterio |
+| `docs/proceso/DELEGACION-A-SUBAGENTES-v1.md` | Disciplina operativa del Escritor al usar subagentes (no es un rol nuevo) | Humano, cuando cambie la disciplina |
 | `CLAUDE.md` | Contrato del ejecutor Claude Code | Humano, tras cada sesión que cambie reglas |
 | `README.md` | Punto de entrada, quickstart, mapa de estructura | Humano/agente al DoD |
 | `docs/CONTEXT.md` | Visión consolidada del sistema y riesgos | Humano |
@@ -68,6 +71,9 @@ Coordinación multiagente vigente:
 
 - `AGENTS.md` — autoridad institucional.
 - `docs/proceso/FLUJO-HIBRIDO-MULTIAGENTE-v2.md` — protocolo operativo.
+- `docs/proceso/JUICIO-CRUZADO-CODEX-v1.md` — variante opcional de doble juicio, sólo por pedido explícito sobre unidades de riesgo alto.
+- `docs/proceso/TRIAGE-SISTEMICO-DE-HALLAZGOS-v1.md` — criterio de clasificación y de fix, se aplica dentro del trabajo normal, no abre nada.
+- `docs/proceso/DELEGACION-A-SUBAGENTES-v1.md` — disciplina del Escritor al delegar, no un rol ni un protocolo nuevo.
 
 ## `docs/historico/` — evidencia del proceso, no operativo
 

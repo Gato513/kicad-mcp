@@ -21,7 +21,11 @@ from kicad_mcp.bridge.ipc import (
     IpcBridge,
     Mm,
 )
-from kicad_mcp.bridge.state_builder import build_state, build_state_from_board
+from kicad_mcp.bridge.state_builder import (
+    build_state,
+    build_state_cached,
+    build_state_from_board,
+)
 from kicad_mcp.errors import ErrorCode, KicadMcpError
 from kicad_mcp.toon.schema import NormalizedState
 from tests.conftest import mirror_fixture
@@ -165,3 +169,79 @@ def test_state_builder_refuses_hierarchical_project(tmp_path: Path) -> None:
     with pytest.raises(KicadMcpError) as excinfo:
         build_state((project / "video.kicad_sch").resolve(), snap=1)
     assert excinfo.value.code is ErrorCode.UNSUPPORTED_HIERARCHY
+
+
+@pytest.mark.unit
+def test_rebuild_ignores_pseudo_symbols_in_positions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R13: ``#PWR``/``#FLG`` están en el .kicad_sch pero no en el netlist; no
+    deben disparar ``KICAD_CLI_FAILED`` (ni siquiera repetidos, p. ej. ``#PWR?``)."""
+    from kicad_mcp.bridge import state_builder as sb
+    from kicad_mcp.bridge.netlist import Netlist, NetlistComponent
+    from kicad_mcp.bridge.sch_positions import Placement
+
+    placements = (
+        Placement(ref="R1", x=10.0, y=20.0),
+        Placement(ref="#PWR01", x=1.0, y=1.0),
+        Placement(ref="#PWR?", x=2.0, y=2.0),
+        Placement(ref="#PWR?", x=3.0, y=3.0),
+        Placement(ref="#FLG01", x=4.0, y=4.0),
+    )
+    netlist = Netlist(
+        components=(NetlistComponent(ref="R1", value="10k", lib="Device:R", pin_ids=("1", "2")),),
+        nets={"GND": (("R1", "1"),)},
+    )
+    monkeypatch.setattr(sb, "parse_root_positions", lambda _p: placements)
+    monkeypatch.setattr(sb, "load_netlist", lambda _p: netlist)
+
+    state = sb._rebuild(tmp_path / "x.kicad_sch", snap=1)
+    assert [c.ref for c in state.components] == ["R1"]
+
+
+@pytest.mark.unit
+def test_rebuild_still_flags_real_ref_missing_from_netlist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """El filtro es sólo para ``#``: un ref real sin netlist sigue siendo error."""
+    from kicad_mcp.bridge import state_builder as sb
+    from kicad_mcp.bridge.netlist import Netlist
+    from kicad_mcp.bridge.sch_positions import Placement
+
+    monkeypatch.setattr(sb, "parse_root_positions", lambda _p: (Placement(ref="R9", x=0, y=0),))
+    monkeypatch.setattr(sb, "load_netlist", lambda _p: Netlist(components=()))
+    with pytest.raises(KicadMcpError) as excinfo:
+        sb._rebuild(tmp_path / "x.kicad_sch", snap=1)
+    assert excinfo.value.code is ErrorCode.KICAD_CLI_FAILED
+    assert "R9" in excinfo.value.hint
+
+
+_POWER_LIB = """(symbol "power:GND" (power) (pin_names (offset 0)) (in_bom no) (on_board no)
+      (property "Reference" "#PWR" (at 0 -6.35 0) (effects (font (size 1.27 1.27)) hide))
+      (property "Value" "GND" (at 0 -3.81 0) (effects (font (size 1.27 1.27))))
+      (symbol "GND_1_1" (pin power_in line (at 0 0 270) (length 0) hide
+        (name "GND" (effects (font (size 1.27 1.27))))
+        (number "1" (effects (font (size 1.27 1.27)))))))
+    """
+_POWER_INSTANCE = """  (symbol (lib_id "power:GND") (at 127 90 0) (unit 1)
+    (in_bom no) (on_board no) (uuid 00000000-0000-0000-0000-0000000000aa)
+    (property "Reference" "#PWR01" (at 127 96 0) (effects (font (size 1.27 1.27)) hide))
+    (property "Value" "GND" (at 127 94 0) (effects (font (size 1.27 1.27))))
+    (pin "1" (uuid 00000000-0000-0000-0000-0000000000ab)))
+"""
+
+
+@pytest.mark.integration
+def test_build_state_accepts_power_symbol_with_real_kicad_cli(tmp_path: Path) -> None:
+    """R13 end-to-end: 001_basico + un ``power:GND`` (#PWR01) construye estado."""
+    project = mirror_fixture(FIXTURES / "001_basico", tmp_path / "pwr")
+    sch = (project / "fixture.kicad_sch").resolve()
+    text = sch.read_text(encoding="utf-8")
+    text = text.replace("(lib_symbols", "(lib_symbols\n    " + _POWER_LIB, 1)
+    end = text.rstrip().rfind(")")
+    sch.write_text(text[:end] + _POWER_INSTANCE + text[end:], encoding="utf-8")
+
+    state, _ = build_state_cached(sch, snap=1)
+    refs = {c.ref for c in state.components}
+    assert "#PWR01" not in refs
+    assert {"U1", "R1", "R2", "C1", "J1"} <= refs

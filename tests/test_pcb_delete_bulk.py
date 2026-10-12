@@ -179,7 +179,13 @@ def _track(kiid: str, net: str, sx: float, sy: float, ex: float, ey: float) -> C
     )
 
 
-def _via(kiid: str, net: str, x: float, y: float) -> CopperItem:
+def _via(
+    kiid: str,
+    net: str,
+    x: float,
+    y: float,
+    via_span_layers: tuple[str, ...] | None = None,
+) -> CopperItem:
     return CopperItem(
         kind="via",
         kiid=kiid,
@@ -194,6 +200,7 @@ def _via(kiid: str, net: str, x: float, y: float) -> CopperItem:
         size_mm=Mm(0.8),
         drill_mm=Mm(0.4),
         via_layers=("F.Cu", "B.Cu"),
+        via_span_layers=via_span_layers,
     )
 
 
@@ -349,6 +356,109 @@ async def test_delete_tracks_bulk_bbox_filters_out_of_range_items(
     payload = _json(result)
     assert payload["tracks_deleted"] == 1
     assert bridge.remove_many_calls == [["T1"]]
+
+
+# Sesión 43 (fix _copper_on_layer, docs/BACKLOG.md "Hallazgo colateral" de
+# sesión 42): el sitio destructivo del fix. Antes del fix, `layer="In1.Cu"`
+# nunca matcheaba una via pasante (aunque físicamente la atraviese) — estos
+# tres tests fijan que ahora sí, en sus tres modos (dry_run, borrado real,
+# include_vias=False), sin editar ninguno de los tests preexistentes de este
+# archivo.
+@pytest.mark.unit
+async def test_delete_tracks_bulk_layer_filter_dry_run_reports_internal_layer_via(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    copper = {
+        "GND": [
+            _track("T1", "GND", 0.0, 0.0, 10.0, 0.0),
+            _via("V1", "GND", 20.0, 20.0, via_span_layers=("F.Cu", "In1.Cu", "B.Cu")),
+        ],
+    }
+    bridge = _FakeBridge(nets=["GND"], copper=copper)
+    mcp = _make_server(bridge)
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "delete_tracks_bulk", {"net": "GND", "layer": "In1.Cu", "dry_run": True}
+        )
+    assert not result.isError, _text(result)
+    payload = _json(result)
+    assert payload["tracks_deleted"] == 0
+    assert payload["vias_deleted"] == 1
+    assert bridge.remove_many_calls == []
+    assert len(bridge.list_all_copper(BoardHandle(_raw=object()))) == 2
+
+
+@pytest.mark.unit
+async def test_delete_tracks_bulk_layer_filter_deletes_via_spanning_internal_layer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+    copper = {
+        "GND": [
+            _track("T1", "GND", 0.0, 0.0, 10.0, 0.0),
+            _via("V1", "GND", 20.0, 20.0, via_span_layers=("F.Cu", "In1.Cu", "B.Cu")),
+        ],
+    }
+    bridge = _FakeBridge(nets=["GND"], copper=copper)
+    mcp = _make_server(bridge)
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool("delete_tracks_bulk", {"net": "GND", "layer": "In1.Cu"})
+    assert not result.isError, _text(result)
+    payload = _json(result)
+    assert payload["tracks_deleted"] == 0
+    assert payload["vias_deleted"] == 1
+    assert bridge.remove_many_calls == [["V1"]]
+
+
+@pytest.mark.unit
+async def test_delete_tracks_bulk_layer_filter_include_vias_false_still_excludes_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``include_vias=False`` sigue siendo la válvula que protege el borrado
+    masivo de vías por capa, incluso con el filtro corregido.
+
+    Autocontenido (auditoría de sesión 43, Codex: la versión anterior de
+    este test pasaba igual con el bug SIN corregir, porque el filtro de
+    capa ya excluía la vía por su cuenta — ``include_vias=False`` nunca
+    llegaba a ejercitarse). Este test primero prueba, con la MISMA
+    geometría y ``include_vias=True`` (default), que el filtro corregido SÍ
+    selecciona la vía (``vias_deleted == 1``) — sin esa aserción, un fallo
+    de ``include_vias=False`` de más abajo sería indistinguible del bug
+    original.
+    """
+    project = _make_project(tmp_path)
+    monkeypatch.setenv("KICAD_MCP_PROJECT", str(project))
+
+    def _fresh_copper() -> dict[str, list[CopperItem]]:
+        return {
+            "GND": [_via("V1", "GND", 20.0, 20.0, via_span_layers=("F.Cu", "In1.Cu", "B.Cu"))],
+        }
+
+    bridge_default = _FakeBridge(nets=["GND"], copper=_fresh_copper())
+    mcp_default = _make_server(bridge_default)
+    async with create_connected_server_and_client_session(mcp_default._mcp_server) as client:
+        control = await client.call_tool(
+            "delete_tracks_bulk", {"net": "GND", "layer": "In1.Cu", "dry_run": True}
+        )
+    assert not control.isError, _text(control)
+    assert _json(control)["vias_deleted"] == 1, (
+        "control: el filtro de capa debe seleccionar la via ANTES de "
+        "aplicar include_vias — si esto falla, el test de abajo no discrimina nada"
+    )
+
+    bridge = _FakeBridge(nets=["GND"], copper=_fresh_copper())
+    mcp = _make_server(bridge)
+    async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+        result = await client.call_tool(
+            "delete_tracks_bulk", {"net": "GND", "layer": "In1.Cu", "include_vias": False}
+        )
+    assert not result.isError, _text(result)
+    payload = _json(result)
+    assert payload["vias_deleted"] == 0
+    assert bridge.remove_many_calls == [[]]
 
 
 @pytest.mark.unit

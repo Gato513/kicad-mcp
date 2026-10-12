@@ -7,6 +7,9 @@ __pycache__/
 .kicad-mcp/
 scratchpad/
 
+# Config local de MCP servers (rutas específicas de cada máquina, ej. codex vía nvm)
+.mcp.json
+
 # Basura de la GUI de KiCad (no son fixtures — evita reincidencia, sesión 09 D3)
 _autosave-*
 *.lck

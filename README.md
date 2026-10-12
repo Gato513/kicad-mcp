@@ -60,7 +60,10 @@ To actually drive KiCad you need:
 - `KICAD_MCP_PROJECT` set to the `.kicad_pro` you want the server to
   operate on.
 - `KICAD_MCP_FREEROUTING_JAR` set to a local `freerouting-*.jar` if you
-  want `route_board` to actually autoroute (Java ≥ 17 required).
+  want `route_board` to actually autoroute (Java ≥ 17 required — note
+  Freerouting ≥ 2.2.3 itself needs Java 25; if your PATH `java` is
+  older, point `KICAD_MCP_JAVA_EXE` at a compatible JDK instead of
+  changing your system default).
 - `KICAD_API_SOCKET` only if your KiCad API socket isn't at the default
   `ipc:///tmp/kicad/api.sock`.
 

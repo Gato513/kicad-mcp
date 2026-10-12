@@ -17,6 +17,7 @@ reconstruir.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Final
 
 from ..errors import ErrorCode, KicadMcpError
 from ..toon.schema import Component, NormalizedState, Pin
@@ -25,6 +26,9 @@ from .netlist import Netlist, load_netlist
 from .sch_positions import Placement, parse_root_positions
 
 _CACHE: dict[tuple[str, int], NormalizedState] = {}
+
+
+_PSEUDO_REF_PREFIX: Final = "#"
 
 
 def _index_placements(placements: tuple[Placement, ...]) -> dict[str, Placement]:
@@ -172,7 +176,12 @@ def build_state_from_board(bridge: IpcBridge, board: BoardHandle) -> NormalizedS
 def _rebuild(schematic: Path, *, snap: int) -> NormalizedState:
     # Chequear jerarquía ANTES de invocar kicad-cli: falla rápido en proyectos
     # multi-hoja sin gastar el subprocess (que sí procesa jerarquía).
-    placements = parse_root_positions(schematic)
+    # R13: kicad-cli excluye del netlist los pseudo-símbolos ``#``-prefijados
+    # (``#PWR*``, ``#FLG*``); no son componentes, así que se descartan también
+    # de las posiciones antes de cruzar ambos conjuntos.
+    placements = tuple(
+        p for p in parse_root_positions(schematic) if not p.ref.startswith(_PSEUDO_REF_PREFIX)
+    )
     netlist = load_netlist(schematic)
     placements_by_ref = _index_placements(placements)
     connections = _connections_per_ref(netlist)

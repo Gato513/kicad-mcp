@@ -47,7 +47,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Protocol
+from typing import IO, Final, Protocol
 
 from ..errors import ErrorCode, KicadMcpError
 from .rules_reader import load_project_rules
@@ -60,6 +60,7 @@ _LOGGER = logging.getLogger("kicad_mcp")
 _SYSTEM_PYTHON_DEFAULT: Final = "/usr/bin/python3"
 _SYSTEM_PYTHON_ENV: Final = "KICAD_MCP_SYSTEM_PYTHON"
 _JAVA_EXE_DEFAULT: Final = "java"
+_JAVA_EXE_ENV: Final = "KICAD_MCP_JAVA_EXE"
 _JAR_ENV: Final = "KICAD_MCP_FREEROUTING_JAR"
 
 # Exit codes de los scripts ``pcbnew`` (para distinguir el mapeo de errores).
@@ -81,6 +82,15 @@ try:
 except Exception as e:
     sys.stderr.write("NO_PCBNEW: %s\n" % e)
     sys.exit(3)
+
+# Sesión 49 (F-PCBNEW-SWIG-PY314): bajo Python >=3.14, pcbnew.py (SWIG,
+# empaquetado por KiCad, no código nuestro) itera colecciones llamando
+# ``it.next()`` sobre un ``SwigPyIterator`` que sólo expone ``__next__``
+# (el alias ``next`` de compatibilidad Python 2 desapareció) — rompe
+# GetDrawings()/GetTracks() con AttributeError. Guardado: sólo parcha si
+# falta, para no tocar builds de pcbnew donde ``next`` ya funciona.
+if not hasattr(pcbnew.SwigPyIterator, "next"):
+    pcbnew.SwigPyIterator.next = pcbnew.SwigPyIterator.__next__
 
 src, out = sys.argv[1], sys.argv[2]
 
@@ -114,6 +124,11 @@ try:
 except Exception as e:
     sys.stderr.write("NO_PCBNEW: %s\n" % e)
     sys.exit(3)
+
+# Sesión 49 (F-PCBNEW-SWIG-PY314): ver comentario gemelo en
+# _EXPORT_DSN_SCRIPT — mismo guard, GetTracks() lo necesita acá.
+if not hasattr(pcbnew.SwigPyIterator, "next"):
+    pcbnew.SwigPyIterator.next = pcbnew.SwigPyIterator.__next__
 
 board_path, ses, out = sys.argv[1], sys.argv[2], sys.argv[3]
 
@@ -149,7 +164,9 @@ class SubprocessRunner(Protocol):
         self,
         args: list[str],
         *,
-        capture_output: bool,
+        capture_output: bool = False,
+        stdout: IO[str] | None = None,
+        stderr: int | None = None,
         text: bool,
         timeout: float,
         check: bool,
@@ -186,6 +203,19 @@ class AutorouteResult:
 
 def _resolve_system_python(system_python: str | None) -> str:
     return system_python or os.environ.get(_SYSTEM_PYTHON_ENV) or _SYSTEM_PYTHON_DEFAULT
+
+
+def _resolve_java_exe(java_exe: str | None) -> str:
+    """Resuelve el ejecutable de java para invocar Freerouting.
+
+    Fuente: ``java_exe`` explícito o el env ``KICAD_MCP_JAVA_EXE``, con
+    fallback a ``"java"`` del PATH (comportamiento histórico). Necesario
+    porque el requisito de versión de Java lo fija el JAR de Freerouting
+    elegido, no este server — un ``java`` del PATH que sirve para 2.1.0
+    puede ser demasiado viejo para 2.2.3+ (confirmado sesión 49: class file
+    version 69 = Java 25, el `java` por defecto puede quedar en 17-21).
+    """
+    return java_exe or os.environ.get(_JAVA_EXE_ENV) or _JAVA_EXE_DEFAULT
 
 
 def _resolve_jar(jar_path: str | None) -> str:
@@ -572,6 +602,50 @@ _FREEROUTING_SETTINGS_CANDIDATES: Final = (
 )
 
 
+# Log propio de Freerouting (nivel DEBUG, XDG state). La consola que captura
+# ``_run_freerouting`` sólo recibe INFO: ahí el router parece mudo durante todo
+# el pass 1 aunque esté rutando (sesión 52, HackRF One: 10 líneas en 60 min vs
+# ~2000 en este archivo). El progreso por pass sólo existe acá.
+_FREEROUTING_STATE_LOG: Final = (
+    Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+    / "freerouting"
+    / "logs"
+    / "freerouting.log"
+)
+_PROGRESS_RE: Final = re.compile(
+    r"Pass #\d+: \d+ incompletes|Optimizer pass|Optimization stage|"
+    r"Auto-routing stage|finished with state|NullPointer"
+)
+
+
+def _state_log_offset() -> int:
+    try:
+        return _FREEROUTING_STATE_LOG.stat().st_size
+    except OSError:
+        return 0
+
+
+def _append_router_progress(log_path: Path, offset: int) -> str:
+    """Copia al ``freerouting.log`` de la corrida las líneas de progreso por
+    pass que Freerouting escribió en su log propio DESDE ``offset`` (el tamaño
+    previo a lanzarlo). Best-effort: nunca lanza. Devuelve la última línea de
+    progreso (para el hint del timeout) o ``""``.
+    """
+    try:
+        with _FREEROUTING_STATE_LOG.open("rb") as fh:
+            fh.seek(offset)
+            new = fh.read().decode("utf-8", errors="replace")
+        lines = [ln[:240] for ln in new.splitlines() if _PROGRESS_RE.search(ln)]
+        if not lines:
+            return ""
+        with log_path.open("a", encoding="utf-8") as out:
+            out.write("\n--- progreso (log DEBUG de Freerouting) ---\n")
+            out.write("\n".join(lines) + "\n")
+        return lines[-1]
+    except OSError:
+        return ""
+
+
 def _ensure_freerouting_headless_config() -> None:
     """Fuerza ``gui.enabled=false`` en la config persistente de Freerouting
     (sesión 17, hallazgo empírico — no documentado por freerouting).
@@ -626,10 +700,22 @@ def _run_freerouting(
     args = [java_exe, "-jar", jar, "-de", str(dsn), "-do", str(ses), "-host", "KiCad"]
     if max_passes is not None:
         args += ["-mp", str(max_passes)]
+    # La salida va DIRECTO al archivo de log (no por pipe): así sobrevive al
+    # kill por timeout y se puede seguir en vivo con ``tail -f`` durante
+    # corridas largas (sesión 52; antes un ``KICAD_TIMEOUT`` dejaba el log
+    # vacío o con sólo la línea de arranque, indistinguible de un router
+    # trabado). El log queda completo en disco; el ``hint`` usa sólo la cola.
+    state_offset = _state_log_offset()
     try:
-        completed = runner(
-            args, capture_output=True, text=True, timeout=float(timeout_s), check=False
-        )
+        with log_path.open("w", encoding="utf-8") as log_file:
+            completed = runner(
+                args,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=float(timeout_s),
+                check=False,
+            )
     except FileNotFoundError as exc:
         raise KicadMcpError(
             code=ErrorCode.KICAD_CLI_MISSING,
@@ -638,29 +724,39 @@ def _run_freerouting(
             data={"requirement": "java"},
         ) from exc
     except subprocess.TimeoutExpired as exc:
-        log_path.write_text(
-            _tail(_as_str(exc.stdout) + _as_str(exc.stderr), 4000), encoding="utf-8"
-        )
+        last_progress = _append_router_progress(log_path, state_offset)
         raise KicadMcpError(
             code=ErrorCode.KICAD_TIMEOUT,
             message=f"El ruteo con Freerouting excedió {timeout_s} s.",
             hint=(
                 "Subí timeout_s, reducí la densidad de la placa, o ruteá por zonas. "
-                "El router escala peor con densidad."
+                "El router escala peor con densidad. "
+                f"Log del router en {log_path}"
+                + (f" (último progreso: {last_progress})." if last_progress else ".")
             ),
-            data={"stage": "freerouting", "timeout_s": timeout_s},
+            data={
+                "stage": "freerouting",
+                "timeout_s": timeout_s,
+                "log_path": str(log_path),
+            },
         ) from exc
 
-    log_path.write_text(
-        _tail((completed.stdout or "") + (completed.stderr or ""), 4000), encoding="utf-8"
-    )
+    _append_router_progress(log_path, state_offset)
     if not ses.is_file() or ses.stat().st_size == 0:
+        log_tail = _tail(_read_log(log_path))
         raise KicadMcpError(
             code=ErrorCode.KICAD_CLI_FAILED,
             message="Freerouting no produjo un SES válido.",
-            hint=_tail(completed.stdout + completed.stderr) or f"returncode={completed.returncode}",
-            data={"stage": "freerouting", "log_tail": _tail(completed.stdout + completed.stderr)},
+            hint=log_tail or f"returncode={completed.returncode}",
+            data={"stage": "freerouting", "log_tail": log_tail},
         )
+
+
+def _read_log(log_path: Path) -> str:
+    try:
+        return log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def _run_import_ses(
@@ -718,7 +814,7 @@ def run_autoroute(
     runner: SubprocessRunner | None = None,
     system_python: str | None = None,
     jar_path: str | None = None,
-    java_exe: str = _JAVA_EXE_DEFAULT,
+    java_exe: str | None = None,
 ) -> AutorouteResult:
     """Ejecuta el round-trip DSN → Freerouting → SES sobre ``src_pcb`` de disco.
 
@@ -731,6 +827,7 @@ def run_autoroute(
     run: SubprocessRunner = runner if runner is not None else subprocess.run
     sys_py = _resolve_system_python(system_python)
     jar = _resolve_jar(jar_path)
+    java = _resolve_java_exe(java_exe)
 
     workdir.mkdir(parents=True, exist_ok=True)
     dsn = workdir / "route.dsn"
@@ -754,9 +851,7 @@ def run_autoroute(
     export_ms = (time.perf_counter() - t0) * 1000
 
     t1 = time.perf_counter()
-    _run_freerouting(
-        run, java_exe, jar, dsn, ses, log_path, max_passes=max_passes, timeout_s=timeout_s
-    )
+    _run_freerouting(run, java, jar, dsn, ses, log_path, max_passes=max_passes, timeout_s=timeout_s)
     route_ms = (time.perf_counter() - t1) * 1000
 
     t2 = time.perf_counter()

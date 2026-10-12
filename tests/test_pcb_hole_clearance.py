@@ -150,6 +150,10 @@ class _FakeRawBoard:
         self._footprints = footprints
         self._tracks = tracks
         self.refill_calls = 0
+        # tamaño de cada llamada a create_items (1 = ítem suelto, N = lote) —
+        # sesión 48, F-V3-ZONE-FILL-CRASH: permite a los tests de troceo
+        # verificar cuántos requests IPC habría generado cada llamada real.
+        self.create_items_call_sizes: list[int] = []
 
     def get_zones(self) -> list[object]:
         return list(self._zones)
@@ -160,8 +164,15 @@ class _FakeRawBoard:
     def get_tracks(self) -> list[object]:
         return list(self._tracks)
 
-    def create_items(self, item: object) -> list[object]:
-        self._zones.append(item)
+    def create_items(self, items: object) -> list[object]:
+        # kipy real acepta un ítem suelto O un iterable (Union[Wrapper,
+        # Iterable[Wrapper]], board.py:341) — el fake modela los dos casos
+        # que produce el código real (ítem suelto o list), no cualquier
+        # Iterable arbitrario, para que el troceo de enforce_hole_clearance
+        # (sesión 48) sea observable, no sólo su resultado final.
+        batch = list(items) if isinstance(items, (list, tuple)) else [items]
+        self._zones.extend(batch)
+        self.create_items_call_sizes.append(len(batch))
         return []
 
     def remove_items(self, items: object) -> None:
@@ -351,3 +362,38 @@ def test_enforce_hole_clearance_mask_term_dominates_when_larger(tmp_path: Path) 
     cx_nm, cy_nm = 144_500_000, 89_000_000
     radius_mm = ((vertex.point.x - cx_nm) ** 2 + (vertex.point.y - cy_nm) ** 2) ** 0.5 / 1_000_000
     assert radius_mm == pytest.approx(1.82, abs=1e-3)
+
+
+@pytest.mark.unit
+def test_enforce_hole_clearance_batches_create_items() -> None:
+    """Sesión 48 (F-V3-ZONE-FILL-CRASH): con más agujeros ajenos que el
+    tamaño de lote, ``create_items`` se llama en ``ceil(N/lote)`` veces con
+    tamaños en ``1..lote`` — nunca 1 request por ítem (el patrón que hacía
+    que boards densos superaran el timeout duro de 2000ms/request de
+    ``docs/specs/restricciones-kicad.md``) ni un único request con todo N
+    (que también lo supera, medido: 707 en un solo request = 8.40s)."""
+    zone = _FakeExistingZone(ZoneType.ZT_COPPER, "GND_plane", "GND", [LAYER_B_CU])
+    n = 250  # > _ENFORCE_HOLE_CLEARANCE_BATCH_SIZE (100): fuerza 3 lotes (100/100/50)
+    footprints = [
+        _Footprint(
+            f"P{i}",
+            [_Pad("1", "net_ajeno", 1_000_000 * i, 1_000_000, 500_000, PadType.PT_PTH)],
+        )
+        for i in range(n)
+    ]
+    raw = _FakeRawBoard(zones=[zone], footprints=footprints, tracks=[])
+    bridge = _bridge()
+    board = BoardHandle(_raw=raw)
+
+    created = bridge.enforce_hole_clearance(board, Path("/nonexistent/proj.kicad_pcb"))
+
+    assert created == n
+    keepouts = [z for z in raw.get_zones() if getattr(z, "type", None) == ZoneType.ZT_RULE_AREA]
+    assert len(keepouts) == n
+
+    import math
+
+    assert raw.create_items_call_sizes == [100, 100, 50]
+    assert len(raw.create_items_call_sizes) == math.ceil(n / 100)
+    assert all(1 <= size <= 100 for size in raw.create_items_call_sizes)
+    assert sum(raw.create_items_call_sizes) == n

@@ -261,3 +261,68 @@ def test_diff_violations_duplicate_identities_use_multiset_not_set() -> None:
     assert introducidas == 2
     assert resueltas == 0
     assert por_tipo == {"clearance": 2}
+
+
+# --- F-03: kicad-cli 10.0.x reporta pos del ERC ÷100 -------------------------
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [
+        ("10.0.6", 100.0),
+        ("10.0.4", 100.0),
+        ("9.0.3", 1.0),
+        ("10.1.0", 1.0),
+        ("", 1.0),
+        ("x.y", 1.0),
+    ],
+)
+def test_erc_pos_scale_only_verified_series(version: str, expected: float) -> None:
+    from kicad_mcp.bridge.rules import _erc_pos_scale
+
+    assert _erc_pos_scale(version) == expected
+
+
+def _erc_payload(version: str) -> dict[str, Any]:
+    # Forma real: U1 está en (127, 63.5) en el .kicad_sch de 001_basico.
+    return {
+        "coordinate_units": "mm",
+        "kicad_version": version,
+        "sheets": [
+            {
+                "violations": [
+                    {
+                        "type": "lib_symbol_issues",
+                        "severity": "warning",
+                        "description": "x",
+                        "items": [
+                            {"description": "Symbol U1 [MCU8]", "pos": {"x": 1.27, "y": 0.635}}
+                        ],
+                    }
+                ]
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"), [("10.0.6", (127.0, 63.5)), ("9.0.3", (1.27, 0.635))]
+)
+def test_run_erc_compensates_pos_by_version(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, version: str, expected: tuple[float, float]
+) -> None:
+    import json
+    import subprocess
+
+    from kicad_mcp.bridge import rules
+
+    def fake_cli(args: list[str], *, action: str) -> tuple[dict[str, Any], Any]:
+        out = args[args.index("-o") + 1]
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump(_erc_payload(version), fh)
+        return {}, subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(rules, "_run_kicad_cli", fake_cli)
+    report = rules.run_erc(tmp_path / "x.kicad_sch")
+    pos = report.violations[0].items[0].pos
+    assert pos == pytest.approx(expected)

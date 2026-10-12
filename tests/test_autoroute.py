@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import IO
 
 import pytest
 
@@ -49,19 +50,26 @@ class _FakeRunner:
         self.produce_ses = produce_ses
         self.import_counts = import_counts
         self.calls: list[str] = []
+        self.last_java_args: list[str] = []
 
     def __call__(
         self,
         args: list[str],
         *,
-        capture_output: bool,
+        capture_output: bool = False,
+        stdout: IO[str] | None = None,
+        stderr: int | None = None,
         text: bool,
         timeout: float,
         check: bool,
     ) -> subprocess.CompletedProcess[str]:
         if args[0] == "java" or "-jar" in args:
             self.calls.append("java")
-            return self._resolve_java(args)
+            self.last_java_args = args
+            result = self._resolve_java(args)
+            if stdout is not None:  # como el real: la salida va directa al log
+                stdout.write((result.stdout or "") + (result.stderr or ""))
+            return result
         # python -c <script> ...
         script = args[2]
         if "ExportSpecctraDSN" in script:
@@ -101,6 +109,15 @@ class _FakeRunner:
         return _completed(0, stdout=line)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_state_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Aísla el log DEBUG de Freerouting del home real del host."""
+    state = tmp_path / "state" / "freerouting.log"
+    state.parent.mkdir()
+    monkeypatch.setattr(autoroute, "_FREEROUTING_STATE_LOG", state)
+    return state
+
+
 @pytest.fixture
 def jar(tmp_path: Path) -> str:
     p = tmp_path / "freerouting.jar"
@@ -123,6 +140,31 @@ def test_autoroute_success(tmp_path: Path, jar: str) -> None:
     assert result.export_ms >= 0 and result.route_ms >= 0 and result.import_ms >= 0
     assert Path(result.routed_pcb).name == "routed.kicad_pcb"
     assert runner.calls == ["export", "java", "import"]
+
+
+@pytest.mark.unit
+def test_resolve_java_exe_precedencia(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explícito > env > default ``"java"`` (mismo orden que jar/system_python)."""
+    monkeypatch.delenv("KICAD_MCP_JAVA_EXE", raising=False)
+    assert autoroute._resolve_java_exe(None) == "java"
+
+    monkeypatch.setenv("KICAD_MCP_JAVA_EXE", "/opt/java25/bin/java")
+    assert autoroute._resolve_java_exe(None) == "/opt/java25/bin/java"
+    assert autoroute._resolve_java_exe("/explicit/java") == "/explicit/java"
+
+
+@pytest.mark.unit
+def test_autoroute_usa_java_exe_del_env(
+    tmp_path: Path, jar: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``run_autoroute`` sin ``java_exe`` explícito respeta ``KICAD_MCP_JAVA_EXE``
+
+    (session actual: el ``java`` por defecto del PATH puede ser incompatible
+    con el jar de Freerouting pineado — ver docstring de ``_resolve_java_exe``)."""
+    monkeypatch.setenv("KICAD_MCP_JAVA_EXE", "/opt/java25/bin/java")
+    runner = _FakeRunner()
+    autoroute.run_autoroute(_src(tmp_path), tmp_path / "work", runner=runner, jar_path=jar)
+    assert runner.last_java_args[0] == "/opt/java25/bin/java"
 
 
 @pytest.mark.unit
@@ -190,6 +232,87 @@ def test_autoroute_freerouting_no_ses(tmp_path: Path, jar: str) -> None:
         autoroute.run_autoroute(_src(tmp_path), tmp_path / "work", runner=runner, jar_path=jar)
     assert exc.value.code is ErrorCode.KICAD_CLI_FAILED
     assert exc.value.data is not None and exc.value.data["stage"] == "freerouting"
+    assert "could not route" in exc.value.data["log_tail"]
+
+
+@pytest.mark.unit
+def test_autoroute_freerouting_streams_stdout_to_log_file(tmp_path: Path, jar: str) -> None:
+    """La salida del router va directo al archivo (sobrevive al timeout)."""
+    seen: dict[str, object] = {}
+
+    class _Spy(_FakeRunner):
+        def __call__(self, args: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+            if "-jar" in args:
+                seen["stdout"] = kw.get("stdout")
+                seen["stderr"] = kw.get("stderr")
+                seen["capture_output"] = kw.get("capture_output", False)
+            return super().__call__(args, **kw)  # type: ignore[arg-type]
+
+    work = tmp_path / "work"
+    autoroute.run_autoroute(_src(tmp_path), work, runner=_Spy(), jar_path=jar)
+    assert seen["stdout"] is not None and seen["stderr"] == subprocess.STDOUT
+    assert seen["capture_output"] is False
+    assert "routed" in (work / "freerouting.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_autoroute_freerouting_timeout_keeps_partial_log(tmp_path: Path, jar: str) -> None:
+    class _Hang(_FakeRunner):
+        def __call__(self, args: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+            if "-jar" in args:
+                out = kw["stdout"]
+                assert hasattr(out, "write")
+                out.write("Auto-routing stage started\npass 1\n")  # type: ignore[union-attr]
+                out.flush()  # type: ignore[union-attr]
+                raise subprocess.TimeoutExpired(cmd="java", timeout=5)
+            return super().__call__(args, **kw)  # type: ignore[arg-type]
+
+    work = tmp_path / "work"
+    with pytest.raises(KicadMcpError) as exc:
+        autoroute.run_autoroute(_src(tmp_path), work, runner=_Hang(), jar_path=jar, timeout_s=5)
+    assert exc.value.code is ErrorCode.KICAD_TIMEOUT
+    assert "pass 1" in (work / "freerouting.log").read_text(encoding="utf-8")
+    assert exc.value.data is not None
+    assert exc.value.data["log_path"] == str(work / "freerouting.log")
+
+
+@pytest.mark.unit
+def test_autoroute_timeout_appends_pass_progress_from_state_log(
+    tmp_path: Path, jar: str, _isolated_state_log: Path
+) -> None:
+    """Sólo las líneas de progreso NUEVAS (desde el offset previo) y filtradas."""
+    _isolated_state_log.write_text(
+        "2026-01-01 DEBUG [old] Pass #9: 3 incompletes across 4 items to route\n"
+    )
+
+    class _Hang(_FakeRunner):
+        def __call__(self, args: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+            if "-jar" in args:
+                with _isolated_state_log.open("a") as st:
+                    st.write("DEBUG FoundConnectionInserter: insert trace failed\n")
+                    st.write("DEBUG [x] Pass #1: 1018 incompletes across 1336 items to route\n")
+                    st.write("DEBUG [x] Pass #2: 703 incompletes across 1014 items to route\n")
+                raise subprocess.TimeoutExpired(cmd="java", timeout=5)
+            return super().__call__(args, **kw)  # type: ignore[arg-type]
+
+    work = tmp_path / "work"
+    with pytest.raises(KicadMcpError) as exc:
+        autoroute.run_autoroute(_src(tmp_path), work, runner=_Hang(), jar_path=jar, timeout_s=5)
+    log = (work / "freerouting.log").read_text(encoding="utf-8")
+    assert "Pass #1: 1018" in log and "Pass #2: 703" in log
+    assert "Pass #9" not in log and "insert trace failed" not in log
+    assert "Pass #2: 703" in exc.value.hint
+
+
+@pytest.mark.unit
+def test_autoroute_progress_capture_is_best_effort_without_state_log(
+    tmp_path: Path, jar: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(autoroute, "_FREEROUTING_STATE_LOG", tmp_path / "no-existe.log")
+    result = autoroute.run_autoroute(
+        _src(tmp_path), tmp_path / "work", runner=_FakeRunner(), jar_path=jar
+    )
+    assert result is not None
 
 
 @pytest.mark.unit
@@ -606,3 +729,98 @@ def test_run_autoroute_calls_ensure_headless_config(
     autoroute.run_autoroute(_src(tmp_path), tmp_path / "work", runner=_FakeRunner(), jar_path=jar)
 
     assert json.loads(settings.read_text(encoding="utf-8"))["gui"]["enabled"] is False
+
+
+# --- F-PCBNEW-SWIG-PY314 (sesión 49) -----------------------------------------
+#
+# Bajo Python >=3.14, ``pcbnew.py`` (generado por SWIG, empaquetado por
+# KiCad — NO código de ``kicad-mcp``) itera colecciones llamando
+# ``it.next()`` sobre un ``pcbnew.SwigPyIterator`` que en esta versión sólo
+# expone ``__next__`` (el alias ``next`` de compatibilidad Python 2
+# desapareció) — rompe ``GetDrawings()``/``GetTracks()`` con
+# ``AttributeError``, que es exactamente lo que ``has_outline()``
+# (``_EXPORT_DSN_SCRIPT``) y ``counts()`` (``_IMPORT_SES_SCRIPT``) usan.
+# Confirmado en vivo llamando ``_run_export_dsn``/``_run_import_ses`` SIN
+# modificar contra ``validation-suite/level-a/anavi-dev-mic/working/
+# anavi-dev-mic.kicad_pcb`` (real, no fixture de test): ambos fallaban con
+# ``KicadMcpError(KICAD_CLI_FAILED)`` cuyo hint traía el traceback de
+# ``SwigPyIterator``. Fix: guard de una línea al inicio de cada script,
+# ``if not hasattr(pcbnew.SwigPyIterator, "next"): pcbnew.SwigPyIterator.next
+# = pcbnew.SwigPyIterator.__next__`` — sólo parcha si falta, no toca builds
+# de pcbnew donde ``next`` ya funciona (compat hacia atrás intacta).
+
+
+@pytest.mark.unit
+def test_export_and_import_scripts_carry_the_swig_iterator_guard() -> None:
+    """Regresión rápida (sin pcbnew real): el guard debe seguir presente en
+    AMBOS scripts — si un refactor lo borra sin querer, este test lo detecta
+    sin depender de que la máquina de CI tenga el bug (los tests
+    ``integration`` de abajo sólo fallan en máquinas con pcbnew afectado)."""
+    guard = "pcbnew.SwigPyIterator.next = pcbnew.SwigPyIterator.__next__"
+    assert guard in autoroute._EXPORT_DSN_SCRIPT
+    assert guard in autoroute._IMPORT_SES_SCRIPT
+
+
+@pytest.mark.integration
+def test_export_dsn_survives_py314_swig_iterator_bug(tmp_path: Path) -> None:
+    """Motor real (pcbnew del SISTEMA, sin GUI/IPC — mismo patrón que
+    ``test_pcb_session31b_duplicate_refs.py``). Regresión directa de
+    F-PCBNEW-SWIG-PY314: sin el guard, esto fallaba con
+    ``AttributeError: 'SwigPyIterator' object has no attribute 'next'``
+    propagado como ``KICAD_CLI_FAILED`` — con el guard, exporta limpio."""
+    from tests.conftest import mirror_fixture
+
+    system_python = autoroute._resolve_system_python(None)
+    fixture = Path(__file__).parent / "fixtures" / "005_pcb_limpio"
+    if not (fixture / "clean_board.kicad_pcb").is_file():
+        pytest.skip("fixture 005_pcb_limpio no disponible")
+    project = mirror_fixture(fixture, tmp_path / "005")
+    dsn_path = tmp_path / "out.dsn"
+
+    autoroute._run_export_dsn(
+        subprocess.run, system_python, project / "clean_board.kicad_pcb", dsn_path, 60.0
+    )
+
+    assert dsn_path.is_file()
+    assert dsn_path.stat().st_size > 0
+
+
+@pytest.mark.integration
+def test_import_ses_counts_survives_py314_swig_iterator_bug(tmp_path: Path) -> None:
+    """Mismo motor real. ``counts()`` (que usa ``GetTracks()``) corre ANTES
+    de tocar el ``.ses`` — sin el guard, revienta ahí mismo con
+    ``AttributeError`` antes de siquiera intentar importar; con el guard,
+    llega hasta ``ImportSpecctraSES`` (que sí puede fallar legítimamente
+    con un ``.ses`` sintético sin rutas — ``IMPORT_FAILED``, no el iterador)."""
+    from tests.conftest import mirror_fixture
+
+    system_python = autoroute._resolve_system_python(None)
+    fixture = Path(__file__).parent / "fixtures" / "005_pcb_limpio"
+    if not (fixture / "clean_board.kicad_pcb").is_file():
+        pytest.skip("fixture 005_pcb_limpio no disponible")
+    project = mirror_fixture(fixture, tmp_path / "005")
+    pcb_path = project / "clean_board.kicad_pcb"
+    ses_path = tmp_path / "empty.ses"
+    ses_path.write_text(
+        '(session "clean_board"\n'
+        '  (base_design "clean_board.dsn")\n'
+        "  (routes\n"
+        "    (resolution um 10)\n"
+        "    (network_out\n"
+        "    )\n"
+        "  )\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    routed_path = tmp_path / "routed.kicad_pcb"
+
+    with pytest.raises(KicadMcpError) as excinfo:
+        autoroute._run_import_ses(
+            subprocess.run, system_python, pcb_path, ses_path, routed_path, 60.0
+        )
+
+    # Falla legítimamente (SES sin rutas no es lo que este board espera) —
+    # pero por el motivo correcto (IMPORT_FAILED), no por el iterador roto.
+    assert excinfo.value.code is ErrorCode.KICAD_CLI_FAILED
+    assert "SwigPyIterator" not in (excinfo.value.hint or "")
+    assert "IMPORT_FAILED" in (excinfo.value.hint or "")

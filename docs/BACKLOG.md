@@ -121,7 +121,7 @@ abajo en este mismo documento — esa es la entrada canónica de severidad,
 ésta queda sólo como puntero para quien la encuentre por orden histórico
 de descubrimiento.
 
-### F-V3-ROUTER-TIMEOUT-HARD — Freerouting 2.1.0 entra en crash-loop interno sobre boards grandes (HackRF One) — investigado sesión 49: bug upstream ya corregido en 2.2.3+, pendiente confirmar completitud
+### F-V3-ROUTER-TIMEOUT-HARD — Freerouting 2.1.0 entra en crash-loop interno sobre boards grandes (HackRF One) — P0 CERRADO (sesión 52: sin crash en 3600 s reales con 2.4.1); queda ítem de rendimiento P2: no completa en 1 h
 
 **Origen:** sesión 33, Validation Suite Nivel C (HackRF One).
 
@@ -228,15 +228,39 @@ y no evidencia de que el router esté trabado — pero no se puede
 distinguir una cosa de la otra con la instrumentación actual. **El
 crash-loop P0 queda confirmado resuelto con evidencia real, no sólo
 standalone; "completa en tiempo razonable" sigue abierto como ítem de
-calidad/tiempo, no bloqueante.**
+calidad/tiempo, no bloqueante.** (La hipótesis de buffering de arriba fue
+refutada en la sesión 52, ver abajo.)
 
-**Instrumentación del log (sesión 52):** `_run_freerouting` ya no captura
-la salida por pipe; la escribe directo a `.kicad-mcp/autoroute/freerouting.log`
-mientras corre (seguible con `tail -f`) y el log completo sobrevive al
-`KICAD_TIMEOUT` (el error ahora trae `data.log_path` y la cola en el hint).
-Con esto la corrida larga del trigger de arriba deja evidencia que distingue
-"router trabado" de "router progresando". La corrida real (≥3600 s, KiCad
-abierto, jar ≥2.2.3 + `KICAD_MCP_JAVA_EXE`) sigue pendiente.
+**Corrida de 3600 s (sesión 52) — P0 cerrado, queda un ítem de rendimiento (P2).**
+`route_board(timeout_s=3600)` real contra HackRF One (KiCad 10.0.6 vivo, jar
+2.4.1, `KICAD_MCP_JAVA_EXE` → JDK 27; el JDK 26 de la sesión 50 ya no estaba
+instalado): **0 NPE / 0 `ERROR` en una hora de ruteo** — tercera confirmación
+(sesiones 49, 50, 52) de que el crash-loop está resuelto. **No completó:**
+`KICAD_TIMEOUT` a los 3600 s, sin SES, D-23.2 intacto (board de disco sin
+tocar, backup G1 creado, servidor sano). Convergencia observada en el log DEBUG
+de Freerouting: pass 1 = 1018 incompletes (20:15), pass 2 = 703 (20:49, ~34 min
+por pass 1, un solo hilo ~105 % CPU); el pass 2 no terminó en los 26 min
+restantes. Referencia: `anavi-dev-mic` completa en 5 min. Hoy un board de esta
+escala no completa en 1 h con Freerouting 2.4.1 por defecto.
+
+**Corrección a la sesión 50:** el log capturado de 8-10 líneas NO era un
+artefacto de buffering de stdout. La consola de Freerouting sólo emite nivel
+INFO; el progreso por pass está únicamente en su log propio (DEBUG,
+`~/.local/state/freerouting/logs/freerouting.log`, ~2000 líneas por 25 min).
+El router no estaba trabado en ninguna de las corridas.
+
+**Instrumentación (sesión 52, commits 4959a79 y 6ba9058):** la salida del
+router va directo a `.kicad-mcp/autoroute/freerouting.log` (sobrevive al
+timeout, seguible con `tail -f`), se le copian las líneas de progreso por pass
+del log DEBUG de Freerouting, y `KICAD_TIMEOUT` trae `data.log_path` y el
+último progreso en el hint.
+
+**Pendiente (P2, rendimiento, no bloqueante):** investigar si Freerouting 2.4.1
+expone multihilo/ajustes que acorten el pass 1 en boards densos antes de gastar
+otra corrida larga. Mejora futura separada: que `route_board` emita progreso
+MCP durante la espera — Claude Code corta una llamada MCP a los 1800 s sin
+respuesta ni progreso (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` lo evita sin tocar
+código); tocarlo implica `tools/pcb.py`/ADR-0012.
 
 **Fuente:** sesión 33 (hallazgo original), sesión 49 (causa raíz +
 repro standalone, sin cambios de código en el repo), sesión 50 (fix de

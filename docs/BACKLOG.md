@@ -255,6 +255,15 @@ timeout, seguible con `tail -f`), se le copian las líneas de progreso por pass
 del log DEBUG de Freerouting, y `KICAD_TIMEOUT` trae `data.log_path` y el
 último progreso en el hint.
 
+**Tarea asignada a la sesión 53 (decisión del humano, 2026-10-11):**
+investigación de rendimiento de Freerouting 2.4.1, acotada: (1) leer
+`~/.config/freerouting/freerouting.json` y la CLI/docs de 2.4.1 para listar
+ajustes de hilos y de pass/optimizador (`-mt`, `-mp`, etc.); (2) probar en un
+board chico/medio (no HackRF) si el multihilo cambia el tiempo sin degradar el
+resultado; (3) sólo si hay ganancia clara, una corrida de HackRF One de ≤1 h
+con el ajuste. Si hay que exponerlo en `route_board`, es cambio de contrato
+(ADR). Sin avance de código hasta tener evidencia.
+
 **Pendiente (P2, rendimiento, no bloqueante):** investigar si Freerouting 2.4.1
 expone multihilo/ajustes que acorten el pass 1 en boards densos antes de gastar
 otra corrida larga. Mejora futura separada: que `route_board` emita progreso

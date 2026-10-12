@@ -52,5 +52,5 @@ semántica de éxito del ruteo. Codex corrió `tests/test_autoroute.py` (verde),
 
 ## Pendiente
 
-- P2: investigar multihilo/ajustes de Freerouting 2.4.1 antes de otra corrida
-  larga. Mejora futura: progreso MCP en `route_board` (toca `tools/pcb.py`, ADR-0012).
+- **Sesión 53 (asignada por el humano):** investigar multihilo/ajustes de
+  Freerouting 2.4.1 antes de otra corrida larga (alcance en BACKLOG). Mejora futura: progreso MCP en `route_board` (toca `tools/pcb.py`, ADR-0012).

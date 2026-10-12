@@ -43,8 +43,14 @@ P2, no un bloqueante. D-23.2 intacto: el board de disco no cambió.
 - `integration`/`integration_gui_slow` no se corrieron: el cambio sólo toca el
   bridge de Freerouting, no es gate de merge.
 
+## Auditoría Codex (`codex review --base 4959a79^`) — sin hallazgos
+
+Veredicto: los cambios streamean el log a archivo, conservan la salida parcial
+en el timeout y extraen el progreso de forma best-effort sin alterar la
+semántica de éxito del ruteo. Codex corrió `tests/test_autoroute.py` (verde),
+`mypy` y `ruff` sobre los archivos tocados. Sin hallazgos que verificar.
+
 ## Pendiente
 
-- Auditoría de Codex sobre `4959a79..HEAD` (no corrida al momento de este reporte).
 - P2: investigar multihilo/ajustes de Freerouting 2.4.1 antes de otra corrida
   larga. Mejora futura: progreso MCP en `route_board` (toca `tools/pcb.py`, ADR-0012).

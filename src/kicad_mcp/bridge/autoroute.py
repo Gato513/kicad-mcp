@@ -602,6 +602,50 @@ _FREEROUTING_SETTINGS_CANDIDATES: Final = (
 )
 
 
+# Log propio de Freerouting (nivel DEBUG, XDG state). La consola que captura
+# ``_run_freerouting`` sólo recibe INFO: ahí el router parece mudo durante todo
+# el pass 1 aunque esté rutando (sesión 52, HackRF One: 10 líneas en 60 min vs
+# ~2000 en este archivo). El progreso por pass sólo existe acá.
+_FREEROUTING_STATE_LOG: Final = (
+    Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+    / "freerouting"
+    / "logs"
+    / "freerouting.log"
+)
+_PROGRESS_RE: Final = re.compile(
+    r"Pass #\d+: \d+ incompletes|Optimizer pass|Optimization stage|"
+    r"Auto-routing stage|finished with state|NullPointer"
+)
+
+
+def _state_log_offset() -> int:
+    try:
+        return _FREEROUTING_STATE_LOG.stat().st_size
+    except OSError:
+        return 0
+
+
+def _append_router_progress(log_path: Path, offset: int) -> str:
+    """Copia al ``freerouting.log`` de la corrida las líneas de progreso por
+    pass que Freerouting escribió en su log propio DESDE ``offset`` (el tamaño
+    previo a lanzarlo). Best-effort: nunca lanza. Devuelve la última línea de
+    progreso (para el hint del timeout) o ``""``.
+    """
+    try:
+        with _FREEROUTING_STATE_LOG.open("rb") as fh:
+            fh.seek(offset)
+            new = fh.read().decode("utf-8", errors="replace")
+        lines = [ln[:240] for ln in new.splitlines() if _PROGRESS_RE.search(ln)]
+        if not lines:
+            return ""
+        with log_path.open("a", encoding="utf-8") as out:
+            out.write("\n--- progreso (log DEBUG de Freerouting) ---\n")
+            out.write("\n".join(lines) + "\n")
+        return lines[-1]
+    except OSError:
+        return ""
+
+
 def _ensure_freerouting_headless_config() -> None:
     """Fuerza ``gui.enabled=false`` en la config persistente de Freerouting
     (sesión 17, hallazgo empírico — no documentado por freerouting).
@@ -661,6 +705,7 @@ def _run_freerouting(
     # corridas largas (sesión 52; antes un ``KICAD_TIMEOUT`` dejaba el log
     # vacío o con sólo la línea de arranque, indistinguible de un router
     # trabado). El log queda completo en disco; el ``hint`` usa sólo la cola.
+    state_offset = _state_log_offset()
     try:
         with log_path.open("w", encoding="utf-8") as log_file:
             completed = runner(
@@ -679,13 +724,15 @@ def _run_freerouting(
             data={"requirement": "java"},
         ) from exc
     except subprocess.TimeoutExpired as exc:
+        last_progress = _append_router_progress(log_path, state_offset)
         raise KicadMcpError(
             code=ErrorCode.KICAD_TIMEOUT,
             message=f"El ruteo con Freerouting excedió {timeout_s} s.",
             hint=(
                 "Subí timeout_s, reducí la densidad de la placa, o ruteá por zonas. "
                 "El router escala peor con densidad. "
-                f"Log del router en {log_path} (cola: {_tail(_read_log(log_path), 300)!r})."
+                f"Log del router en {log_path}"
+                + (f" (último progreso: {last_progress})." if last_progress else ".")
             ),
             data={
                 "stage": "freerouting",
@@ -694,6 +741,7 @@ def _run_freerouting(
             },
         ) from exc
 
+    _append_router_progress(log_path, state_offset)
     if not ses.is_file() or ses.stat().st_size == 0:
         log_tail = _tail(_read_log(log_path))
         raise KicadMcpError(

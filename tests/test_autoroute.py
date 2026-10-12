@@ -109,6 +109,15 @@ class _FakeRunner:
         return _completed(0, stdout=line)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_state_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Aísla el log DEBUG de Freerouting del home real del host."""
+    state = tmp_path / "state" / "freerouting.log"
+    state.parent.mkdir()
+    monkeypatch.setattr(autoroute, "_FREEROUTING_STATE_LOG", state)
+    return state
+
+
 @pytest.fixture
 def jar(tmp_path: Path) -> str:
     p = tmp_path / "freerouting.jar"
@@ -265,6 +274,45 @@ def test_autoroute_freerouting_timeout_keeps_partial_log(tmp_path: Path, jar: st
     assert "pass 1" in (work / "freerouting.log").read_text(encoding="utf-8")
     assert exc.value.data is not None
     assert exc.value.data["log_path"] == str(work / "freerouting.log")
+
+
+@pytest.mark.unit
+def test_autoroute_timeout_appends_pass_progress_from_state_log(
+    tmp_path: Path, jar: str, _isolated_state_log: Path
+) -> None:
+    """Sólo las líneas de progreso NUEVAS (desde el offset previo) y filtradas."""
+    _isolated_state_log.write_text(
+        "2026-01-01 DEBUG [old] Pass #9: 3 incompletes across 4 items to route\n"
+    )
+
+    class _Hang(_FakeRunner):
+        def __call__(self, args: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+            if "-jar" in args:
+                with _isolated_state_log.open("a") as st:
+                    st.write("DEBUG FoundConnectionInserter: insert trace failed\n")
+                    st.write("DEBUG [x] Pass #1: 1018 incompletes across 1336 items to route\n")
+                    st.write("DEBUG [x] Pass #2: 703 incompletes across 1014 items to route\n")
+                raise subprocess.TimeoutExpired(cmd="java", timeout=5)
+            return super().__call__(args, **kw)  # type: ignore[arg-type]
+
+    work = tmp_path / "work"
+    with pytest.raises(KicadMcpError) as exc:
+        autoroute.run_autoroute(_src(tmp_path), work, runner=_Hang(), jar_path=jar, timeout_s=5)
+    log = (work / "freerouting.log").read_text(encoding="utf-8")
+    assert "Pass #1: 1018" in log and "Pass #2: 703" in log
+    assert "Pass #9" not in log and "insert trace failed" not in log
+    assert "Pass #2: 703" in exc.value.hint
+
+
+@pytest.mark.unit
+def test_autoroute_progress_capture_is_best_effort_without_state_log(
+    tmp_path: Path, jar: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(autoroute, "_FREEROUTING_STATE_LOG", tmp_path / "no-existe.log")
+    result = autoroute.run_autoroute(
+        _src(tmp_path), tmp_path / "work", runner=_FakeRunner(), jar_path=jar
+    )
+    assert result is not None
 
 
 @pytest.mark.unit
